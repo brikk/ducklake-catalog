@@ -42,7 +42,18 @@ jobs:
       - name: Set up Gradle (with caching)
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Guard — only publish SNAPSHOT versions
+        id: guard
+        run: |
+          VERSION="$(./gradlew -q printVersion)"
+          echo "Project version: $VERSION"
+          case "$VERSION" in
+            *-SNAPSHOT) echo "publish=true"  >> "$GITHUB_OUTPUT" ;;
+            *)          echo "publish=false" >> "$GITHUB_OUTPUT"; echo "::notice::Version $VERSION is not a SNAPSHOT — skipping (releases go via publish-release.yml)." ;;
+          esac
+
       - name: Publish snapshot to Central Portal
+        if: steps.guard.outputs.publish == 'true'
         run: ./gradlew publishToMavenCentral --no-configuration-cache --stacktrace
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_USERNAME }}

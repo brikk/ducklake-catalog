@@ -1,0 +1,58 @@
+# Publish a RELEASE of the DuckLake catalog + corpus-replay to Maven Central (Central Portal).
+#
+# Triggered by pushing a version tag (v1.2.3) or manual dispatch. Runs
+# `publishToMavenCentral`, which uploads + validates ONE deployment bundle and then STOPS
+# (Central "manual" mode) — you finish the release by clicking Publish at
+# https://central.sonatype.com/publishing/deployments. (Use publishAndReleaseToMavenCentral
+# instead if you ever want it to auto-release.)
+#
+# The tagged commit MUST carry a non-SNAPSHOT version (the job fails fast otherwise).
+# Credentials + PGP signing come from the same ORG secrets as the snapshot workflow.
+
+name: Publish Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Guard — refuse SNAPSHOT versions
+        run: |
+          VERSION="$(./gradlew -q printVersion)"
+          echo "Project version: $VERSION"
+          case "$VERSION" in
+            *-SNAPSHOT) echo "::error::Refusing to release a SNAPSHOT version ($VERSION)."; exit 1 ;;
+          esac
+
+      - name: Publish release bundle to Central Portal (manual publish)
+        run: ./gradlew publishToMavenCentral --no-configuration-cache --stacktrace
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.KOTLIN_TOOLCHAIN_SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.KOTLIN_TOOLCHAIN_SIGNING_PASSPHRASE }}
+
+      - name: Summary
+        if: success()
+        run: echo "Uploaded release bundle. Finish at https://central.sonatype.com/publishing/deployments"
