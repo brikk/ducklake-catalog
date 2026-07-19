@@ -21,7 +21,7 @@ Checking them in is deliberate:
 
 ### Regenerating
 
-Whenever the DuckDB / DuckLake version bumps in `jvm/gradle/libs.versions.toml`
+Whenever the DuckDB / DuckLake version bumps in `gradle/libs.versions.toml`
 (or any time you suspect the catalog schema has drifted), regenerate:
 
 ```shell
@@ -40,7 +40,7 @@ often signal a DuckLake schema migration that the catalog code needs to adapt to
 - `build.gradle.kts` — applies `org.jooq.jooq-codegen-gradle`, configures the
   `ducklake` execution (Postgres dialect, `ducklake_.*` include filter, package
   `dev.brikk.ducklake.catalog.schema`, target `generated/`).
-- `jvm/build-logic/.../DucklakePostgresService.kt` — Gradle `BuildService` that
+- `build-logic/.../DucklakePostgresService.kt` — Gradle `BuildService` that
   starts the Postgres container and bootstraps the DuckLake metadata schema.
-- `jvm/jooq-custom-naming/` — `dev.brikk.jooq.codegen.JooqCustomNaming` strategy
+- `jooq-custom-naming/` — `dev.brikk.jooq.codegen.JooqCustomNaming` strategy
   (class-name / package conventions for the generated types).
