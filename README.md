@@ -3,7 +3,7 @@
 The shared **DuckLake catalog layer** for JVM engines — a JDBC/jOOQ client for the
 `ducklake_*` metadata schema that DuckDB's `ducklake` extension writes to a SQL catalog
 backend (Postgres, MySQL, DuckDB). It is the common dependency consumed by the
-[Trino](https://github.com/brikk/ducklake-integrations) and
+[Trino](https://github.com/brikk/trino-ducklake) and
 [Doris](https://github.com/brikk/doris-ducklake) DuckLake connectors.
 
 Published to **Maven Central** under the `dev.brikk.ducklake` group.
