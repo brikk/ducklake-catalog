@@ -1,0 +1,51 @@
+# Publish a SNAPSHOT of the DuckLake catalog + corpus-replay to the Central Portal
+# snapshots repo (https://central.sonatype.com/repository/maven-snapshots/).
+#
+# Triggered on every push to main (version is 0.0.1-SNAPSHOT) and on demand. The
+# vanniktech maven-publish plugin routes -SNAPSHOT versions straight to the Central
+# Portal snapshot repo (no manual "release" step), so `publishToMavenCentral` just
+# uploads. Signing is enabled (the build turns it on when signingInMemoryKey is set).
+#
+# Credentials come from ORG secrets (the same Central Portal user token + PGP key the
+# brikk-house libraries publish with). vanniktech reads them as Gradle properties via
+# the ORG_GRADLE_PROJECT_* env convention:
+#   mavenCentralUsername / mavenCentralPassword  <- Central Portal USER TOKEN
+#   signingInMemoryKey / signingInMemoryKeyPassword <- ASCII-armored PGP key + passphrase
+
+name: Publish Snapshot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        # No submodules needed: publishing compiles from committed sources (generated jOOQ
+        # is committed); the corpus submodule is only used by tests, which don't run here.
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Publish snapshot to Central Portal
+        run: ./gradlew publishToMavenCentral --no-configuration-cache --stacktrace
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.KOTLIN_TOOLCHAIN_SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.KOTLIN_TOOLCHAIN_SIGNING_PASSPHRASE }}
