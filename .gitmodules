@@ -1,0 +1,3 @@
+[submodule "ducklake-test-corpus-replay/ducklake"]
+	path = ducklake-test-corpus-replay/ducklake
+	url = https://github.com/duckdb/ducklake.git
