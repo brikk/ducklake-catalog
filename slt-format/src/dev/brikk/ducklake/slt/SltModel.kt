@@ -1,4 +1,4 @@
-package dev.brikk.ducklake.corpus
+package dev.brikk.ducklake.slt
 
 /**
  * Model for DuckDB-dialect sqllogictest files as used by the DuckLake corpus
@@ -16,7 +16,7 @@ package dev.brikk.ducklake.corpus
  *  - `skipif <engine>` / `onlyif <engine>` guarding the next record
  *  - template vars: `{NAME}`, `${NAME}`, and `__TEST_DIR__`
  *
- * Constructs deliberately not modeled in v1 (parser emits [Unsupported], the
+ * Constructs deliberately not modeled in v1 (parser emits [SltUnsupported], the
  * driver skips the whole file with a reason): `concurrentloop`, `restart`,
  * `sleep`, `mode`, `load`, `hash-threshold`, `set`, unknown directives.
  */
@@ -80,28 +80,3 @@ data class SltFile(
     val path: String,
     val records: List<SltRecord>,
 )
-
-// ---------------------------------------------------------------------------
-// Replay outcomes
-// ---------------------------------------------------------------------------
-
-sealed interface RecordOutcome {
-    val record: SltRecord?
-
-    data class Pass(override val record: SltRecord) : RecordOutcome
-
-    data class Fail(override val record: SltRecord, val reason: String) : RecordOutcome
-
-    data class Skip(override val record: SltRecord?, val reason: String) : RecordOutcome
-}
-
-data class FileResult(
-    val path: String,
-    /** Non-null when the whole file was skipped before/without execution. */
-    val fileSkipReason: String?,
-    val outcomes: List<RecordOutcome>,
-) {
-    val passed: Int get() = outcomes.count { it is RecordOutcome.Pass }
-    val failed: List<RecordOutcome.Fail> get() = outcomes.filterIsInstance<RecordOutcome.Fail>()
-    val skipped: List<RecordOutcome.Skip> get() = outcomes.filterIsInstance<RecordOutcome.Skip>()
-}

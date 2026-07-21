@@ -1,4 +1,4 @@
-package dev.brikk.ducklake.corpus
+package dev.brikk.ducklake.slt
 
 /**
  * Line-based parser for the DuckDB sqllogictest dialect (see [SltRecord] for

@@ -1,5 +1,14 @@
 package dev.brikk.ducklake.corpus
 
+import dev.brikk.ducklake.slt.SltConditional
+import dev.brikk.ducklake.slt.SltFile
+import dev.brikk.ducklake.slt.SltLoop
+import dev.brikk.ducklake.slt.SltQuery
+import dev.brikk.ducklake.slt.SltRecord
+import dev.brikk.ducklake.slt.SltRequire
+import dev.brikk.ducklake.slt.SltStatement
+import dev.brikk.ducklake.slt.SltTestEnv
+import dev.brikk.ducklake.slt.SltUnsupported
 import java.sql.SQLException
 
 /**

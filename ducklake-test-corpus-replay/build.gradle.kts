@@ -2,6 +2,10 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("buildlogic.kotlin.library")
+    // Re-exposes slt-format types (SltFile/SltRecord) on this module's public API (e.g.
+    // ReplayDriver.replay(SltFile), FileResult.outcomes), so the dependency must be `api` —
+    // which requires the java-library plugin.
+    `java-library`
     alias(libs.plugins.detekt)
     alias(libs.plugins.vanniktech.publish)
 }
@@ -77,6 +81,9 @@ detekt {
 dependencies {
     // platform (not enforcedPlatform): PUBLISHED module — see note in :ducklake-catalog.
     implementation(platform(libs.kotlin.bom))
+    // api: the SLT model/parser types appear on this module's public API (SltFile, SltRecord),
+    // so consumers resolve them transitively.
+    api(project(":slt-format"))
     implementation(libs.duckdb.jdbc)
 }
 

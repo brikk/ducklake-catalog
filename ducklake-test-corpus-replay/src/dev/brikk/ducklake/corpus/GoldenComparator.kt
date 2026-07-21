@@ -1,5 +1,7 @@
 package dev.brikk.ducklake.corpus
 
+import dev.brikk.ducklake.slt.SltQuery
+import dev.brikk.ducklake.slt.SortMode
 import org.duckdb.DuckDBArray
 import org.duckdb.DuckDBStruct
 import java.sql.ResultSet

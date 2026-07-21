@@ -16,6 +16,7 @@ dependencyResolutionManagement {
     }
 }
 
+include(":slt-format")
 include(":ducklake-catalog")
 include(":jooq-custom-naming")
 include(":ducklake-test-corpus-replay")

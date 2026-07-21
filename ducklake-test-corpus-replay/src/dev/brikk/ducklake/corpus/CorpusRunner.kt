@@ -1,5 +1,7 @@
 package dev.brikk.ducklake.corpus
 
+import dev.brikk.ducklake.slt.SltFile
+import dev.brikk.ducklake.slt.SltParser
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.extension
