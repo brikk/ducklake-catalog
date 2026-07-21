@@ -118,6 +118,49 @@ internal class TestDucklakeStatTypes {
         assertThat(DucklakeStatTypes.isNumericType("DECIMAL(10,2)")).isTrue()
     }
 
+    @Test
+    fun numericStatsSwappedDetectsInvertedNumericBounds() {
+        // The read-side guard case. Lexically "100" < "20", so a lexical merge can persist
+        // min=100, max=20 for a wide numeric — provably corrupt (min > max).
+        assertThat(DucklakeStatTypes.numericStatsSwapped("decimal(38,0)", "100", "20")).isTrue()
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int32", "100", "20")).isTrue()
+        // 128-bit range, beyond Long: still detected via BigDecimal.
+        val hugeMax = "170141183460469231731687303715884105727" // 2^127 - 1
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int128", hugeMax, "20")).isTrue()
+        // Negatives: -3 > -10 numerically, so (min=-3, max=-10) is swapped.
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int64", "-3", "-10")).isTrue()
+    }
+
+    @Test
+    fun numericStatsNotSwappedWhenOrdered() {
+        assertThat(DucklakeStatTypes.numericStatsSwapped("decimal(38,0)", "20", "100")).isFalse()
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int64", "-10", "-3")).isFalse()
+        // Equal bounds (single-value file) are not swapped.
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int128", "42", "42")).isFalse()
+    }
+
+    @Test
+    fun numericStatsSwappedIgnoresNonNumericTypes() {
+        // Critical false-positive guard: for text, min="b" > max="az" in code-point order is a
+        // LEGITIMATE surface form (collations differ), so it must NOT be flagged as corrupt.
+        assertThat(DucklakeStatTypes.numericStatsSwapped("varchar", "b", "az")).isFalse()
+        assertThat(DucklakeStatTypes.numericStatsSwapped("blob", "b", "az")).isFalse()
+        // Temporal/boolean are stored as lexically-ordered strings; leave them unchanged.
+        assertThat(DucklakeStatTypes.numericStatsSwapped("date", "2024-12-01", "2024-01-15")).isFalse()
+        assertThat(DucklakeStatTypes.numericStatsSwapped("boolean", "true", "false")).isFalse()
+    }
+
+    @Test
+    fun numericStatsSwappedFailSafeOnNullOrUnparseable() {
+        // Never discard stats on uncertainty.
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int64", null, "10")).isFalse()
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int64", "10", null)).isFalse()
+        assertThat(DucklakeStatTypes.numericStatsSwapped(null, "10", "1")).isFalse()
+        // Non-finite / malformed numeric text parses to neither -> not flagged.
+        assertThat(DucklakeStatTypes.numericStatsSwapped("float64", "Infinity", "1")).isFalse()
+        assertThat(DucklakeStatTypes.numericStatsSwapped("int64", "not-a-number", "1")).isFalse()
+    }
+
     companion object {
         private val INTEGER_TYPES = arrayOf(
                 "int8", "int16", "int32", "int64", "int128",

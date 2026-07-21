@@ -117,6 +117,45 @@ object DucklakeStatTypes {
     fun max(a: String, b: String, numeric: Boolean): String =
         if (compare(a, b, numeric) >= 0) a else b
 
+    /**
+     * True when a stored `(min, max)` stat pair is provably corrupt: both values
+     * are present, the column is numeric (so ordering is unambiguous and
+     * well-defined), and the parsed min is strictly greater than the parsed max.
+     * Such a pair can never arise legitimately for an ordered numeric column, so
+     * callers treat it as unreliable and refuse to prune on it (fail-open).
+     *
+     * Deliberately restricted to numeric types. Textual and temporal bounds are
+     * stored as strings and ordered lexically, where a surface `min > max` can be
+     * legitimate (e.g. a `varchar` min=`"b"`, max=`"az"` under a collation that
+     * differs from code-point order) — flagging those would risk discarding good
+     * stats. The only known real-world producers of swapped stats are numeric:
+     * DuckDB's pre-1.5.5 128-bit `DECIMAL` `RETURN_STATS` bug (swapped min/max for
+     * multi-row-group columns), and any merge that mis-ordered text-encoded
+     * numbers lexically.
+     *
+     * Returns `false` when either value is absent, the type is non-numeric, or
+     * either value fails to parse as a finite number — never discard stats on
+     * uncertainty.
+     */
+    fun numericStatsSwapped(canonicalType: String?, minValue: String?, maxValue: String?): Boolean {
+        if (minValue == null || maxValue == null || !isNumericType(canonicalType)) {
+            return false
+        }
+        val min = try {
+            BigDecimal(minValue)
+        }
+        catch (e: NumberFormatException) {
+            return false
+        }
+        val max = try {
+            BigDecimal(maxValue)
+        }
+        catch (e: NumberFormatException) {
+            return false
+        }
+        return min > max
+    }
+
     private fun parseBoolean(value: String): Boolean {
         if (value.equals("true", ignoreCase = true) || value == "1") {
             return true

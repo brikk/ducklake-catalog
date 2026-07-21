@@ -63,7 +63,6 @@ import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeViewRecord
 import org.jooq.Condition
 import org.jooq.DSLContext
 import org.jooq.Field
-import org.jooq.Param
 import org.jooq.Record
 import org.jooq.SQLDialect
 import org.jooq.Table
@@ -1030,16 +1029,64 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         ) { r -> r }
             .asSequence()
             .filter { r ->
-                r.get(colstats.DATA_FILE_ID) == null || // no stats row -> unknown -> keep
-                    isWithinBounds(
-                        lowerBound,
-                        upperBound,
-                        parseStatValue(columnType, r.get(colstats.MIN_VALUE)),
-                        parseStatValue(columnType, r.get(colstats.MAX_VALUE)),
-                    )
+                rangePruneRetainsFile(
+                    columnType,
+                    columnId,
+                    r.get(file.DATA_FILE_ID),
+                    hasStatsRow = r.get(colstats.DATA_FILE_ID) != null,
+                    lowerBound,
+                    upperBound,
+                    r.get(colstats.MIN_VALUE),
+                    r.get(colstats.MAX_VALUE),
+                )
             }
             .map { r -> r.get(file.DATA_FILE_ID) }
             .toList()
+    }
+
+    /**
+     * Whether a data file survives range pruning for one column predicate. A file is retained
+     * (returns true) when it has no stats row for the column (unknown → cannot prove exclusion),
+     * when its stored bounds are provably corrupt, or when its `[min, max]` overlaps the
+     * predicate's `[lower, upper]`. Pruning may only exclude files whose stats PROVE no row can
+     * match.
+     *
+     * Corrupt bounds (`min > max`, type-aware) are treated as unreliable and never prune: the
+     * known source is DuckDB <= 1.5.4's swapped 128-bit `DECIMAL` `RETURN_STATS` (fixed upstream
+     * in 1.5.5, commit `7adf7a70b`), whose bad bounds persist in already-written
+     * `ducklake_file_column_stats` until those files are rewritten.
+     */
+    @Suppress("LongParameterList")
+    private fun rangePruneRetainsFile(
+        columnType: String,
+        columnId: Long,
+        dataFileId: Long?,
+        hasStatsRow: Boolean,
+        lowerBound: Comparable<*>?,
+        upperBound: Comparable<*>?,
+        rawMin: String?,
+        rawMax: String?,
+    ): Boolean {
+        if (!hasStatsRow) {
+            return true
+        }
+        if (DucklakeStatTypes.numericStatsSwapped(columnType, rawMin, rawMax)) {
+            log.log(
+                System.Logger.Level.DEBUG,
+                "Skipping range prune for data_file {0} column {1}: swapped stats min={2} max={3}",
+                dataFileId,
+                columnId,
+                rawMin,
+                rawMax,
+            )
+            return true
+        }
+        return isWithinBounds(
+            lowerBound,
+            upperBound,
+            parseStatValue(columnType, rawMin),
+            parseStatValue(columnType, rawMax),
+        )
     }
 
     override fun getTableStats(tableId: Long): DucklakeTableStats? {
@@ -3388,46 +3435,45 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .execute()
         }
 
-        // Upsert ducklake_table_column_stats: aggregate min/max/null across all fragments per column
+        // Upsert ducklake_table_column_stats: aggregate min/max/null across all fragments per column.
+        // Column types drive numeric-aware min/max comparison: stats are stored as text, so a
+        // lexical merge silently corrupts numeric bounds ("12" < "8", "100" < "20"), which for
+        // HUGEINT/large-DECIMAL can even leave min > max. Matches the extension's
+        // DuckLakeColumnStats::MergeStats (RequiresValueComparison -> typed compare).
+        val columnTypes: Map<Long, String> = loadColumnTypes(tx, tableId)
         val columnAggregates: MutableMap<Long, AggregatedColumnStats> = linkedMapOf()
         for (fragment in fragments) {
             for (colStats in fragment.columnStats) {
-                columnAggregates.getOrPut(colStats.columnId) { AggregatedColumnStats() }.merge(colStats)
+                columnAggregates
+                    .getOrPut(colStats.columnId) { AggregatedColumnStats(columnTypes[colStats.columnId]) }
+                    .merge(colStats)
             }
         }
 
-        val existingColumnStats: Set<Long> = loadExistingColumnStatsColumnIds(tx, tableId, columnAggregates.keys)
+        val existingColumnStats: Map<Long, ExistingColumnStat> =
+            loadExistingColumnStats(tx, tableId, columnAggregates.keys)
         val insertRecords: MutableList<DucklakeTableColumnStatsRecord> = mutableListOf()
         for ((columnId, agg) in columnAggregates) {
-            if (existingColumnStats.contains(columnId)) {
-                // CASE-based typed min/max merge. Mirrors the original
-                //   min_value = CASE WHEN min_value IS NULL THEN ? WHEN ? IS NULL THEN min_value
-                //                    WHEN ? < min_value THEN ? ELSE min_value END
-                // shape. Value parsing stays in Java (AggregatedColumnStats.merge); SQL only
-                // picks between the existing column value and the aggregated candidate.
+            val existing = existingColumnStats[columnId]
+            if (existing != null) {
+                // Type-aware min/max merge, done in Java (NOT in SQL): the stats columns are
+                // VARCHAR, so a SQL `min_value < ?` comparison orders text-encoded numbers
+                // lexically and picks the wrong extreme — for wide numerics (HUGEINT /
+                // DECIMAL(38,x)) it can even store min > max. DucklakeStatTypes parses numerics
+                // to BigDecimal (and leaves text/temporal lexical), matching the extension's
+                // RequiresValueComparison path. Resolve the merged value here, then write it.
                 //
                 // contains_null / contains_nan: the original `col = (col OR ?)` is a no-op
                 // when the aggregated flag is false (FALSE→FALSE, TRUE→TRUE, NULL→NULL in
                 // Postgres), so we only emit the SET when the flag is true — in which case
                 // the new value is unconditionally true. This sidesteps the missing
                 // `Field<Boolean>.or(Field<Boolean>)` overload in jOOQ.
-                val minParam: Param<String> = DSL.`val`(agg.minValue, tabcolst.MIN_VALUE.dataType)
-                val maxParam: Param<String> = DSL.`val`(agg.maxValue, tabcolst.MAX_VALUE.dataType)
+                val columnType: String? = columnTypes[columnId]
+                val mergedMin = mergedMinBound(existing.minValue, agg.minValue, columnType)
+                val mergedMax = mergedMaxBound(existing.maxValue, agg.maxValue, columnType)
                 var upd = ctx.update(tabcolst)
-                    .set(
-                        tabcolst.MIN_VALUE,
-                        DSL.`when`(tabcolst.MIN_VALUE.isNull, minParam)
-                            .`when`(minParam.isNull, tabcolst.MIN_VALUE)
-                            .`when`(minParam.lt(tabcolst.MIN_VALUE), minParam)
-                            .otherwise(tabcolst.MIN_VALUE),
-                    )
-                    .set(
-                        tabcolst.MAX_VALUE,
-                        DSL.`when`(tabcolst.MAX_VALUE.isNull, maxParam)
-                            .`when`(maxParam.isNull, tabcolst.MAX_VALUE)
-                            .`when`(maxParam.gt(tabcolst.MAX_VALUE), maxParam)
-                            .otherwise(tabcolst.MAX_VALUE),
-                    )
+                    .set(tabcolst.MIN_VALUE, DSL.`val`(mergedMin, tabcolst.MIN_VALUE.dataType))
+                    .set(tabcolst.MAX_VALUE, DSL.`val`(mergedMax, tabcolst.MAX_VALUE.dataType))
                 if (agg.containsNull) {
                     upd = upd.set(tabcolst.CONTAINS_NULL, true)
                 }
@@ -3817,7 +3863,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .execute()
     }
 
-    private class AggregatedColumnStats {
+    // Existing table-level column-stat bounds loaded for the incremental merge.
+    private data class ExistingColumnStat(val minValue: String?, val maxValue: String?)
+
+    private class AggregatedColumnStats(private val columnType: String?) {
         var containsNull: Boolean = false
         var containsNan: Boolean = false
         var minValue: String? = null
@@ -3830,17 +3879,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (stats.containsNan) {
                 containsNan = true
             }
+            // Type-aware: numeric stats compare as BigDecimal, not lexically. A plain
+            // Kotlin String `<`/`>` here mis-orders text-encoded numbers ("12" < "8",
+            // "100" < "20") and, across files, can yield a swapped min > max candidate.
             stats.minValue?.let { v ->
                 val current = minValue
-                if (current == null || v < current) {
-                    minValue = v
-                }
+                minValue = if (current == null) v else DucklakeStatTypes.min(current, v, columnType)
             }
             stats.maxValue?.let { v ->
                 val current = maxValue
-                if (current == null || v > current) {
-                    maxValue = v
-                }
+                maxValue = if (current == null) v else DucklakeStatTypes.max(current, v, columnType)
             }
         }
     }
@@ -4147,21 +4195,64 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         private fun orZero(value: Long?): Long =
             value ?: 0L
 
-        private fun loadExistingColumnStatsColumnIds(
+        // Existing table-level column stat bounds, keyed by column_id, for the numeric-aware
+        // merge in applyInsertFragments. Presence in the map == the row exists (UPDATE path);
+        // absence == first stats for that column (INSERT path).
+        private fun loadExistingColumnStats(
             tx: DucklakeWriteTransaction,
             tableId: Long,
             candidateColumnIds: Set<Long>,
-        ): Set<Long> {
+        ): Map<Long, ExistingColumnStat> {
             if (candidateColumnIds.isEmpty()) {
-                return emptySet()
+                return emptyMap()
             }
             val tabcolst = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tabcolst")
-            return tx.dsl().select(tabcolst.COLUMN_ID)
+            return tx.dsl().select(tabcolst.COLUMN_ID, tabcolst.MIN_VALUE, tabcolst.MAX_VALUE)
                 .from(tabcolst)
                 .where(tabcolst.TABLE_ID.eq(tableId))
                 .and(tabcolst.COLUMN_ID.`in`(candidateColumnIds))
-                .fetchSet(tabcolst.COLUMN_ID)
+                .fetch()
+                .asSequence()
+                .mapNotNull { r ->
+                    val id = r.get(tabcolst.COLUMN_ID) ?: return@mapNotNull null
+                    id to ExistingColumnStat(r.get(tabcolst.MIN_VALUE), r.get(tabcolst.MAX_VALUE))
+                }
+                .toMap()
         }
+
+        // Leaf column_id -> canonical DuckLake type (e.g. "int128", "decimal(38,0)"), read via
+        // the write transaction so freshly-created columns are visible. Column types are stable
+        // per column_id, so no snapshot filtering is needed. Drives numeric-aware stat merging.
+        private fun loadColumnTypes(tx: DucklakeWriteTransaction, tableId: Long): Map<Long, String> {
+            val col = DUCKLAKE_COLUMN.`as`("coltype")
+            return tx.dsl().select(col.COLUMN_ID, col.COLUMN_TYPE)
+                .from(col)
+                .where(col.TABLE_ID.eq(tableId))
+                .fetch()
+                .asSequence()
+                .mapNotNull { r ->
+                    val id = r.get(col.COLUMN_ID) ?: return@mapNotNull null
+                    val type = r.get(col.COLUMN_TYPE) ?: return@mapNotNull null
+                    id to type
+                }
+                .toMap()
+        }
+
+        // Type-aware merge of an existing stored bound with an aggregated candidate: null-tolerant
+        // (a null on either side yields the other), numeric otherwise via DucklakeStatTypes.
+        private fun mergedMinBound(existing: String?, candidate: String?, columnType: String?): String? =
+            when {
+                existing == null -> candidate
+                candidate == null -> existing
+                else -> DucklakeStatTypes.min(existing, candidate, columnType)
+            }
+
+        private fun mergedMaxBound(existing: String?, candidate: String?, columnType: String?): String? =
+            when {
+                existing == null -> candidate
+                candidate == null -> existing
+                else -> DucklakeStatTypes.max(existing, candidate, columnType)
+            }
 
         private fun toDucklakeColumn(r: DucklakeColumnRecord): DucklakeColumn {
             return DucklakeColumn(
