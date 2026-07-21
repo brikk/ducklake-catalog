@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.vanniktech.publish)
 }
 
-version = "0.2.0-SNAPSHOT"
+version = "0.2.0"
 
 // Published to Maven Central as dev.brikk.ducklake:slt-format. A standalone, dependency-free
 // (kotlin-stdlib only) format layer for the DuckDB-dialect sqllogictest (.test) files:
