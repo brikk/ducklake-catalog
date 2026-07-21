@@ -1,3 +1,38 @@
 [submodule "ducklake-test-corpus-replay/ducklake"]
 	path = ducklake-test-corpus-replay/ducklake
 	url = https://github.com/duckdb/ducklake.git
+
+# Reference-only upstreams for watching catalog / metadata-schema changes.
+# NOT part of the Gradle build (see settings.gradle.kts — only explicit modules
+# are included). `update = none` keeps them out of a plain `git clone` and out of
+# a bulk `git submodule update` (so nobody accidentally pulls duckdb's ~400 MB tree);
+# the `--checkout` flag below overrides that when you explicitly want a reference.
+#
+# Opt in / check one out:
+#   git submodule update --init --checkout --depth 1 references/<name>
+# Refresh to the latest tracked-branch tip (branch = below):
+#   git submodule update --remote --checkout references/<name>
+[submodule "references/duckdb"]
+	path = references/duckdb
+	url = https://github.com/duckdb/duckdb.git
+	branch = v1.5-variegata
+	shallow = true
+	update = none
+[submodule "references/ducklake"]
+	path = references/ducklake
+	url = https://github.com/duckdb/ducklake.git
+	branch = v1.5-variegata
+	shallow = true
+	update = none
+[submodule "references/pg_ducklake"]
+	path = references/pg_ducklake
+	url = https://github.com/relytcloud/pg_ducklake.git
+	branch = main
+	shallow = true
+	update = none
+[submodule "references/datafusion-ducklake"]
+	path = references/datafusion-ducklake
+	url = https://github.com/datafusion-contrib/datafusion-ducklake.git
+	branch = main
+	shallow = true
+	update = none
