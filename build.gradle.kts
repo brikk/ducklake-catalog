@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "dev.brikk.ducklake"
-version = "0.3.0"
+version = "0.4.0-SNAPSHOT"
 
 // Prints the resolved project version (used by the release workflow's SNAPSHOT guard).
 tasks.register("printVersion") {
