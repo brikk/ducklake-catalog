@@ -1,6 +1,6 @@
 [versions]
 kotlin = "2.3.10"
-duckdb = "1.5.4.0"
+duckdb = "1.5.5.0"
 jackson = "2.21.2"
 java-uuid-generator = "5.0.0"
 junit = "5.12.2"
