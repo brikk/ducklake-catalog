@@ -15,12 +15,13 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 | Catalog | `dev.brikk.ducklake:ducklake-catalog` | Kotlin/jOOQ client for the DuckLake catalog metadata schema (main library). |
 | Catalog test fixtures | `dev.brikk.ducklake:ducklake-catalog` (`test-fixtures` variant) | `TestingDucklake*CatalogServer` + testing helpers for downstream test suites. |
 | Corpus replay | `dev.brikk.ducklake:ducklake-test-corpus-replay` | Engine-agnostic replay harness (DuckDB oracle, SLT parser/driver, `ReplayReadEngine` seam) for the upstream DuckLake sqllogictest corpus. Test-only; ships **no** corpus SQL. |
+| SLT format | `dev.brikk.ducklake:slt-format` | Standalone, dependency-free (stdlib-only) parser, model, and expander for the DuckDB-dialect sqllogictest (`.test`) format. `SltParser` (skip-don't-throw), `SltModel`, and the pure `SltExpander` that flattens loops/foreach/conditionals/templates into concrete SQL. Consumed by corpus replay; usable on its own. |
 
 `jooq-custom-naming` is a codegen-time-only helper and is **not** published.
 
 ## Using it as a dependency
 
-Latest release: **0.1.0**
+Latest release: **0.2.0**
 
 ### Gradle (Kotlin DSL)
 
@@ -30,13 +31,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.1.0")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.2.0")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.1.0"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.2.0"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.1.0")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.2.0")
+
+    // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
+    implementation("dev.brikk.ducklake:slt-format:0.2.0")
 }
 ```
 
@@ -47,9 +51,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.1.0'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.1.0')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.1.0'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.2.0'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.2.0')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.2.0'
+    implementation 'dev.brikk.ducklake:slt-format:0.2.0'
 }
 ```
 
@@ -59,16 +64,23 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
+</dependency>
+
+<!-- Standalone SLT (.test) format library -->
+<dependency>
+  <groupId>dev.brikk.ducklake</groupId>
+  <artifactId>slt-format</artifactId>
+  <version>0.2.0</version>
 </dependency>
 ```
 
@@ -85,7 +97,7 @@ repositories {
         content { includeGroup("dev.brikk.ducklake") }
     }
 }
-// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.2.0-SNAPSHOT
+// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.3.0-SNAPSHOT
 ```
 
 ## Building
