@@ -57,6 +57,26 @@ object DucklakeStatTypes {
     }
 
     /**
+     * Whether the given canonical DuckLake type is a floating-point type
+     * (`FLOAT`/`REAL` → `float32`, `DOUBLE` → `float64`). Floats are the only
+     * types for which `NaN` is representable, and DuckLake/Parquet `min`/`max`
+     * statistics **exclude** `NaN`. Because `NaN` sorts above every non-NaN
+     * value, a float file whose `contains_nan` is `TRUE` (or unknown) has a
+     * stored `max` that is NOT its true upper bound, so the stored `max` cannot
+     * be used to prune `col > C` / `col >= C` predicates. Callers gate the
+     * max-side prune on this predicate; see `JdbcDucklakeCatalog.rangePruneRetainsFile`.
+     */
+    fun isFloatType(canonicalType: String?): Boolean {
+        if (canonicalType == null) {
+            return false
+        }
+        return when (normalize(canonicalType)) {
+            "float32", "float64" -> true
+            else -> false
+        }
+    }
+
+    /**
      * Parse a stored stat string into a [Comparable] for range comparison,
      * per its canonical type. Numbers parse to [BigDecimal], booleans to
      * [Boolean]; everything else stays a [String] (ISO temporal forms
