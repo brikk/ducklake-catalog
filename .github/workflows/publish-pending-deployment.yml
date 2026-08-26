@@ -1,0 +1,101 @@
+# Manually drive a Central Portal deployment via the Publisher REST API — a UI-free escape
+# hatch for when a USER_MANAGED bundle is stuck awaiting the "Publish" click (e.g. the portal
+# UI is unavailable), or to inspect/drop a deployment.
+#
+# Uses the same ORG secrets as the publish workflows (Central Portal user token). Auth is
+# `Bearer base64(user:pass)` per https://central.sonatype.org/publish/publish-portal-api/.
+#
+#   action=publish  POST /api/v1/publisher/deployment/<id>   (only works once VALIDATED)
+#   action=status   POST /api/v1/publisher/status?id=<id>
+#   action=drop     DELETE /api/v1/publisher/deployment/<id> (VALIDATED or FAILED)
+
+name: Publish Pending Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: Central Portal deployment ID (UUID from the release run log)
+        required: true
+        type: string
+      action:
+        description: What to do with the deployment
+        required: true
+        default: publish
+        type: choice
+        options: [publish, status, drop]
+
+concurrency:
+  group: publish-pending-${{ github.event.inputs.deployment_id }}
+  cancel-in-progress: false
+
+jobs:
+  drive-deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Drive Central Portal deployment
+        env:
+          CENTRAL_USER: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_USERNAME }}
+          CENTRAL_PASS: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_PASSWORD }}
+          ID: ${{ github.event.inputs.deployment_id }}
+          ACTION: ${{ github.event.inputs.action }}
+        run: |
+          set -euo pipefail
+          AUTH="Bearer $(printf '%s:%s' "$CENTRAL_USER" "$CENTRAL_PASS" | base64 -w0)"
+          BASE="https://central.sonatype.com/api/v1/publisher"
+
+          status() {
+            curl -sS --fail-with-body --request POST \
+              --header "Authorization: $AUTH" \
+              "$BASE/status?id=$ID"
+          }
+
+          echo "::group::Current status of $ID"
+          STATE_JSON="$(status)"; echo "$STATE_JSON" | jq .
+          STATE="$(echo "$STATE_JSON" | jq -r '.deploymentState')"
+          echo "::endgroup::"
+          echo "deploymentState=$STATE"
+
+          case "$ACTION" in
+            status)
+              echo "Status only — nothing to do." ;;
+
+            drop)
+              echo "Dropping $ID ..."
+              curl -sS --fail-with-body --request DELETE --header "Authorization: $AUTH" \
+                "$BASE/deployment/$ID"
+              echo "Dropped." ;;
+
+            publish)
+              # Wait out PENDING/VALIDATING (portal validates asynchronously) before publishing.
+              for i in $(seq 1 30); do
+                case "$STATE" in
+                  VALIDATED)
+                    echo "VALIDATED — publishing ..."
+                    curl -sS --fail-with-body --request POST --header "Authorization: $AUTH" \
+                      "$BASE/deployment/$ID"
+                    echo "Publish requested; portal will move it to PUBLISHING -> PUBLISHED."
+                    break ;;
+                  PUBLISHING|PUBLISHED)
+                    echo "Already $STATE — nothing to publish." ; break ;;
+                  PENDING|VALIDATING)
+                    echo "State $STATE; waiting 20s (attempt $i/30) ..."
+                    sleep 20
+                    STATE="$(status | jq -r '.deploymentState')" ;;
+                  FAILED)
+                    echo "::error::Deployment $ID is FAILED — inspect errors in the portal; not publishing."
+                    status | jq .
+                    exit 1 ;;
+                  *)
+                    echo "::error::Unexpected state '$STATE'."; exit 1 ;;
+                esac
+              done
+              if [ "$STATE" = "PENDING" ] || [ "$STATE" = "VALIDATING" ]; then
+                echo "::error::Still $STATE after waiting — re-run later."; exit 1
+              fi ;;
+          esac
+
+          echo "::group::Final status of $ID"
+          status | jq .
+          echo "::endgroup::"
