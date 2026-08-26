@@ -1016,6 +1016,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 colstats.DATA_FILE_ID,
                 colstats.MIN_VALUE,
                 colstats.MAX_VALUE,
+                colstats.CONTAINS_NAN,
             )
                 .from(file)
                 .leftJoin(colstats)
@@ -1038,6 +1039,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     upperBound,
                     r.get(colstats.MIN_VALUE),
                     r.get(colstats.MAX_VALUE),
+                    r.get(colstats.CONTAINS_NAN),
                 )
             }
             .map { r -> r.get(file.DATA_FILE_ID) }
@@ -1055,6 +1057,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * known source is DuckDB <= 1.5.4's swapped 128-bit `DECIMAL` `RETURN_STATS` (fixed upstream
      * in 1.5.5, commit `7adf7a70b`), whose bad bounds persist in already-written
      * `ducklake_file_column_stats` until those files are rewritten.
+     *
+     * Float `NaN` guard: DuckLake/Parquet float `min`/`max` **exclude** `NaN`, and `NaN` sorts
+     * above every non-NaN value. So for a `FLOAT`/`DOUBLE` column whose `contains_nan` is not
+     * explicitly `FALSE` (i.e. `TRUE` or unknown/`NULL`), the stored `max` is NOT a valid upper
+     * bound — the file may hold `NaN` rows above it. We therefore treat the upper bound as
+     * unbounded (`maxStat = null`) for such files, so the `lowerBound > max` prune branch never
+     * fires. The stored `min` is still a valid lower bound (`NaN` only affects the max side), so
+     * the `upperBound < min` branch still prunes. This mirrors upstream DuckLake, which appends
+     * `OR contains_nan` to the pushed-down `> / >=` filter (`ducklake_metadata_manager.cpp`).
      */
     @Suppress("LongParameterList")
     private fun rangePruneRetainsFile(
@@ -1066,6 +1077,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         upperBound: Comparable<*>?,
         rawMin: String?,
         rawMax: String?,
+        containsNan: Boolean?,
     ): Boolean {
         if (!hasStatsRow) {
             return true
@@ -1081,11 +1093,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             )
             return true
         }
+        // NaN guard: for a float column whose max may be NaN-invalidated (contains_nan != false),
+        // drop the stored max from consideration so the max-side prune cannot fire. The min side
+        // is unaffected (NaN is above all values, never below), so its bound is still honored.
+        val nanInvalidatesMax = DucklakeStatTypes.isFloatType(columnType) && containsNan != false
+        val effectiveMax: String? = if (nanInvalidatesMax) null else rawMax
         return isWithinBounds(
             lowerBound,
             upperBound,
             parseStatValue(columnType, rawMin),
-            parseStatValue(columnType, rawMax),
+            parseStatValue(columnType, effectiveMax),
         )
     }
 
