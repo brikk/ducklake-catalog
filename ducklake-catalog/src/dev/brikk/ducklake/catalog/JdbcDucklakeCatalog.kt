@@ -3096,7 +3096,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val ctx = tx.dsl()
 
             // Read the current TOP-LEVEL column metadata (nested-field type changes unsupported).
-            val existing: Record? = ctx.select(col.COLUMN_ORDER, col.COLUMN_NAME, col.NULLS_ALLOWED)
+            val existing: Record? = ctx.select(col.COLUMN_ORDER, col.COLUMN_NAME, col.NULLS_ALLOWED, col.COLUMN_TYPE)
                 .from(col)
                 .where(col.TABLE_ID.eq(tableId))
                 .and(col.COLUMN_ID.eq(columnId))
@@ -3109,6 +3109,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val columnOrder = orZero(existing.get(col.COLUMN_ORDER))
             val columnName = existing.get(col.COLUMN_NAME)
             val nullsAllowed = existing.get(col.NULLS_ALLOWED) == true
+            val oldColumnType = existing.get(col.COLUMN_TYPE)
 
             // End-snapshot the current version.
             ctx.update(col)
@@ -3133,9 +3134,58 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .set(col.DEFAULT_VALUE_TYPE, "literal")
                 .execute()
 
+            invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, oldColumnType, newColumnType)
+
             tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
+    }
+
+    /**
+     * On an `ALTER COLUMN ... TYPE` that changes a column's *comparison class* (numeric ⇄
+     * non-numeric), NULL out the per-file (`ducklake_file_column_stats`) and global
+     * (`ducklake_table_column_stats`) `min_value`/`max_value` for that column.
+     *
+     * DuckLake only permits *widening* promotions, but "widen to VARCHAR" is one of them: the
+     * pre-change bounds were stored as text under the OLD type and are no longer valid under the
+     * NEW type's comparison. The dangerous case is numeric → `VARCHAR`: numeric bounds like
+     * `min="5"`, `max="100"` are compared *lexically* under `VARCHAR` (where `"5" > "100"`), so a
+     * legitimate `col = '7'` would be wrongly pruned (`'7' NOT BETWEEN '5' AND '100'`). Setting the
+     * bounds to unknown makes pruning fail open (retain), which is always safe.
+     *
+     * Numeric widenings (`INT`→`BIGINT`, `DECIMAL(10,2)`→`DECIMAL(20,4)`, `FLOAT`→`DOUBLE`) keep
+     * `isNumericType` on both sides: the text still parses to the same [java.math.BigDecimal], so
+     * the bounds stay valid and are preserved. Mirrors upstream DuckLake ("keep bounds across
+     * numeric/decimal widenings; keep invalidated bounds unknown otherwise").
+     *
+     * The update mutates already-committed stats rows in place. Time-travel to a pre-ALTER snapshot
+     * then reads the column under its old type but finds NULL bounds → unknown → retain: still
+     * correct, only less selective for those historical scans.
+     */
+    private fun invalidateStatBoundsIfComparisonClassChanged(
+        ctx: DSLContext,
+        tableId: Long,
+        columnId: Long,
+        oldColumnType: String?,
+        newColumnType: String,
+    ) {
+        if (DucklakeStatTypes.isNumericType(oldColumnType) == DucklakeStatTypes.isNumericType(newColumnType)) {
+            return
+        }
+        val fcs = DUCKLAKE_FILE_COLUMN_STATS.`as`("fcs")
+        ctx.update(fcs)
+            .set(fcs.MIN_VALUE, null as String?)
+            .set(fcs.MAX_VALUE, null as String?)
+            .where(fcs.TABLE_ID.eq(tableId))
+            .and(fcs.COLUMN_ID.eq(columnId))
+            .execute()
+        val tcs = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tcs")
+        ctx.update(tcs)
+            .set(tcs.MIN_VALUE, null as String?)
+            .set(tcs.MAX_VALUE, null as String?)
+            .where(tcs.TABLE_ID.eq(tableId))
+            .and(tcs.COLUMN_ID.eq(columnId))
+            .execute()
     }
 
     override fun setFieldType(tableId: Long, fieldPath: List<String>, newColumnType: String) {
@@ -3174,6 +3224,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .set(col.DEFAULT_VALUE_TYPE, "literal")
                 .set(col.PARENT_COLUMN, parentColumn)
                 .execute()
+
+            invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, existing.columnType, newColumnType)
 
             tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
@@ -3340,6 +3392,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val columnMappingRecords: MutableList<DucklakeColumnMappingRecord> = mutableListOf()
         val nameMappingRecords: MutableList<DucklakeNameMappingRecord> = mutableListOf()
 
+        // Loaded once up front: needed both when writing per-file stats (to decide the
+        // float-only `contains_nan` convention and to drop NaN-invalidated float min/max) and
+        // when merging the per-column aggregates into ducklake_table_column_stats below.
+        val columnTypes: Map<Long, String> = loadColumnTypes(tx, tableId)
+
         for (fragment in fragments) {
             val dataFileId = tx.allocateFileId()
 
@@ -3395,10 +3452,28 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 r.setColumnSizeBytes(columnStats.columnSizeBytes)
                 r.setValueCount(columnStats.valueCount)
                 r.setNullCount(columnStats.nullCount)
-                r.setMinValue(columnStats.minValue)
-                r.setMaxValue(columnStats.maxValue)
-                // contains_nan: TRUE when set, SQL NULL otherwise (upstream convention).
-                r.setContainsNan(if (columnStats.containsNan) java.lang.Boolean.TRUE else null)
+
+                // contains_nan is a float-only concept. Mirror upstream DuckLake exactly
+                // (ducklake_transaction_state.cpp: has_contains_nan == is_float):
+                //  - FLOAT/DOUBLE column: write the explicit boolean (TRUE or FALSE). Writing
+                //    explicit FALSE — not SQL NULL — is what lets a reader keep max-side range
+                //    pruning (a NULL/unknown contains_nan forces the NaN guard to fail open).
+                //  - non-float column: contains_nan is not applicable → SQL NULL.
+                val isFloat = DucklakeStatTypes.isFloatType(columnTypes[columnStats.columnId])
+                r.setContainsNan(if (isFloat) java.lang.Boolean.valueOf(columnStats.containsNan) else null)
+
+                // Float min/max EXCLUDE NaN, and NaN sorts above every value. When a float file
+                // contains NaN its recorded max is not a true upper bound, so — like upstream —
+                // we do not persist min/max at all for that file/column (leave them SQL NULL);
+                // the bound is genuinely unknown rather than a misleading finite value.
+                if (isFloat && columnStats.containsNan) {
+                    r.setMinValue(null)
+                    r.setMaxValue(null)
+                }
+                else {
+                    r.setMinValue(columnStats.minValue)
+                    r.setMaxValue(columnStats.maxValue)
+                }
                 fileColumnStatsRecords.add(r)
             }
 
@@ -3457,7 +3532,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // lexical merge silently corrupts numeric bounds ("12" < "8", "100" < "20"), which for
         // HUGEINT/large-DECIMAL can even leave min > max. Matches the extension's
         // DuckLakeColumnStats::MergeStats (RequiresValueComparison -> typed compare).
-        val columnTypes: Map<Long, String> = loadColumnTypes(tx, tableId)
+        // (columnTypes was loaded once near the top of this method and is reused here.)
         val columnAggregates: MutableMap<Long, AggregatedColumnStats> = linkedMapOf()
         for (fragment in fragments) {
             for (colStats in fragment.columnStats) {
