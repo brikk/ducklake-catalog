@@ -1,10 +1,11 @@
 # Publish a RELEASE of the DuckLake catalog + corpus-replay to Maven Central (Central Portal).
 #
 # Triggered by pushing a version tag (v1.2.3) or manual dispatch. Runs
-# `publishToMavenCentral`, which uploads + validates ONE deployment bundle and then STOPS
-# (Central "manual" mode) — you finish the release by clicking Publish at
-# https://central.sonatype.com/publishing/deployments. (Use publishAndReleaseToMavenCentral
-# instead if you ever want it to auto-release.)
+# `publishToMavenCentral`, which uploads the deployment bundle as AUTOMATIC — the Central
+# Portal validates AND releases it to Maven Central with no manual "Publish" click. This is
+# configured in each module's build.gradle.kts via
+# `publishToMavenCentral(true, DeploymentValidation.NONE)` (auto-release, and don't block the
+# build waiting for the portal — "no wait"). No UI step is required.
 #
 # The tagged commit MUST carry a non-SNAPSHOT version (the job fails fast otherwise).
 # Credentials + PGP signing come from the same ORG secrets as the snapshot workflow.
@@ -45,7 +46,7 @@ jobs:
             *-SNAPSHOT) echo "::error::Refusing to release a SNAPSHOT version ($VERSION)."; exit 1 ;;
           esac
 
-      - name: Publish release bundle to Central Portal (manual publish)
+      - name: Publish release bundle to Central Portal (auto release, no wait)
         run: ./gradlew publishToMavenCentral --no-configuration-cache --stacktrace
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_USERNAME }}
@@ -55,4 +56,4 @@ jobs:
 
       - name: Summary
         if: success()
-        run: echo "Uploaded release bundle. Finish at https://central.sonatype.com/publishing/deployments"
+        run: echo "Uploaded release bundle as AUTOMATIC — Central Portal will validate and release it to Maven Central. No manual publish step required."

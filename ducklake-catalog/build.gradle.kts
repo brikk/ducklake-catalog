@@ -1,3 +1,4 @@
+import com.vanniktech.maven.publish.DeploymentValidation
 import dev.brikk.jooq.ducklake.DucklakePostgresService
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jooq.codegen.gradle.CodegenPluginExtension
@@ -23,7 +24,10 @@ version = "0.5.0-SNAPSHOT"
 // artifact via Gradle Module Metadata, so the Trino/Doris plugin repos consume it with
 // `testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:<ver>"))`.
 mavenPublishing {
-    publishToMavenCentral()
+    // Auto-publish: upload as AUTOMATIC so the Central Portal validates AND releases without a
+    // manual "Publish" click; DeploymentValidation.NONE = don't block the build waiting for the
+    // portal to finish validating/publishing ("no wait"). Releases go straight to Maven Central.
+    publishToMavenCentral(true, DeploymentValidation.NONE)
     // Signing is required for Central but not for the mavenLocal/snapshot smoke loop. Gate it
     // on the signing key being present so `publishToMavenLocal` works without credentials.
     if (providers.gradleProperty("signingInMemoryKey").isPresent ||

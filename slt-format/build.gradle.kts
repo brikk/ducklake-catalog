@@ -1,3 +1,4 @@
+import com.vanniktech.maven.publish.DeploymentValidation
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -19,7 +20,8 @@ version = "0.5.0-SNAPSHOT"
 // The replay RUNNER (DuckDB oracle, driver, golden comparator, ReplayReadEngine seam) lives in
 // :ducklake-test-corpus-replay, which depends on this module.
 mavenPublishing {
-    publishToMavenCentral()
+    // Auto-publish + no-wait (see ducklake-catalog/build.gradle.kts for rationale).
+    publishToMavenCentral(true, DeploymentValidation.NONE)
     if (providers.gradleProperty("signingInMemoryKey").isPresent ||
         System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null
     ) {

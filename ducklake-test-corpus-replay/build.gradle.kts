@@ -1,3 +1,4 @@
+import com.vanniktech.maven.publish.DeploymentValidation
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -17,7 +18,8 @@ version = "0.5.0-SNAPSHOT"
 // seam) — NOT the upstream corpus SQL data. Consumers (Trino/Doris plugin repos) vendor the
 // pristine `duckdb/ducklake` submodule themselves and point `ducklake.corpus.root` at it.
 mavenPublishing {
-    publishToMavenCentral()
+    // Auto-publish + no-wait (see ducklake-catalog/build.gradle.kts for rationale).
+    publishToMavenCentral(true, DeploymentValidation.NONE)
     if (providers.gradleProperty("signingInMemoryKey").isPresent ||
         System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null
     ) {
