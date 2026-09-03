@@ -2061,12 +2061,45 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     // `ducklake_snapshot_changes.changes_made` serializer share one source
     // of truth.
 
-    override fun getDataPath(): String? {
+    override fun getDataPath(): String? = globalMetadataValue("data_path")
+
+    override fun getSpecVersion(): String? = globalMetadataValue("version")
+
+    override fun isEncrypted(): Boolean = globalMetadataValue("encrypted")?.equals("true", ignoreCase = true) == true
+
+    /** A catalog-scoped `ducklake_metadata` value (`scope IS NULL`; table/schema-scoped rows are settings). */
+    private fun globalMetadataValue(key: String): String? {
         val meta = DUCKLAKE_METADATA.`as`("meta")
         return dsl.select(meta.VALUE)
             .from(meta)
-            .where(meta.KEY.eq("data_path"))
+            .where(meta.KEY.eq(key))
+            .and(meta.SCOPE.isNull)
             .fetchOne(meta.VALUE)
+    }
+
+    /**
+     * Cached once per catalog instance: `version` and `encrypted` are written at catalog creation
+     * and only change through an upstream migration, which requires re-attaching anyway.
+     */
+    @Volatile
+    private var fileWriteGuard: FileWriteGuard? = null
+
+    private data class FileWriteGuard(val version: String?, val encrypted: Boolean)
+
+    /**
+     * Precondition for every operation that registers data or delete FILES (insert, add_files,
+     * delete, merge, flush, rewrite): the catalog must be at a spec version whose row shapes this
+     * library writes, and must not be encrypted (see [DucklakeEncryptedCatalogUnsupportedException]).
+     * Metadata-only DDL is not gated — it is version-agnostic within 0.4+ and unaffected by encryption.
+     */
+    private fun requireFileWritesSupported() {
+        val guard = fileWriteGuard ?: FileWriteGuard(getSpecVersion(), isEncrypted()).also { fileWriteGuard = it }
+        if (guard.version !in DucklakeSpecVersions.WRITABLE) {
+            throw DucklakeUnsupportedCatalogVersionException(catalogDatabaseUrl, guard.version)
+        }
+        if (guard.encrypted) {
+            throw DucklakeEncryptedCatalogUnsupportedException(catalogDatabaseUrl)
+        }
     }
 
     // ==================== View operations ====================
@@ -2958,6 +2991,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun flushInlinedData(tableId: Long, fragments: List<DucklakeWriteFragment>, preservedRowIdStart: Long) {
+        requireFileWritesSupported()
         executeWriteTransaction("flush inlined data for table $tableId") { tx ->
             val ctx = tx.dsl()
             val newSnapshotId = tx.getNewSnapshotId()
@@ -3564,6 +3598,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun commitInsert(tableId: Long, fragments: List<DucklakeWriteFragment>) {
+        requireFileWritesSupported()
         if (fragments.isEmpty()) {
             return
         }
@@ -3575,6 +3610,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun commitAddFiles(tableId: Long, fragments: List<DucklakeWriteFragment>) {
+        requireFileWritesSupported()
         if (fragments.isEmpty()) {
             return
         }
@@ -3885,6 +3921,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     private fun commitDeleteInternal(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>, readSnapshotId: Long?) {
+        requireFileWritesSupported()
         if (deleteFragments.isEmpty()) {
             return
         }
@@ -3919,6 +3956,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         insertFragments: List<DucklakeWriteFragment>,
         readSnapshotId: Long?,
     ) {
+        requireFileWritesSupported()
         if (deleteFragments.isEmpty() && insertFragments.isEmpty()) {
             return
         }
@@ -3941,6 +3979,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         fragments: List<DucklakeWriteFragment>,
         readSnapshotId: Long,
     ) {
+        requireFileWritesSupported()
         if (sourceDataFileIds.isEmpty() || fragments.isEmpty()) {
             return
         }
@@ -3969,6 +4008,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         mergedFiles: List<PartialMergedFile>,
         readSnapshotId: Long,
     ) {
+        requireFileWritesSupported()
         if (sourceDataFileIds.isEmpty() || mergedFiles.isEmpty()) {
             return
         }

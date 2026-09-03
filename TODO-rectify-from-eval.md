@@ -154,7 +154,11 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   end-snapshotted row into the replacement row.
 
 ### W-B7 · BUG · No encryption awareness — writes `encryption_key = NULL` into an encrypted lake
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (refuse). `isEncrypted()` / `getSpecVersion()` on the interface; every file-writing op
+  (insert, add_files, delete, merge, flush, rewrite×2) calls `requireFileWritesSupported()`, which throws the typed
+  `DucklakeEncryptedCatalogUnsupportedException`. DDL is not gated. Test: `TestJdbcDucklakeCatalogFileWriteGuards`
+  (DuckDB `ATTACH … ENCRYPTED` lake). Full per-file encryption support remains a feature request; readers of an
+  encrypted lake also need `encryption_key` exposed on `DucklakeDataFile` (not done — engines can't decrypt today).
 - Library: never reads `ducklake_metadata.encrypted`; `JdbcDucklakeCatalog.kt:3403-3436`, `:3920-3937` always
   write NULL.
 - Upstream: `ducklake_metadata_manager.cpp:1044-1047` throws `Database is encrypted, but file %s does not have an
@@ -265,7 +269,9 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   macros, partition-spec changes after create. Document as unsupported in `DucklakeCatalog.kt`.
 
 ### W-D8 · DRIFT · No `ducklake_metadata.version` check
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `getSpecVersion()`; file writes refused unless version ∈ `DucklakeSpecVersions.WRITABLE`
+  (`0.4`, `1.0`) with `DucklakeUnsupportedCatalogVersionException` pointing at the DuckDB ATTACH migration. Reads
+  are not gated. Test in `TestJdbcDucklakeCatalogFileWriteGuards`.
 - Library never reads or writes `version`. Upstream accepts `0.1, 0.2, 0.3-dev1, 0.3, 0.4-dev1, 0.4, 1.0` and
   migrates to `1.0` (`ducklake_initializer.cpp:151-188`, migrations `metadata_manager.cpp:234-350`). Library inserts
   assume the 1.0 shape; on `<0.4` they fail loudly, on `0.4` they succeed silently.

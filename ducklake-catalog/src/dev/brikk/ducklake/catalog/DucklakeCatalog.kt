@@ -19,7 +19,7 @@ import java.time.Instant
  * Interface for Ducklake SQL-based catalog operations.
  * Abstracts access to the 28 Ducklake metadata tables.
  */
-interface DucklakeCatalog {
+interface DucklakeCatalog : AutoCloseable {
     /**
      * Get the current (maximum) snapshot ID
      */
@@ -418,6 +418,17 @@ interface DucklakeCatalog {
      */
     fun getDataPath(): String?
 
+    /** `ducklake_metadata.version` — the DuckLake spec version of this catalog (null if the row is missing). */
+    fun getSpecVersion(): String?
+
+    /**
+     * Whether `ducklake_metadata.encrypted = 'true'`. Every data / delete file of an encrypted lake
+     * carries a per-file `encryption_key`; this library neither writes nor exposes them, so
+     * file-writing operations throw [DucklakeEncryptedCatalogUnsupportedException] on such a catalog
+     * and readers should not attempt to open its files without a key.
+     */
+    fun isEncrypted(): Boolean
+
     // ==================== Schema DDL ====================
 
     /**
@@ -803,5 +814,5 @@ interface DucklakeCatalog {
     /**
      * Close any resources (JDBC connections, etc)
      */
-    fun close()
+    override fun close()
 }

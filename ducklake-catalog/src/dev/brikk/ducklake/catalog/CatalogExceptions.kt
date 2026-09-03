@@ -107,3 +107,43 @@ open class DucklakeSchemaNotEmptyException(
 ) : DucklakeException(
     "Cannot drop schema $schemaName: schema is not empty (still has ${remainingObjectKinds.joinToString(", ")})",
 )
+
+/**
+ * Thrown when a file-writing operation (INSERT / DELETE / MERGE / add_files / flush / rewrite) is
+ * attempted against a catalog whose `ducklake_metadata.encrypted = 'true'`. Upstream requires every
+ * data and delete file of an encrypted lake to carry an `encryption_key`; a file registered without
+ * one is unreadable ("Database is encrypted, but file %s does not have an encryption key"). This
+ * library does not implement per-file encryption, so it refuses rather than corrupt the lake.
+ * Metadata-only DDL (schemas, tables, columns, views, comments) is unaffected.
+ */
+open class DucklakeEncryptedCatalogUnsupportedException(
+    val catalogDatabaseUrl: String,
+) : DucklakeException(
+    "DuckLake catalog at \"$catalogDatabaseUrl\" is encrypted (ducklake_metadata.encrypted = 'true'). " +
+        "This client cannot write encrypted data or delete files; the operation was refused so no " +
+        "unreadable file registration is committed.",
+)
+
+/**
+ * Thrown when a write is attempted against a catalog whose DuckLake spec `version` this library does
+ * not write. The row shapes it inserts (`ducklake_column.default_value_type`,
+ * `ducklake_name_mapping.is_partition`, `ducklake_data_file.partial_max`,
+ * `ducklake_schema_versions.table_id`, ...) exist from spec 0.4 on; upstream migrates older catalogs
+ * in place on ATTACH (`ducklake_initializer.cpp` / `MigrateV0x`), so the remedy is to attach the
+ * catalog once from a current DuckDB.
+ */
+open class DucklakeUnsupportedCatalogVersionException(
+    val catalogDatabaseUrl: String,
+    val version: String?,
+) : DucklakeException(
+    "DuckLake catalog at \"$catalogDatabaseUrl\" has spec version " + (version ?: "<missing>") +
+        "; this client writes spec versions ${DucklakeSpecVersions.WRITABLE.joinToString(", ")} only. " +
+        "Attach the catalog from a current DuckDB (INSTALL ducklake; LOAD ducklake; ATTACH ...) to migrate it, then retry.",
+)
+
+/** DuckLake spec versions as recorded in `ducklake_metadata.version`. */
+object DucklakeSpecVersions {
+    /** Versions whose catalog row shapes this library writes correctly (0.4 -> 1.0 was a version bump only). */
+    @JvmField
+    val WRITABLE: Set<String> = setOf("0.4", "1.0")
+}
