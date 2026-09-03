@@ -736,7 +736,11 @@ submodule pin matches `references/ducklake` (d8a1881). Full-corpus replay locall
 Default starter set (`TestIdentityControl.kt:71`) covers 58/471 files.
 
 ### S-B1 · BUG · `SltParser` silently truncates after an orphaned `endloop`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. Parser dispatches one record at a time (`parseRecord`); `concurrentloop` /
+  `concurrentforeach` consume their body up to `endloop` and surface as `SltUnsupported`, a top-level stray
+  `endloop` is reported and parsing continues, and `skipif`/`onlyif` guard the NEXT record even when that is a whole
+  `loop`/`foreach` (guardSpan removed). Dead `KNOWN_UNSUPPORTED` removed. `statement maybe` keeps its message
+  (`SltStatement.mayError`). Tests: `TestSltParserLoopEdges`.
 - `SltParser.kt:54` `"endloop" -> return i` at top level makes `parse()` (`:19`, return value ignored) drop everything
   after the first `endloop` not owned by a parsed loop. Triggered by every `concurrentloop` (12 files): the loop line
   becomes `SltUnsupported`, its body is emitted once with `${i}` unresolved, and all records after `endloop` vanish
@@ -748,7 +752,9 @@ Default starter set (`TestIdentityControl.kt:71`) covers 58/471 files.
   and at top level emit `SltUnsupported("stray endloop")` and continue.
 
 ### S-B2 · BUG · Conditions with `>`, `<`, `<>`, `>=`, `<=`, `&&` never match
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. New `SltConditions.evaluate` (shared by `SltExpander` and `ReplayDriver`) implements
+  upstream `TryParseConditions` / `CheckLoopCondition`: `&&`-joined terms, `=`/`<>` on text, `>`/`>=`/`<`/`<=`
+  numeric, unbound variable → error (as upstream). Tests: `TestSltConditions`.
 - `SltExpander.evalCondition` (`SltExpander.kt:116-127`) and `ReplayDriver.evalCondition` (`ReplayDriver.kt:217-226`)
   only understand `var=value`; others fall through to a system-name compare (`"i>25" == "duckdb"` → false) so
   `skipif i>25` never skips. Upstream: `sqllogic_command.cpp:203-276`. Verified: `loop i 0 2 / skipif i>0 / SELECT
@@ -756,14 +762,15 @@ Default starter set (`TestIdentityControl.kt:71`) covers 58/471 files.
   Also: unbound var silently degrades (upstream throws, `:256-259`).
 
 ### S-B3 · BUG · `ReplayDriver` engine attachment never reset on DETACH / re-ATTACH
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `DETACH <alias>` of the mirrored lake resets the engine connection so the next ATTACH
+  reconnects; a second, different lake attached alongside the mirrored one stops mirroring for the rest of the file.
 - `engineConnected` is set on the first ducklake ATTACH and never reset (`ReplayDriver.kt:140, 246-249`); 12 corpus
   files attach >1 distinct `ducklake:` target, often re-using alias `ducklake` (e.g.
   `data_inlining/partition_inlining.test:14,64,100,135` after `DETACH ducklake` at :57). Mirrored queries hit the
   engine's stale lake → false "diverged" failures. Not visible in identity control (engine = null).
 
 ### S-B4 · BUG (latent) · `Float` widened via `toDouble()` in `renderCell`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — `Float` renders via `Float.toString()` (nan/inf handled).
 - `GoldenComparator.kt:75`: `0.1::FLOAT` → `0.10000000149011612`; relative error 1.49e-8 > 1e-9 tolerance → mismatch
   vs golden `0.1`. Passes today only because corpus FLOAT goldens are dyadic. Use `Float.toString()`.
 

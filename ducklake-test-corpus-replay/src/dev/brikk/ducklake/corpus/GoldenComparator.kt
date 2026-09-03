@@ -72,7 +72,9 @@ object GoldenComparator {
             is Timestamp, is LocalDateTime, is OffsetDateTime, is java.time.ZonedDateTime,
             is LocalTime, is LocalDate -> renderTemporal(value)
             is Double -> renderFloating(value)
-            is Float -> renderFloating(value.toDouble())
+            // A FLOAT must render as a float: widening 0.1f to double gives 0.10000000149011612,
+            // which DuckDB's `0.1` golden would reject even under the numeric tolerance.
+            is Float -> renderFloating(value)
             is List<*> -> value.joinToString(", ", prefix = "[", postfix = "]") { renderNested(it) }
             is DuckDBStruct ->
                 value.map.entries.joinToString(", ", prefix = "{", postfix = "}") { (k, v) ->
@@ -152,6 +154,14 @@ object GoldenComparator {
             d == Double.POSITIVE_INFINITY -> "inf"
             d == Double.NEGATIVE_INFINITY -> "-inf"
             else -> d.toString()
+        }
+
+    private fun renderFloating(f: Float): String =
+        when {
+            f.isNaN() -> "nan"
+            f == Float.POSITIVE_INFINITY -> "inf"
+            f == Float.NEGATIVE_INFINITY -> "-inf"
+            else -> f.toString()
         }
 
     /** Microsecond fraction, trailing zeros trimmed, omitted when zero (DuckDB style). */

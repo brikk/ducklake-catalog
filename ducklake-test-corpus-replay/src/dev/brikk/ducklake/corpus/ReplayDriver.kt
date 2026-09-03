@@ -52,6 +52,7 @@ class ReplayDriver(
             )
         private val DATA_PATH_OPTION = Regex("DATA_PATH\\s+'([^']*)'", RegexOption.IGNORE_CASE)
         private val SNAPSHOT_PIN = Regex("SNAPSHOT_(VERSION|TIME)", RegexOption.IGNORE_CASE)
+        private val DETACH_PATTERN = Regex("^\\s*DETACH\\s+(?:DATABASE\\s+)?(?:IF\\s+EXISTS\\s+)?([A-Za-z_][A-Za-z0-9_]*)", RegexOption.IGNORE_CASE)
         private val TXN_BEGIN = Regex("^\\s*BEGIN\\b", RegexOption.IGNORE_CASE)
         private val TXN_END = Regex("^\\s*(COMMIT|ROLLBACK|ABORT)\\b", RegexOption.IGNORE_CASE)
         private val DML = Regex("^\\s*(insert|update|delete|merge|truncate)\\b", RegexOption.IGNORE_CASE)
@@ -74,6 +75,8 @@ class ReplayDriver(
             openTransactions.clear()
             mirrorsThisFile = 0
             engineConnected = false
+            engineAlias = null
+            engineTarget = null
             val halted = executeAll(file.records, oracle, emptyMap(), outcomes)
             FileResult(file.path, fileSkipReason = halted, outcomes = outcomes)
         }
@@ -88,6 +91,12 @@ class ReplayDriver(
     /** Per-file memo of original → DATA_PATH (re-attaches often omit options). */
     private val attachDataPaths = mutableMapOf<String, String>()
     private var engineConnected = false
+
+    /** Alias and (rewritten) metadata target of the lake the engine currently mirrors. */
+    private var engineAlias: String? = null
+    private var engineTarget: String? = null
+    private var pendingAlias: String? = null
+    private var pendingTarget: String? = null
 
     /**
      * Connections (by label, null = root) with an open oracle transaction.
@@ -112,6 +121,16 @@ class ReplayDriver(
      * statement is not a ducklake ATTACH or the engine is already connected).
      */
     private fun interceptAttach(sql: String): Pair<String, OracleAttachment?> {
+        DETACH_PATTERN.find(sql)?.let { d ->
+            if (engineConnected && d.groupValues[1].equals(engineAlias, ignoreCase = true)) {
+                // The lake the engine mirrors is being detached; a later ATTACH (often re-using the
+                // alias for a DIFFERENT lake) must reconnect the engine rather than mirror against
+                // the stale one.
+                engineConnected = false
+                engineAlias = null
+            }
+            return sql to null
+        }
         val m = ATTACH_PATTERN.find(sql) ?: return sql to null
         val options = m.groupValues[3]
         val dataPath = DATA_PATH_OPTION.find(options)?.groupValues?.get(1)
@@ -137,12 +156,24 @@ class ReplayDriver(
             engineConnected = false
             return effectiveSql to null
         }
-        if (engine == null || engineConnected) return effectiveSql to null
         val alias =
             m.groupValues[2].ifEmpty {
                 original.substringAfterLast('/').substringBefore('.') // duckdb derives from filename
             }
+        if (engine == null) return effectiveSql to null
+        if (engineConnected) {
+            if (rewritten != engineTarget) {
+                // A SECOND, different lake attached alongside the mirrored one: the engine knows only
+                // the first, so mirrored queries against the new alias would diverge for the wrong
+                // reason. Stop mirroring for the rest of the file (oracle-only from here).
+                engineConnected = false
+                engineAlias = null
+            }
+            return effectiveSql to null
+        }
         val effectiveDataPath = dataPath ?: attachDataPaths[original] ?: ""
+        pendingAlias = alias
+        pendingTarget = rewritten
         return effectiveSql to OracleAttachment(rewritten, effectiveDataPath, alias)
     }
 
@@ -213,17 +244,9 @@ class ReplayDriver(
         return null
     }
 
-    /** True when the guarded record applies. */
-    private fun evalCondition(expr: String, bindings: Map<String, String>): Boolean {
-        val eq = expr.indexOf('=')
-        if (eq > 0) {
-            val variable = expr.substring(0, eq)
-            val value = expr.substring(eq + 1)
-            val bound = bindings[variable]
-            if (bound != null) return bound == value
-        }
-        return expr.equals("duckdb", ignoreCase = true)
-    }
+    /** True when the guarded record applies (engine name or loop condition — see [SltConditions]). */
+    private fun evalCondition(expr: String, bindings: Map<String, String>): Boolean =
+        dev.brikk.ducklake.slt.SltConditions.evaluate(expr, "duckdb", bindings)
 
     private fun bind(text: String, bindings: Map<String, String>): String {
         var s = text
@@ -246,14 +269,15 @@ class ReplayDriver(
             if (pendingAttachment != null && !engineConnected) {
                 engine?.connect(pendingAttachment)
                 engineConnected = true
+                engineAlias = pendingAlias
+                engineTarget = pendingTarget
             }
             trackTransaction(sql, record.connection)
-            if (record.expectError && record.expectedError != null) {
+            if (record.expectError && !record.mayError && record.expectedError != null) {
                 RecordOutcome.Fail(record, "expected error containing '${record.expectedError}' but statement succeeded")
-            } else if (record.expectError) {
-                // `statement maybe` (expectedError == null): success is acceptable.
-                RecordOutcome.Pass(record)
             } else {
+                // `statement ok`, `statement error` without an expectation is handled in the
+                // catch below, and `statement maybe`: success is acceptable.
                 RecordOutcome.Pass(record)
             }
         } catch (e: SQLException) {

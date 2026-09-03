@@ -6,32 +6,40 @@ package dev.brikk.ducklake.slt
  *
  * The dialect (superset of classic sqllogictest):
  *  - `# comment`, blank-line record separation
- *  - `require <extension>` / `require-env NAME [value]`
+ *  - `require <extension>`
  *  - `test-env NAME value` (value may reference template vars)
- *  - `statement ok|error [conN]` + SQL lines [+ `----` + expected-error substring]
+ *  - `statement ok|error|maybe [conN]` + SQL lines [+ `----` + expected-error substring]
  *  - `query <types> [rowsort|nosort|label] [conN]` + SQL + `----` + expected rows
  *    (tab-separated columns, one row per line; empty block = empty result)
  *  - `loop var start end` … `endloop` (end exclusive), vars referenced `${var}`
  *  - `foreach var v1 v2 …` … `endloop`
- *  - `skipif <engine>` / `onlyif <engine>` guarding the next record
+ *  - `skipif <cond>` / `onlyif <cond>` guarding the next record (a whole loop if that is next);
+ *    `<cond>` is an engine name or a loop condition — see [SltConditions]
  *  - template vars: `{NAME}`, `${NAME}`, and `__TEST_DIR__`
  *
- * Constructs deliberately not modeled in v1 (parser emits [SltUnsupported], the
- * driver skips the whole file with a reason): `concurrentloop`, `restart`,
- * `sleep`, `mode`, `load`, `hash-threshold`, `set`, unknown directives.
+ * Constructs deliberately not modeled (parser emits [SltUnsupported], the driver skips the whole
+ * file with a reason): `concurrentloop` / `concurrentforeach` (their body is consumed so the rest
+ * of the file still parses), `require-env`, `restart`, `reconnect`, `sleep`, `mode`, `load`,
+ * `hash-threshold`, `set`, `unzip`, a stray `endloop`, unknown directives.
  */
 sealed interface SltRecord {
     val line: Int
 }
 
-/** `statement ok` / `statement error` with optional connection label. */
+/** `statement ok` / `statement error` / `statement maybe` with optional connection label. */
 data class SltStatement(
     override val line: Int,
     val sql: String,
+    /** True for `statement error` AND `statement maybe` (the statement is allowed to fail). */
     val expectError: Boolean,
     /** Substring (or `<REGEX>:`-prefixed regex) the error message must match; null = any error. */
     val expectedError: String?,
     val connection: String?,
+    /**
+     * `statement maybe`: success is acceptable too. When it does fail and [expectedError] is set,
+     * the error must still match (upstream `result_helper.cpp`).
+     */
+    val mayError: Boolean = false,
 ) : SltRecord
 
 enum class SortMode { NOSORT, ROWSORT, VALUESORT }

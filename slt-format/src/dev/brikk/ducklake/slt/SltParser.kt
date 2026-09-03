@@ -8,89 +8,123 @@ package dev.brikk.ducklake.slt
  */
 object SltParser {
 
-    private val KNOWN_UNSUPPORTED =
-        setOf("concurrentloop", "restart", "sleep", "mode", "load", "hash-threshold", "set", "reconnect", "unzip")
-
     private val CONNECTION_TOKEN = Regex("con\\d+")
 
     fun parse(path: String, content: String): SltFile {
         val lines = content.lines()
         val records = mutableListOf<SltRecord>()
-        parseInto(lines, 0, lines.size, records, path)
+        parseInto(lines, 0, lines.size, records, path, insideLoop = false)
         return SltFile(path, records)
     }
 
-    /** Parses [from, until) into [out]; returns index after the region. */
-    @Suppress("CyclomaticComplexMethod", "LongMethod")
-    private fun parseInto(lines: List<String>, from: Int, until: Int, out: MutableList<SltRecord>, path: String): Int {
+    /**
+     * Parses [from, until) into [out]; returns the index after the region. Inside a loop body
+     * ([insideLoop]) the matching `endloop` ends the region and its index is returned; at top level
+     * a stray `endloop` is reported as [SltUnsupported] and parsing continues — it must never
+     * silently truncate the rest of the file.
+     */
+    private fun parseInto(
+        lines: List<String>,
+        from: Int,
+        until: Int,
+        out: MutableList<SltRecord>,
+        path: String,
+        insideLoop: Boolean,
+    ): Int {
         var i = from
         while (i < until) {
-            val raw = lines[i]
-            val line = raw.trim()
+            val line = lines[i].trim()
             if (line.isEmpty() || line.startsWith("#")) {
                 i++
                 continue
             }
-            val lineNo = i + 1
-            val tokens = line.split(Regex("\\s+"))
-            when (tokens[0]) {
-                "require" -> {
-                    out += SltRequire(lineNo, tokens.drop(1).joinToString(" "))
-                    i++
-                }
-                "require-env" -> {
-                    out += SltUnsupported(lineNo, "require-env", line)
-                    i++
-                }
-                "test-env" -> {
-                    val name = tokens.getOrNull(1) ?: ""
-                    val value = tokens.drop(2).joinToString(" ")
-                    out += SltTestEnv(lineNo, name, value)
-                    i++
-                }
-                "statement" -> i = parseStatement(lines, i, until, tokens, out)
-                "query" -> i = parseQuery(lines, i, until, tokens, out)
-                "loop", "foreach" -> i = parseLoop(lines, i, until, tokens, out, path)
-                "endloop" -> return i // handled by the caller (parseLoop)
-                "skipif", "onlyif" -> {
-                    val engine = tokens.getOrNull(1) ?: ""
-                    val inner = mutableListOf<SltRecord>()
-                    i = parseInto(lines, i + 1, minOf(i + 1 + guardSpan(lines, i + 1, until), until), inner, path)
-                    val guarded = inner.firstOrNull()
-                    if (guarded == null) {
-                        out += SltUnsupported(lineNo, tokens[0], line)
-                    } else {
-                        out += SltConditional(lineNo, tokens[0] == "skipif", engine, guarded)
-                        inner.drop(1).forEach { out += it }
-                    }
-                }
-                in KNOWN_UNSUPPORTED -> {
-                    out += SltUnsupported(lineNo, tokens[0], line)
-                    i++
-                }
-                else -> {
-                    out += SltUnsupported(lineNo, tokens[0], line)
-                    i++
-                }
+            if (line.split(Regex("\\s+"))[0] == "endloop" && insideLoop) {
+                return i // handled by the caller (parseLoop)
             }
+            i = parseRecord(lines, i, until, out, path)
         }
         return i
     }
 
-    /** A conditional guards exactly the next record: span until the blank line after it. */
-    private fun guardSpan(lines: List<String>, from: Int, until: Int): Int {
-        var i = from
-        var seenContent = false
-        while (i < until) {
-            val t = lines[i].trim()
-            if (t.isEmpty()) {
-                if (seenContent) return i - from + 1
-            } else if (!t.startsWith("#")) {
-                seenContent = true
+    /** Parses exactly one directive starting at the non-blank line [start]; returns the index after it. */
+    @Suppress("CyclomaticComplexMethod")
+    private fun parseRecord(lines: List<String>, start: Int, until: Int, out: MutableList<SltRecord>, path: String): Int {
+        val line = lines[start].trim()
+        val lineNo = start + 1
+        val tokens = line.split(Regex("\\s+"))
+        return when (tokens[0]) {
+            "require" -> {
+                out += SltRequire(lineNo, tokens.drop(1).joinToString(" "))
+                start + 1
             }
+            "test-env" -> {
+                val name = tokens.getOrNull(1) ?: ""
+                val value = tokens.drop(2).joinToString(" ")
+                out += SltTestEnv(lineNo, name, value)
+                start + 1
+            }
+            "statement" -> parseStatement(lines, start, until, tokens, out)
+            "query" -> parseQuery(lines, start, until, tokens, out)
+            "loop", "foreach" -> parseLoop(lines, start, until, tokens, out, path)
+            "concurrentloop", "concurrentforeach" -> {
+                // Not executed, but it OWNS a body up to its endloop: consume that body so the
+                // records after the loop are still parsed (S-B1), then report the directive.
+                val discarded = mutableListOf<SltRecord>()
+                val end = skipLoopBody(lines, start, until, discarded, path)
+                out += SltUnsupported(lineNo, tokens[0], line)
+                end
+            }
+            "endloop" -> {
+                out += SltUnsupported(lineNo, "endloop", "stray endloop without a matching loop/foreach")
+                start + 1
+            }
+            "skipif", "onlyif" -> parseConditional(lines, start, until, tokens, out, path)
+            else -> {
+                out += SltUnsupported(lineNo, tokens[0], line)
+                start + 1
+            }
+        }
+    }
+
+    /**
+     * `skipif <cond>` / `onlyif <cond>` guard exactly the NEXT record — including a whole
+     * `loop`/`foreach` (upstream applies the guard to the following command). Several guards may be
+     * stacked; they nest.
+     */
+    private fun parseConditional(
+        lines: List<String>,
+        start: Int,
+        until: Int,
+        tokens: List<String>,
+        out: MutableList<SltRecord>,
+        path: String,
+    ): Int {
+        val lineNo = start + 1
+        val condition = tokens.getOrNull(1) ?: ""
+        var i = start + 1
+        while (i < until && lines[i].trim().let { it.isEmpty() || it.startsWith("#") }) {
             i++
         }
-        return until - from
+        if (i >= until) {
+            out += SltUnsupported(lineNo, tokens[0], lines[start].trim())
+            return i
+        }
+        val inner = mutableListOf<SltRecord>()
+        val end = parseRecord(lines, i, until, inner, path)
+        val guarded = inner.firstOrNull()
+        if (guarded == null) {
+            out += SltUnsupported(lineNo, tokens[0], lines[start].trim())
+        } else {
+            out += SltConditional(lineNo, tokens[0] == "skipif", condition, guarded)
+            inner.drop(1).forEach { out += it }
+        }
+        return end
+    }
+
+    /** Parses a loop body (into [body]) and returns the index just past its `endloop`. */
+    private fun skipLoopBody(lines: List<String>, start: Int, until: Int, body: MutableList<SltRecord>, path: String): Int {
+        val after = parseInto(lines, start + 1, until, body, path, insideLoop = true)
+        return if (after < until && lines[after].trim().split(Regex("\\s+"))[0] == "endloop") after + 1 else after
     }
 
     private fun parseStatement(
@@ -110,13 +144,10 @@ object SltParser {
         val (sql, afterSql) = readSqlBlock(lines, start + 1, until)
         val (block, i) = readResultBlock(lines, afterSql, until, trimLines = true)
         val expectedError: String? = block.joinToString("\n").ifEmpty { null }
-        // `statement maybe` = may or may not error: expectError with a null
-        // expectation means "an error, if any, is acceptable".
-        if (kind == "maybe") {
-            out += SltStatement(lineNo, sql, expectError = true, expectedError = null, connection = connection)
-        } else {
-            out += SltStatement(lineNo, sql, kind == "error", expectedError, connection)
-        }
+        // `statement maybe` = may or may not error. Upstream still requires the error, if one
+        // occurs, to match the expectation when one is given (result_helper.cpp), so the message
+        // is kept; `mayError` distinguishes it from `statement error`.
+        out += SltStatement(lineNo, sql, kind != "ok", expectedError, connection, mayError = kind == "maybe")
         return i
     }
 
@@ -209,9 +240,7 @@ object SltParser {
                 tokens.drop(2)
             }
         val body = mutableListOf<SltRecord>()
-        val after = parseInto(lines, start + 1, until, body, path)
-        // parseInto returns at the `endloop` line (or region end)
-        val end = if (after < until && lines[after].trim() == "endloop") after + 1 else after
+        val end = skipLoopBody(lines, start, until, body, path)
         out += SltLoop(lineNo, variable, values, body)
         return end
     }

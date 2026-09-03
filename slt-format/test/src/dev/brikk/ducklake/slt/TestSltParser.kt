@@ -149,3 +149,96 @@ class TestSltParser {
         assertThat(cond.record).isInstanceOf(SltQuery::class.java)
     }
 }
+
+class TestSltParserLoopEdges {
+
+    @Test
+    fun `concurrentloop consumes its body and the rest of the file still parses`() {
+        val file =
+            SltParser.parse(
+                "t",
+                """
+                statement ok
+                CREATE TABLE t(i INTEGER);
+
+                concurrentloop i 0 4
+
+                statement ok
+                INSERT INTO t VALUES (${'$'}{i});
+
+                endloop
+
+                query I
+                SELECT count(*) FROM t
+                ----
+                4
+                """.trimIndent(),
+            )
+        assertThat(file.records).hasSize(3)
+        assertThat(file.records[1]).isInstanceOf(SltUnsupported::class.java)
+        assertThat((file.records[1] as SltUnsupported).directive).isEqualTo("concurrentloop")
+        val tail = file.records[2] as SltQuery
+        assertThat(tail.sql).contains("count(*)")
+        assertThat(tail.expected).containsExactly("4")
+    }
+
+    @Test
+    fun `stray endloop is reported and does not truncate`() {
+        val file =
+            SltParser.parse(
+                "t",
+                """
+                endloop
+
+                statement ok
+                SELECT 1
+                """.trimIndent(),
+            )
+        assertThat(file.records).hasSize(2)
+        assertThat((file.records[0] as SltUnsupported).directive).isEqualTo("endloop")
+        assertThat(file.records[1]).isInstanceOf(SltStatement::class.java)
+    }
+
+    @Test
+    fun `skipif before a loop guards the whole loop`() {
+        val file =
+            SltParser.parse(
+                "t",
+                """
+                skipif duckdb
+                loop i 0 2
+
+                statement ok
+                SELECT ${'$'}{i}
+
+                endloop
+
+                statement ok
+                SELECT 'after'
+                """.trimIndent(),
+            )
+        assertThat(file.records).hasSize(2)
+        val guard = file.records[0] as SltConditional
+        assertThat(guard.record).isInstanceOf(SltLoop::class.java)
+        assertThat((guard.record as SltLoop).body).hasSize(1)
+        assertThat((file.records[1] as SltStatement).sql).contains("after")
+    }
+
+    @Test
+    fun `statement maybe keeps its expected message`() {
+        val file =
+            SltParser.parse(
+                "t",
+                """
+                statement maybe
+                SELECT 1
+                ----
+                some error
+                """.trimIndent(),
+            )
+        val st = file.records.single() as SltStatement
+        assertThat(st.mayError).isTrue()
+        assertThat(st.expectError).isTrue()
+        assertThat(st.expectedError).isEqualTo("some error")
+    }
+}

@@ -104,26 +104,10 @@ object SltExpander {
         }
     }
 
-    /**
-     * `skipif`/`onlyif` resolution. Two dialects: `<engine>` (matched against [engine]) and
-     * `var=value` over the current loop [bindings] — mirrors the replay driver.
-     */
+    /** `skipif`/`onlyif` resolution — see [SltConditions] for the two dialects. */
     private fun shouldRun(conditional: SltConditional, engine: String, bindings: Map<String, String>): Boolean {
-        val condition = evalCondition(conditional.engine, engine, bindings)
+        val condition = SltConditions.evaluate(conditional.engine, engine, bindings)
         return if (conditional.skipIf) !condition else condition
-    }
-
-    private fun evalCondition(expr: String, engine: String, bindings: Map<String, String>): Boolean {
-        val eq = expr.indexOf('=')
-        if (eq > 0) {
-            val variable = expr.substring(0, eq)
-            val value = expr.substring(eq + 1)
-            val bound = bindings[variable]
-            if (bound != null) {
-                return bound == value
-            }
-        }
-        return expr.equals(engine, ignoreCase = true)
     }
 
     private fun substitute(text: String, env: Map<String, String>, bindings: Map<String, String>): String {

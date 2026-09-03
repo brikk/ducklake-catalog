@@ -205,3 +205,41 @@ class TestSltExpander {
         assertThat(records.single().line).isEqualTo(1)
     }
 }
+
+class TestSltConditions {
+    private fun expand(content: String) = SltExpander.expand(SltParser.parse("t", content), "duckdb")
+
+    @Test
+    fun `numeric operators and conjunctions follow the DuckDB runner`() {
+        val out =
+            expand(
+                """
+                loop i 0 5
+
+                skipif i>2
+                statement ok
+                SELECT ${'$'}{i}
+
+                onlyif i>=1&&i<>3
+                statement ok
+                SELECT 'k${'$'}{i}'
+
+                endloop
+                """.trimIndent(),
+            )
+        assertThat(out.map { it.sql }).containsExactly(
+            "SELECT 0", "SELECT 1", "SELECT 'k1'", "SELECT 2", "SELECT 'k2'", "SELECT 'k4'",
+        )
+    }
+
+    @Test
+    fun `system names are compared case insensitively and loop conditions need a bound variable`() {
+        assertThat(SltConditions.evaluate("DuckDB", "duckdb", emptyMap())).isTrue()
+        assertThat(SltConditions.evaluate("postgres", "duckdb", emptyMap())).isFalse()
+        assertThat(SltConditions.evaluate("i<=25", "duckdb", mapOf("i" to "25"))).isTrue()
+        assertThat(SltConditions.evaluate("i<25", "duckdb", mapOf("i" to "25"))).isFalse()
+        org.assertj.core.api.Assertions.assertThatThrownBy { SltConditions.evaluate("i>0", "duckdb", emptyMap()) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("loop iterator")
+    }
+}
