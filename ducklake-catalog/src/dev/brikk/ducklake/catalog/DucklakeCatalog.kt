@@ -674,36 +674,62 @@ interface DucklakeCatalog {
     // ==================== View operations ====================
 
     /**
-     * List all views in a schema at the given snapshot
+     * List all views in a schema at the given snapshot, each with its active tags.
+     * One catalog query (view rows LEFT JOIN `ducklake_tag`), never one per view.
      */
     fun listViews(schemaId: Long, snapshotId: Long): List<DucklakeView>
 
     /**
-     * Get a specific view by name at the given snapshot
+     * Get a specific view by name at the given snapshot, with its active tags.
      */
     fun getView(schemaName: String, viewName: String, snapshotId: Long): DucklakeView?
 
     /**
-     * Create a new view in the catalog.
-     * Creates a new snapshot and inserts the view row atomically.
+     * Create a new view. One snapshot: the `ducklake_view` row (with `column_aliases`
+     * encoded as the spec quoted list via [DucklakeQuotedList]) and one `ducklake_tag`
+     * row per entry of [tags] (`object_id = view_id`), all beginning at the new snapshot.
+     *
+     * @param columnAliases output column names; may be empty. Never pass engine-specific
+     *   payloads here — upstream parses this column at catalog load and fails the whole
+     *   catalog if it isn't a quoted list.
+     * @param tags engine metadata to attach. Use [DucklakeView.COMMENT_TAG_KEY] for the
+     *   view comment (interoperable with upstream `COMMENT ON VIEW`); namespace everything
+     *   else (e.g. `trino.column_types`). Null values are skipped.
      */
-    fun createView(schemaName: String, viewName: String, sql: String, dialect: String, viewMetadata: String?)
+    fun createView(
+        schemaName: String,
+        viewName: String,
+        sql: String,
+        dialect: String,
+        columnAliases: List<String>,
+        tags: Map<String, String?>,
+    )
 
     /**
      * Rename an existing view, optionally moving it across schemas.
-     * Preserves view identity (view_id/view_uuid) and creates a new snapshot atomically.
+     * Preserves view identity (view_id/view_uuid) — and therefore its tags — and
+     * creates a new snapshot atomically.
      */
     fun renameView(sourceSchemaName: String, sourceViewName: String, targetSchemaName: String, targetViewName: String)
 
     /**
-     * Replace active view metadata while preserving view identity.
-     * Used for view comment and column-comment updates.
+     * Replace the active view definition while preserving view identity. The view row is
+     * end-snapshotted and re-inserted with the new sql/dialect/aliases, and the view's
+     * tags are replaced wholesale by [tags] (existing tags absent from [tags] are
+     * end-snapshotted; null values are skipped). One snapshot.
      */
-    fun replaceViewMetadata(schemaName: String, viewName: String, sql: String, dialect: String, viewMetadata: String?)
+    fun replaceViewMetadata(
+        schemaName: String,
+        viewName: String,
+        sql: String,
+        dialect: String,
+        columnAliases: List<String>,
+        tags: Map<String, String?>,
+    )
 
     /**
-     * Drop an existing view from the catalog.
-     * Creates a new snapshot and sets end_snapshot on the view row atomically.
+     * Drop an existing view. One snapshot: end-snapshots the view row and all of its
+     * active tags.
      */
     fun dropView(schemaName: String, viewName: String)
 

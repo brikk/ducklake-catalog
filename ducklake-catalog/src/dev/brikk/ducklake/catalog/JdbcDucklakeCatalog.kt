@@ -45,6 +45,8 @@ import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_TABLE
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_TABLE_COLUMN_STATS
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_TABLE_STATS
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_TAG
+import dev.brikk.ducklake.catalog.schema.tables.DucklakeTagTable
+import dev.brikk.ducklake.catalog.schema.tables.DucklakeViewTable
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_VIEW
 import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeColumnMappingRecord
 import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeColumnRecord
@@ -59,7 +61,6 @@ import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeSnapshotRecord
 import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeTableColumnStatsRecord
 import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeTableRecord
 import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeTableStatsRecord
-import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeViewRecord
 import org.jooq.Condition
 import org.jooq.DSLContext
 import org.jooq.Field
@@ -1952,23 +1953,115 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun listViews(schemaId: Long, snapshotId: Long): List<DucklakeView> {
         val view = DUCKLAKE_VIEW.`as`("view")
-        return dsl.selectFrom(view)
-            .where(view.SCHEMA_ID.eq(schemaId))
-            .and(activeAt(view, snapshotId))
-            .fetch { toDucklakeView(it) }
+        return fetchViewsWithTags(view.SCHEMA_ID.eq(schemaId), snapshotId)
     }
 
     override fun getView(schemaName: String, viewName: String, snapshotId: Long): DucklakeView? {
         val schema = getSchema(schemaName, snapshotId) ?: return null
 
         val view = DUCKLAKE_VIEW.`as`("view")
-        return dsl.selectFrom(view)
-            .where(view.SCHEMA_ID.eq(schema.schemaId))
-            .and(view.VIEW_NAME.eq(viewName))
-            .and(activeAt(view, snapshotId))
-            .fetchOne()
-            ?.let { toDucklakeView(it) }
+        val matches = fetchViewsWithTags(
+            view.SCHEMA_ID.eq(schema.schemaId).and(view.VIEW_NAME.eq(viewName)),
+            snapshotId,
+        )
+        if (matches.size > 1) {
+            throw IllegalStateException(
+                "Catalog corruption: ${matches.size} active ducklake_view rows for $schemaName.$viewName at snapshot $snapshotId",
+            )
+        }
+        return matches.firstOrNull()
     }
+
+    /**
+     * Views matching [viewFilter] that are active at [snapshotId], each joined with its
+     * active `ducklake_tag` rows — one row per (view, tag), tags LEFT-joined so a view
+     * without tags still appears. Mirrors upstream's view load (a correlated tag
+     * aggregation per view row) without depending on backend-specific list aggregation.
+     * Grouping happens here, so this is exactly one round trip for a whole schema.
+     */
+    private fun fetchViewsWithTags(viewFilter: Condition, snapshotId: Long): List<DucklakeView> {
+        val view = DUCKLAKE_VIEW.`as`("view")
+        val tag = DUCKLAKE_TAG.`as`("tag")
+        val rows = metadata.fetch(
+            dsl,
+            dsl.select(
+                view.VIEW_ID,
+                view.VIEW_UUID,
+                view.SCHEMA_ID,
+                view.VIEW_NAME,
+                view.DIALECT,
+                view.SQL,
+                view.COLUMN_ALIASES,
+                view.BEGIN_SNAPSHOT,
+                view.END_SNAPSHOT,
+                tag.KEY,
+                tag.VALUE,
+            )
+                .from(view)
+                .leftJoin(tag)
+                .on(tag.OBJECT_ID.eq(view.VIEW_ID))
+                .and(activeAt(tag, snapshotId))
+                .where(viewFilter)
+                .and(activeAt(view, snapshotId))
+                .orderBy(view.VIEW_ID, tag.KEY),
+        ) { r -> r }
+
+        return groupViewRows(rows, view, tag)
+    }
+
+    /** Folds the (view, tag) join rows — ordered by view_id — into one [DucklakeView] per view. */
+    private fun groupViewRows(rows: List<Record>, view: DucklakeViewTable, tag: DucklakeTagTable): List<DucklakeView> {
+        val result = ArrayList<DucklakeView>()
+        var current: DucklakeView? = null
+        var currentTags = LinkedHashMap<String, String>()
+        for (r in rows) {
+            val viewId = orZero(r.get(view.VIEW_ID))
+            if (current == null || current.viewId != viewId) {
+                if (current != null) {
+                    result.add(current.copy(tags = currentTags))
+                }
+                currentTags = LinkedHashMap()
+                val rawAliases = r.get(view.COLUMN_ALIASES)
+                val parsedAliases = parseColumnAliases(rawAliases)
+                current = DucklakeView(
+                    viewId,
+                    r.get(view.VIEW_UUID)?.toString()
+                        ?: throw IllegalStateException("ducklake_view.view_uuid is NULL for view_id=$viewId"),
+                    orZero(r.get(view.SCHEMA_ID)),
+                    r.get(view.VIEW_NAME)!!,
+                    r.get(view.SQL)!!,
+                    r.get(view.DIALECT)!!,
+                    parsedAliases ?: emptyList(),
+                    emptyMap(),
+                    orZero(r.get(view.BEGIN_SNAPSHOT)),
+                    r.get(view.END_SNAPSHOT),
+                    malformedColumnAliases = if (parsedAliases == null) rawAliases else null,
+                )
+            }
+            val key = r.get(tag.KEY)
+            val value = r.get(tag.VALUE)
+            if (key != null && value != null) {
+                currentTags[key] = value
+            }
+        }
+        if (current != null) {
+            result.add(current.copy(tags = currentTags))
+        }
+        return result
+    }
+
+    /**
+     * `ducklake_view.column_aliases` is a spec quoted list. Returns null when the stored text
+     * is anything else (a non-conformant writer's payload) so the caller can flag the view
+     * via [DucklakeView.malformedColumnAliases] instead of failing the whole listing.
+     */
+    private fun parseColumnAliases(raw: String?): List<String>? =
+        try {
+            DucklakeQuotedList.parse(raw)
+        }
+        catch (_: IllegalArgumentException) {
+            null
+        }
 
     // Write transaction infrastructure
 
@@ -2215,13 +2308,21 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         return changes.joinToString("; ")
     }
 
-    override fun createView(schemaName: String, viewName: String, sql: String, dialect: String, viewMetadata: String?) {
+    override fun createView(
+        schemaName: String,
+        viewName: String,
+        sql: String,
+        dialect: String,
+        columnAliases: List<String>,
+        tags: Map<String, String?>,
+    ) {
         executeWriteTransaction("create view $schemaName.$viewName") { tx ->
             val schemaId = tx.resolveSchemaId(schemaName)
             val viewId = tx.allocateCatalogId()
             tx.recordChange(WriteChange.CreatedView(schemaId, schemaName, viewName))
 
-            insertViewRow(tx, viewId, UUID.fromString(newCatalogUuid()), schemaId, viewName, dialect, sql, viewMetadata)
+            insertViewRow(tx, viewId, UUID.fromString(newCatalogUuid()), schemaId, viewName, dialect, sql, columnAliases)
+            insertViewTags(tx, viewId, tags)
             tx.incrementSchemaVersion()
         }
     }
@@ -2231,6 +2332,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val schemaId = tx.resolveSchemaId(schemaName)
             val view = resolveActiveViewRow(tx, schemaId, viewName)
             endSnapshotActiveView(tx, view.viewId)
+            endSnapshotActiveViewTags(tx, view.viewId)
             tx.recordChange(WriteChange.DroppedView(view.viewId))
             tx.incrementSchemaVersion()
         }
@@ -2253,6 +2355,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 throw RuntimeException("Relation already exists: $targetSchemaName.$targetViewName")
             }
 
+            // Tags are keyed by view_id, which is preserved — nothing to do for them.
             endSnapshotActiveView(tx, sourceView.viewId)
             insertViewRow(
                 tx,
@@ -2262,7 +2365,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 targetViewName,
                 sourceView.dialect,
                 sourceView.sql,
-                sourceView.viewMetadata.orElse(null),
+                sourceView.columnAliasesForReinsert("rename"),
             )
             // Upstream's ParseChangeType does not recognize `renamed_view`; a rename is
             // semantically a schema/name change, so emit `altered_view` to stay
@@ -2272,13 +2375,25 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    override fun replaceViewMetadata(schemaName: String, viewName: String, sql: String, dialect: String, viewMetadata: String?) {
+    override fun replaceViewMetadata(
+        schemaName: String,
+        viewName: String,
+        sql: String,
+        dialect: String,
+        columnAliases: List<String>,
+        tags: Map<String, String?>,
+    ) {
         executeWriteTransaction("alter view $schemaName.$viewName") { tx ->
             val schemaId = tx.resolveSchemaId(schemaName)
             val view = resolveActiveViewRow(tx, schemaId, viewName)
 
             endSnapshotActiveView(tx, view.viewId)
-            insertViewRow(tx, view.viewId, view.viewUuid, schemaId, viewName, dialect, sql, viewMetadata)
+            insertViewRow(tx, view.viewId, view.viewUuid, schemaId, viewName, dialect, sql, columnAliases)
+            // Wholesale replace: end every active tag, then insert the new set. Simpler than
+            // diffing and gives every tag a begin_snapshot equal to the view row's, which is
+            // what upstream's per-snapshot view load expects.
+            endSnapshotActiveViewTags(tx, view.viewId)
+            insertViewTags(tx, view.viewId, tags)
             tx.recordChange(WriteChange.AlteredView(view.viewId))
             tx.incrementSchemaVersion()
         }
@@ -2303,14 +2418,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (row == null) {
             throw RuntimeException("View not found: schema_id=$schemaId, view_name=$viewName")
         }
+        val viewId = orZero(row.get(view.VIEW_ID))
+        val rawAliases = row.get(view.COLUMN_ALIASES)
         return ActiveViewRow(
-            orZero(row.get(view.VIEW_ID)),
+            viewId,
             row.get(view.VIEW_UUID),
             orZero(row.get(view.SCHEMA_ID)),
             row.get(view.VIEW_NAME),
             row.get(view.DIALECT),
             row.get(view.SQL),
-            Optional.ofNullable(row.get(view.COLUMN_ALIASES)),
+            parseColumnAliases(rawAliases),
+            rawAliases,
         )
     }
 
@@ -2322,7 +2440,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         viewName: String,
         dialect: String,
         viewSql: String,
-        viewMetadata: String?,
+        columnAliases: List<String>,
     ) {
         val view = DUCKLAKE_VIEW.`as`("view")
         tx.dsl().insertInto(view)
@@ -2333,8 +2451,36 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .set(view.VIEW_NAME, viewName)
             .set(view.DIALECT, dialect)
             .set(view.SQL, viewSql)
-            .set(view.COLUMN_ALIASES, viewMetadata)
+            // Spec quoted list — upstream parses this at catalog load and fails the WHOLE
+            // catalog on anything else. Never store engine payloads here; use tags.
+            .set(view.COLUMN_ALIASES, DucklakeQuotedList.encode(columnAliases))
             .execute()
+    }
+
+    private fun insertViewTags(tx: DucklakeWriteTransaction, viewId: Long, tags: Map<String, String?>) {
+        val tag = DUCKLAKE_TAG.`as`("tag")
+        for ((key, value) in tags) {
+            if (value == null) {
+                continue
+            }
+            tx.dsl().insertInto(tag)
+                .set(tag.OBJECT_ID, viewId)
+                .set(tag.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
+                .set(tag.KEY, key)
+                .set(tag.VALUE, value)
+                .execute()
+        }
+    }
+
+    private fun endSnapshotActiveViewTags(tx: DucklakeWriteTransaction, viewId: Long) {
+        val tag = DUCKLAKE_TAG.`as`("tag")
+        metadata.execute(
+            tx.dsl(),
+            tx.dsl().update(tag)
+                .set(tag.END_SNAPSHOT, tx.getNewSnapshotId())
+                .where(tag.OBJECT_ID.eq(viewId))
+                .and(tag.END_SNAPSHOT.isNull),
+        )
     }
 
     private fun endSnapshotActiveView(tx: DucklakeWriteTransaction, viewId: Long) {
@@ -2356,8 +2502,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val viewName: String,
         val dialect: String,
         val sql: String,
-        val viewMetadata: Optional<String>,
-    )
+        /** Null when [rawColumnAliases] is not a spec quoted list (non-conformant writer). */
+        val columnAliases: List<String>?,
+        val rawColumnAliases: String?,
+    ) {
+        /** Aliases to carry into a re-inserted row; refuses to launder a malformed payload. */
+        fun columnAliasesForReinsert(operation: String): List<String> =
+            columnAliases ?: throw IllegalStateException(
+                "Cannot $operation view $viewName: its ducklake_view.column_aliases is not a spec quoted list " +
+                    "(written by a non-conformant writer; drop and recreate it instead): $rawColumnAliases",
+            )
+    }
 
     // ==================== Schema DDL ====================
 
@@ -4413,26 +4568,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 orZero(r.tableId),
                 orZero(r.recordCount),
                 orZero(r.fileSizeBytes),
-            )
-        }
-
-        private fun toDucklakeView(r: DucklakeViewRecord): DucklakeView {
-            val viewUuid: UUID? = r.viewUuid
-            // The Kotlin-ported DucklakeView record declares viewUuid as non-null; the Java
-            // side passed null straight through without checking. Mirror the Java shape via
-            // `!!` so a null viewUuid surfaces as an NPE here, matching the new record
-            // contract. (Reviewer note: kit step or DucklakeView record could widen to
-            // String? to restore the exact prior pass-through.)
-            return DucklakeView(
-                orZero(r.viewId),
-                viewUuid?.toString()!!,
-                orZero(r.schemaId),
-                r.viewName!!,
-                r.sql!!,
-                r.dialect!!,
-                r.columnAliases,
-                orZero(r.beginSnapshot),
-                r.endSnapshot,
             )
         }
     }

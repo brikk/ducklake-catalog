@@ -214,7 +214,6 @@ sealed interface WriteChange {
          * `third_party/ducklake/src/common/ducklake_util.cpp`: wrap in double
          * quotes and escape embedded `"` by doubling.
          */
-        fun writeQuotedValue(value: String): String =
-            "\"${value.replace("\"", "\"\"")}\""
+        fun writeQuotedValue(value: String): String = DucklakeQuotedList.encodeValue(value)
     }
 }

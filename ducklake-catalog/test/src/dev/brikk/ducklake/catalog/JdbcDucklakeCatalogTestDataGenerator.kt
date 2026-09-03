@@ -114,6 +114,7 @@ object JdbcDucklakeCatalogTestDataGenerator {
             server.getUser(),
             server.getPassword(),
             dataDir,
+            attachUri,
         )
     }
 
@@ -153,5 +154,7 @@ object JdbcDucklakeCatalogTestDataGenerator {
         val user: String,
         val password: String,
         val dataDir: Path,
+        /** `ducklake:postgres:...` URI a DuckDB `ATTACH` uses to open this same catalog. */
+        val duckDbAttachUri: String,
     )
 }

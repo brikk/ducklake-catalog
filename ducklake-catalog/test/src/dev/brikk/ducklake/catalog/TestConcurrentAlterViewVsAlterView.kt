@@ -56,7 +56,7 @@ class TestConcurrentAlterViewVsAlterView {
 
             // The view exists before the race; both writers want to rewrite its SQL.
             catalog.createView("test_schema", "alter_dueling_view",
-                "SELECT 1 AS x", "trino", null)
+                "SELECT 1 AS x", "trino", listOf("x"), emptyMap())
         }
 
         @AfterAll
@@ -78,11 +78,11 @@ class TestConcurrentAlterViewVsAlterView {
             catalog,
             Runnable {
                 catalog.replaceViewMetadata("test_schema", "alter_dueling_view",
-                    "SELECT 2 AS winner_sql", "trino", null)
+                    "SELECT 2 AS winner_sql", "trino", listOf("winner_sql"), emptyMap())
             },
             Runnable {
                 catalog.replaceViewMetadata("test_schema", "alter_dueling_view",
-                    "SELECT 3 AS loser_sql", "trino", null)
+                    "SELECT 3 AS loser_sql", "trino", listOf("loser_sql"), emptyMap())
             })
 
         assertThat(result.loserException)

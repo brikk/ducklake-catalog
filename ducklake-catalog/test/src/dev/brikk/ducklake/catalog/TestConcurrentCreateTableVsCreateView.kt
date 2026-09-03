@@ -76,7 +76,7 @@ class TestConcurrentCreateTableVsCreateView {
             },
             Runnable {
                 catalog.createView("test_schema", "shared_name",
-                    "SELECT 1 AS x", "trino", null)
+                    "SELECT 1 AS x", "trino", listOf("x"), emptyMap())
             })
 
         assertThat(result.loserException)

@@ -411,35 +411,38 @@ class TestJacksonWireFormat {
         assertRoundTrip(DucklakeTable::class.java, instance)
     }
 
-    // --- DucklakeView (Optional<String> viewMetadata, OptionalLong endSnapshot) ---
+    // --- DucklakeView (columnAliases list + tags map, nullable endSnapshot) ---
 
     @Test
-    fun viewOptionalPresent() {
+    fun viewWithAliasesAndTags() {
         val instance = DucklakeView(
             1L, "vu", 2L, "v", "SELECT 1", "duckdb",
-            "meta", 3L, 4L,
+            listOf("a", "b"), mapOf("comment" to "c", "trino.column_types" to "\"bigint\""), 3L, 4L,
         )
         assertJson(
             DucklakeView::class.java,
             instance,
             """{"viewId":1,"viewUuid":"vu","schemaId":2,"viewName":"v","sql":"SELECT 1",""" +
-                """"dialect":"duckdb","viewMetadata":"meta","beginSnapshot":3,"endSnapshot":4}""",
+                """"dialect":"duckdb","columnAliases":["a","b"],""" +
+                """"tags":{"comment":"c","trino.column_types":"\"bigint\""},"beginSnapshot":3,"endSnapshot":4}""",
         )
         assertRoundTrip(DucklakeView::class.java, instance)
+        assertThat(instance.comment).isEqualTo("c")
     }
 
     @Test
-    fun viewOptionalEmpty() {
+    fun viewEmptyAliasesNoTags() {
         val instance = DucklakeView(
             1L, "vu", 2L, "v", "SELECT 1", "duckdb",
-            null, 3L, null,
+            emptyList(), emptyMap(), 3L, null,
         )
         assertJson(
             DucklakeView::class.java,
             instance,
             """{"viewId":1,"viewUuid":"vu","schemaId":2,"viewName":"v","sql":"SELECT 1",""" +
-                """"dialect":"duckdb","beginSnapshot":3}""",
+                """"dialect":"duckdb","columnAliases":[],"tags":{},"beginSnapshot":3}""",
         )
         assertRoundTrip(DucklakeView::class.java, instance)
+        assertThat(instance.comment).isNull()
     }
 }

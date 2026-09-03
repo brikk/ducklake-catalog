@@ -130,7 +130,7 @@ class TestConcurrentDropDueling {
     fun duelingDropViewLoserFails() {
         catalog.createView(
             "test_schema", "drop_dueling_view",
-            "SELECT 1 AS x", "trino", null,
+            "SELECT 1 AS x", "trino", listOf("x"), emptyMap(),
         )
 
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(

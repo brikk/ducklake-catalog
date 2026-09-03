@@ -236,36 +236,10 @@ class InterveningChanges {
             return cur.input.substring(start, cur.pos)
         }
 
-        /**
-         * Mirrors upstream's `DuckLakeUtil::ParseQuotedValue`
-         * (common/ducklake_util.cpp:16): expects opening `"`, scans until
-         * matching `"`, treats `""` as an escaped literal `"`.
-         */
+        /** Delegates to [DucklakeQuotedList.parseValue] (upstream `DuckLakeUtil::ParseQuotedValue`). */
         private fun parseQuotedValue(input: String, startPos: Int): ParsedQuotedValue {
-            if (startPos >= input.length || input[startPos] != '"') {
-                throw IllegalArgumentException(
-                    "Failed to parse quoted value - expected opening quote at position $startPos in: $input",
-                )
-            }
-            val sb = StringBuilder()
-            var p = startPos + 1
-            while (p < input.length) {
-                val c = input[p]
-                if (c == '"') {
-                    p++
-                    if (p < input.length && input[p] == '"') {
-                        sb.append('"')
-                        p++
-                        continue
-                    }
-                    return ParsedQuotedValue(sb.toString(), p)
-                }
-                sb.append(c)
-                p++
-            }
-            throw IllegalArgumentException(
-                "Failed to parse quoted value - unterminated quote in: $input",
-            )
+            val parsed = DucklakeQuotedList.parseValue(input, startPos)
+            return ParsedQuotedValue(parsed.value, parsed.endPos)
         }
 
         /**
