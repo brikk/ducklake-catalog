@@ -167,7 +167,16 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   `CatalogException` when `encrypted = 'true'`. Full support (per-file keys) is a separate feature.
 
 ### W-B8 · BUG · Global column-stat merge tightens bounds incorrectly (and W-B2 makes DuckDB trust them)
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `DucklakeStatTypes` now has a `ComparisonClass` (numeric / temporal / boolean / text /
+  uncomparable) matching upstream `RequiresValueComparison`; temporal stats parse both DuckDB (`2024-01-01 00:00:00`,
+  `+00`) and ISO (`T`, `Z`, `+02:00`) spellings to an epoch key; text compares by code point (UTF-8 order); blob /
+  interval never compare. New `BoundsAccumulator` reproduces upstream `MergeStats` exactly (all-NULL file contributes
+  nothing; a file missing one bound poisons it; unknown never recovers; seeding from a stored NULL row = "no data"
+  as upstream's `LoadStats`). All four merge sites (`getColumnStats`, `aggregateActiveColumnStats`,
+  `AggregatedColumnStats`, existing+aggregate in `applyInsertFragments`) use it; the old `existing==null →
+  candidate` was upstream-parity and is kept, `candidate==null → existing` is gone.
+  `invalidateStatBoundsIfComparisonClassChanged` keys on the class, not just numeric-ness. Tests in
+  `TestDucklakeStatTypes` (mixed spellings, offsets, infinity, code-point order, accumulator semantics).
 - `mergedMinBound` / `mergedMaxBound` (`JdbcDucklakeCatalog.kt:4335-4347`): `existing == null → candidate`
   resurrects a bound upstream had marked unknown; `candidate == null → existing` keeps a bound when the new file has
   none. Upstream `ducklake_stats.cpp:129-183`: once `has_min = false` with values present it stays false, and a file
@@ -433,12 +442,15 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   dead `ducklake_tag` rows (upstream mm.cpp:5043-5052) are not deleted. Metadata leak only.
 
 ### R-D6 · DRIFT · `getColumnStats` NULL min/max handling
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED with W-B8 (`BoundsAccumulator`).
 - `:1154-1159` skips NULL and keeps other files' bound → reported min/max is not a valid bound; upstream sets
   `has_min=false` on any file lacking it (`ducklake_stats.cpp:150-183`). Read-side twin of W-B8.
 
 ### R-D7 · DRIFT · Pruning comparison model (`parseStat`)
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED with W-B8: `parseStat` returns null (never prune) for blob/interval/nested, a typed key
+  for temporal/boolean/numeric, and a code-point-ordered wrapper for varchar. Caller bounds
+  (`ColumnRangePredicate`) go through the same parser, so an ISO-formatted Trino bound compares correctly with a
+  DuckDB-formatted stored stat.
 - `DucklakeStatTypes.kt:84-103` is lexical for temporal/interval/blob/varchar; upstream `TRY_CAST`s
   numeric/temporal/boolean (mm.cpp:1167-1173, `ducklake_stats.hpp:18-20`) and never prunes BLOB
   (mm.cpp:1080-1081, 1278-1279). Blob stats are DuckDB escaped text (`\xHH`) whose order ≠ byte order → **false

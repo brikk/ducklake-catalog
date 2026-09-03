@@ -1204,8 +1204,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val columnTypes: Map<Long, String> = loadColumnTypes(dsl, tableId)
 
         val countAccumulators: MutableMap<Long, LongArray> = mutableMapOf() // [valueCount, nullCount, sizeBytes]
-        val minAccumulators: MutableMap<Long, String> = mutableMapOf()
-        val maxAccumulators: MutableMap<Long, String> = mutableMapOf()
+        val bounds: MutableMap<Long, DucklakeStatTypes.BoundsAccumulator> = mutableMapOf()
 
         val colstats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
@@ -1233,15 +1232,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             counts[1] += orZero(r.get(colstats.NULL_COUNT))
             counts[2] += orZero(r.get(colstats.COLUMN_SIZE_BYTES))
 
-            val columnType = columnTypes.getOrDefault(columnId, "")
-            val minValue = r.get(colstats.MIN_VALUE)
-            val maxValue = r.get(colstats.MAX_VALUE)
-            if (minValue != null) {
-                minAccumulators.merge(columnId, minValue) { a, b -> typedMin(a, b, columnType) }
-            }
-            if (maxValue != null) {
-                maxAccumulators.merge(columnId, maxValue) { a, b -> typedMax(a, b, columnType) }
-            }
+            // Upstream MergeStats semantics: a file lacking a bound makes the global bound unknown.
+            bounds.getOrPut(columnId) { DucklakeStatTypes.BoundsAccumulator(columnTypes[columnId]) }
+                .merge(r.get(colstats.MIN_VALUE), r.get(colstats.MAX_VALUE))
             null
         }
 
@@ -1253,8 +1246,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     counts[0],
                     counts[1],
                     counts[2],
-                    minAccumulators[columnId],
-                    maxAccumulators[columnId],
+                    bounds[columnId]?.min,
+                    bounds[columnId]?.max,
                 ),
             )
         }
@@ -1433,8 +1426,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val seenColumns: MutableSet<Long> = linkedSetOf()
         val containsNull: MutableMap<Long, Boolean> = mutableMapOf()
         val containsNan: MutableMap<Long, Boolean> = mutableMapOf()
-        val mins: MutableMap<Long, String> = mutableMapOf()
-        val maxs: MutableMap<Long, String> = mutableMapOf()
+        val bounds: MutableMap<Long, DucklakeStatTypes.BoundsAccumulator> = mutableMapOf()
         // Multi-table JOIN — routed through `metadata` for Quack compatibility.
         metadata.fetch(
             ctx,
@@ -1460,13 +1452,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (r.get(colstats.CONTAINS_NAN) == true) {
                 containsNan[columnId] = true
             }
-            val columnType = columnTypes.getOrDefault(columnId, "")
-            r.get(colstats.MIN_VALUE)?.let { v ->
-                mins.merge(columnId, v) { a, b -> typedMin(a, b, columnType) }
-            }
-            r.get(colstats.MAX_VALUE)?.let { v ->
-                maxs.merge(columnId, v) { a, b -> typedMax(a, b, columnType) }
-            }
+            // Upstream MergeStats semantics: a file lacking a bound makes the global bound unknown.
+            bounds.getOrPut(columnId) { DucklakeStatTypes.BoundsAccumulator(columnTypes[columnId]) }
+                .merge(r.get(colstats.MIN_VALUE), r.get(colstats.MAX_VALUE))
             null
         }
 
@@ -1477,8 +1465,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 setContainsNull(containsNull.getOrDefault(columnId, false))
                 // Asymmetric with contains_null: TRUE when set, SQL NULL otherwise (upstream convention).
                 setContainsNan(if (containsNan.getOrDefault(columnId, false)) java.lang.Boolean.TRUE else null)
-                setMinValue(mins[columnId])
-                setMaxValue(maxs[columnId])
+                setMinValue(bounds[columnId]?.min)
+                setMaxValue(bounds[columnId]?.max)
             }
         }
     }
@@ -3433,8 +3421,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /**
-     * On an `ALTER COLUMN ... TYPE` that changes a column's *comparison class* (numeric ⇄
-     * non-numeric), NULL out the per-file (`ducklake_file_column_stats`) and global
+     * On an `ALTER COLUMN ... TYPE` that changes a column's *comparison class*
+     * ([DucklakeStatTypes.comparisonClass]: numeric / temporal / boolean / text / uncomparable),
+     * NULL out the per-file (`ducklake_file_column_stats`) and global
      * (`ducklake_table_column_stats`) `min_value`/`max_value` for that column.
      *
      * DuckLake only permits *widening* promotions, but "widen to VARCHAR" is one of them: the
@@ -3460,7 +3449,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         oldColumnType: String?,
         newColumnType: String,
     ) {
-        if (DucklakeStatTypes.isNumericType(oldColumnType) == DucklakeStatTypes.isNumericType(newColumnType)) {
+        if (DucklakeStatTypes.comparisonClass(oldColumnType) == DucklakeStatTypes.comparisonClass(newColumnType)) {
             return
         }
         val fcs = DUCKLAKE_FILE_COLUMN_STATS.`as`("fcs")
@@ -3833,8 +3822,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 // the new value is unconditionally true. This sidesteps the missing
                 // `Field<Boolean>.or(Field<Boolean>)` overload in jOOQ.
                 val columnType: String? = columnTypes[columnId]
-                val mergedMin = mergedMinBound(existing.minValue, agg.minValue, columnType)
-                val mergedMax = mergedMaxBound(existing.maxValue, agg.maxValue, columnType)
+                // Seed with the stored global bound, then fold the commit's aggregate in with
+                // upstream MergeStats semantics: an aggregate that has SOME bound but not this one
+                // makes the stored bound unknown; an aggregate with no bounds at all (all-NULL
+                // files) leaves it alone.
+                val merged = DucklakeStatTypes.BoundsAccumulator(columnType).seed(existing.minValue, existing.maxValue)
+                if (agg.anyBound) {
+                    merged.merge(agg.minValue, agg.maxValue)
+                }
+                val mergedMin = merged.min
+                val mergedMax = merged.max
                 var upd = ctx.update(tabcolst)
                     .set(tabcolst.MIN_VALUE, DSL.`val`(mergedMin, tabcolst.MIN_VALUE.dataType))
                     .set(tabcolst.MAX_VALUE, DSL.`val`(mergedMax, tabcolst.MAX_VALUE.dataType))
@@ -4297,11 +4294,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     // Existing table-level column-stat bounds loaded for the incremental merge.
     private data class ExistingColumnStat(val minValue: String?, val maxValue: String?)
 
-    private class AggregatedColumnStats(private val columnType: String?) {
+    private class AggregatedColumnStats(columnType: String?) {
         var containsNull: Boolean = false
         var containsNan: Boolean = false
-        var minValue: String? = null
-        var maxValue: String? = null
+        private val bounds = DucklakeStatTypes.BoundsAccumulator(columnType)
+        val minValue: String? get() = bounds.min
+        val maxValue: String? get() = bounds.max
+        /** True once some file contributed a bound (upstream `any_valid`). */
+        var anyBound: Boolean = false
+            private set
 
         fun merge(stats: DucklakeFileColumnStats) {
             if (stats.nullCount > 0) {
@@ -4310,17 +4311,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (stats.containsNan) {
                 containsNan = true
             }
-            // Type-aware: numeric stats compare as BigDecimal, not lexically. A plain
-            // Kotlin String `<`/`>` here mis-orders text-encoded numbers ("12" < "8",
-            // "100" < "20") and, across files, can yield a swapped min > max candidate.
-            stats.minValue?.let { v ->
-                val current = minValue
-                minValue = if (current == null) v else DucklakeStatTypes.min(current, v, columnType)
+            // Type-aware and NULL-poisoning (upstream MergeStats): numeric/temporal/boolean compare
+            // as values, and a file lacking a bound makes the aggregate's bound unknown.
+            if (stats.minValue != null || stats.maxValue != null) {
+                anyBound = true
             }
-            stats.maxValue?.let { v ->
-                val current = maxValue
-                maxValue = if (current == null) v else DucklakeStatTypes.max(current, v, columnType)
-            }
+            bounds.merge(stats.minValue, stats.maxValue)
         }
     }
 
@@ -4414,12 +4410,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // the unqualified form `JdbcDucklakeCatalog.newCatalogUuid()`.
         fun newCatalogUuid(): String =
             V7_UUIDS.generate().toString()
-
-        private fun typedMin(a: String, b: String, columnType: String): String =
-            DucklakeStatTypes.min(a, b, columnType)
-
-        private fun typedMax(a: String, b: String, columnType: String): String =
-            DucklakeStatTypes.max(a, b, columnType)
 
         private fun hasActiveView(tx: DucklakeWriteTransaction, schemaId: Long, viewName: String): Boolean {
             val view = DUCKLAKE_VIEW.`as`("view")
@@ -4716,22 +4706,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 }
                 .toMap()
         }
-
-        // Type-aware merge of an existing stored bound with an aggregated candidate: null-tolerant
-        // (a null on either side yields the other), numeric otherwise via DucklakeStatTypes.
-        private fun mergedMinBound(existing: String?, candidate: String?, columnType: String?): String? =
-            when {
-                existing == null -> candidate
-                candidate == null -> existing
-                else -> DucklakeStatTypes.min(existing, candidate, columnType)
-            }
-
-        private fun mergedMaxBound(existing: String?, candidate: String?, columnType: String?): String? =
-            when {
-                existing == null -> candidate
-                candidate == null -> existing
-                else -> DucklakeStatTypes.max(existing, candidate, columnType)
-            }
 
         private fun toDucklakeColumn(r: DucklakeColumnRecord): DucklakeColumn {
             return DucklakeColumn(

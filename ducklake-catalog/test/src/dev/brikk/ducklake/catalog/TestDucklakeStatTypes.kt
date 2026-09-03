@@ -88,10 +88,90 @@ internal class TestDucklakeStatTypes {
     }
 
     @Test
-    fun isoDatesAndTimestampsSortLexically() {
+    fun isoDatesAndTimestampsCompareAsValues() {
         assertThat(DucklakeStatTypes.max("2024-01-15", "2024-12-01", "date")).isEqualTo("2024-12-01")
         assertThat(DucklakeStatTypes.max("2024-01-15T08:00", "2024-01-15T17:30", "timestamp"))
                 .isEqualTo("2024-01-15T17:30")
+    }
+
+    @Test
+    fun temporalSpellingsFromDuckDbAndIsoCompareCorrectly() {
+        // DuckDB writes `2024-01-01 00:00:00`, ISO writers `2024-01-01T00:00:00`: lexically ' ' < 'T'
+        // would make the ISO value the larger one regardless of the instant.
+        assertThat(DucklakeStatTypes.compare("2024-01-01 12:00:00", "2024-01-01T09:00:00", "timestamp")).isPositive()
+        assertThat(DucklakeStatTypes.max("2024-01-01 12:00:00", "2024-01-01T09:00:00", "timestamp"))
+                .isEqualTo("2024-01-01 12:00:00")
+        // Fractions and zone offsets are honoured for timestamptz.
+        assertThat(DucklakeStatTypes.compare("2024-01-01 12:00:00.5+00", "2024-01-01T13:00:00+02:00", "timestamptz"))
+                .`as`("12:00:00.5Z is later than 11:00Z").isPositive()
+        assertThat(DucklakeStatTypes.compare("2024-01-01 12:00:00+00", "2024-01-01T12:00:00Z", "timestamptz")).isZero()
+        assertThat(DucklakeStatTypes.compare("09:30:00", "9:30:00.000001".padStart(15, '0'), "time")).isNegative()
+        assertThat(DucklakeStatTypes.compare("infinity", "2999-12-31 23:59:59", "timestamp")).isPositive()
+        assertThat(DucklakeStatTypes.compare("-infinity", "0001-01-01", "date")).isNegative()
+        // Unparseable temporal text is unknown, never a guess.
+        assertThat(DucklakeStatTypes.parseStat("date", "yesterday")).isNull()
+        assertThat(DucklakeStatTypes.compareOrNull("yesterday", "2024-01-01", "date")).isNull()
+    }
+
+    @Test
+    fun blobAndIntervalAreNeverPrunedOrMerged() {
+        assertThat(DucklakeStatTypes.comparisonClass("blob")).isEqualTo(DucklakeStatTypes.ComparisonClass.UNCOMPARABLE)
+        assertThat(DucklakeStatTypes.parseStat("blob", "\\x00\\xFF")).isNull()
+        assertThat(DucklakeStatTypes.parseStat("interval", "1 year")).isNull()
+        val acc = DucklakeStatTypes.BoundsAccumulator("blob")
+        acc.merge("a", "b")
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isNull()
+    }
+
+    @Test
+    fun varcharComparesByCodePointNotUtf16Unit() {
+        // U+FF5E (BMP, one UTF-16 unit) vs U+1F600 (supplementary, surrogate pair 0xD83D 0xDE00):
+        // UTF-16 unit order says U+1F600 < U+FF5E; code point / UTF-8 order says the opposite.
+        val bmp = "\uFF5E"
+        val supplementary = "\uD83D\uDE00"
+        assertThat(bmp.compareTo(supplementary)).`as`("String.compareTo (UTF-16) disagrees").isPositive()
+        assertThat(DucklakeStatTypes.compare(bmp, supplementary, "varchar")).isNegative()
+        assertThat(DucklakeStatTypes.max(bmp, supplementary, "varchar")).isEqualTo(supplementary)
+    }
+
+    @Test
+    fun boundsAccumulatorFollowsUpstreamMergeStats() {
+        // All-NULL file contributes nothing; first bounded file seeds.
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc.merge(null, null)
+        assertThat(acc.min).isNull()
+        acc.merge("10", "20")
+        assertThat(acc.min).isEqualTo("10")
+        assertThat(acc.max).isEqualTo("20")
+        // Numeric, not lexical.
+        acc.merge("9", "100")
+        assertThat(acc.min).isEqualTo("9")
+        assertThat(acc.max).isEqualTo("100")
+        // A later all-NULL file still contributes nothing.
+        acc.merge(null, null)
+        assertThat(acc.min).isEqualTo("9")
+        // A file with a max but no min poisons min — and it never comes back.
+        acc.merge(null, "5")
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isEqualTo("100")
+        acc.merge("1", "2")
+        assertThat(acc.min).`as`("unknown does not recover").isNull()
+        assertThat(acc.max).isEqualTo("100")
+        // Unparseable under the type -> unknown too.
+        val acc2 = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc2.merge("1", "2")
+        acc2.merge("not-a-number", "3")
+        assertThat(acc2.min).isNull()
+        assertThat(acc2.max).isEqualTo("3")
+        // Seeding from a stored row with NULL bounds behaves like "no data yet" (upstream LoadStats).
+        val seeded = DucklakeStatTypes.BoundsAccumulator("int64").seed(null, null)
+        seeded.merge("4", "6")
+        assertThat(seeded.min).isEqualTo("4")
+        val seeded2 = DucklakeStatTypes.BoundsAccumulator("int64").seed("0", "50")
+        seeded2.merge(null, "60")
+        assertThat(seeded2.min).isNull()
+        assertThat(seeded2.max).isEqualTo("60")
     }
 
     @Test
@@ -107,7 +187,7 @@ internal class TestDucklakeStatTypes {
                 .isEqualTo(BigDecimal("170141183460469231731687303715884105727"))
         assertThat(DucklakeStatTypes.parseStat("decimal(10,2)", "3.14")).isEqualTo(BigDecimal("3.14"))
         assertThat(DucklakeStatTypes.parseStat("boolean", "true")).isEqualTo(java.lang.Boolean.TRUE)
-        assertThat(DucklakeStatTypes.parseStat("varchar", "hello")).isEqualTo("hello")
+        assertThat(DucklakeStatTypes.parseStat("varchar", "hello")).isEqualTo(DucklakeStatTypes.CodePointString("hello"))
         assertThat(DucklakeStatTypes.parseStat("int64", null)).isNull()
         assertThat(DucklakeStatTypes.parseStat("int64", "not-a-number")).isNull()
     }
