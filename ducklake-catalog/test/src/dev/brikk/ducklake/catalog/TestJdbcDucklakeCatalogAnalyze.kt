@@ -28,7 +28,7 @@ import java.sql.DriverManager
  * table-level aggregates (`ducklake_table_stats` + `ducklake_table_column_stats`) incrementally
  * on every write, and incremental maintenance only ever *widens* min/max, so the cached values
  * can drift loose (or simply wrong) over a table's lifetime. `analyzeTable` recomputes them from
- * ground truth: `record_count` from the supplied live count, `file_size_bytes` and the per-column
+ * ground truth: gross `record_count` from the active data files, `file_size_bytes` and the per-column
  * aggregates from the authoritative per-file stats of the currently-active data files.
  *
  * This pins the recompute by deliberately CORRUPTING the cached aggregates and asserting the call
@@ -116,12 +116,12 @@ class TestJdbcDucklakeCatalogAnalyze {
         //    `id`, and a fully MISSING row for `price` (deleted) to force re-insertion.
         corruptCachedStats(sentinelNextRowId)
 
-        // 2. Recompute from ground truth: 5 live rows.
-        catalog!!.analyzeTable(tableId, 5L)
+        // 2. Recompute from ground truth (5 rows in the active data files, none deleted).
+        catalog!!.analyzeTable(tableId)
 
         // 3a. Table stats: record_count + file_size_bytes recomputed, next_row_id PRESERVED.
         val repaired = catalog!!.getTableStats(tableId)!!
-        assertThat(repaired.recordCount).`as`("record_count set to the live count").isEqualTo(5L)
+        assertThat(repaired.recordCount).`as`("record_count = gross rows of the active data files").isEqualTo(5L)
         assertThat(repaired.fileSizeBytes)
             .`as`("file_size_bytes recomputed from the active data files")
             .isEqualTo(baselineFileSizeBytes)

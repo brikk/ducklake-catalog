@@ -13,6 +13,16 @@
  */
 package dev.brikk.ducklake.catalog
 
+/**
+ * A `ducklake_table_stats` row.
+ *
+ * @property recordCount the GROSS row count: rows ever written into the table's active data files
+ *   (and inlined tables), never reduced by DELETE. Upstream defines it this way and DuckDB uses
+ *   `record_count == live count` as the proof that no row was ever deleted and therefore that the
+ *   cached global column min/max are exact (`ducklake_scan.cpp` `min_max_exact`). It is NOT a live
+ *   row count — use [DucklakeCatalog.getLiveRowCount] for that.
+ * @property fileSizeBytes Σ `file_size_bytes` of the active data files.
+ */
 @JvmRecord
 data class DucklakeTableStats(
     val tableId: Long,

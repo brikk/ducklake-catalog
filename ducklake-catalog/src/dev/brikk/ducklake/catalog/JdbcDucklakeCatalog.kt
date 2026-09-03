@@ -1134,8 +1134,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun getColumnStats(tableId: Long, snapshotId: Long): List<DucklakeColumnStats> {
-        val columnTypes: Map<Long, String> = getTableColumns(tableId, snapshotId)
-            .associate { it.columnId to it.columnType }
+        // All column rows (nested leaves included) — per-file stats are keyed by leaf column_id.
+        val columnTypes: Map<Long, String> = loadColumnTypes(dsl, tableId)
 
         val countAccumulators: MutableMap<Long, LongArray> = mutableMapOf() // [valueCount, nullCount, sizeBytes]
         val minAccumulators: MutableMap<Long, String> = mutableMapOf()
@@ -1196,7 +1196,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         return result
     }
 
+    @Deprecated("record_count is the gross row count and is recomputed from the catalog; use analyzeTable(tableId)")
     override fun analyzeTable(tableId: Long, rowCount: Long) {
+        analyzeTable(tableId)
+    }
+
+    override fun analyzeTable(tableId: Long) {
         // Stats tables are mutable, non-snapshot-versioned side tables, so this is a plain catalog
         // transaction — no new snapshot, no `changes_made` entry (see the interface contract). It
         // mirrors `attemptWriteTransaction`'s connection handling without the snapshot/conflict
@@ -1206,8 +1211,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             try {
                 val ctx = forConnection(conn)
                 val snapshotId = readLatestSnapshotId(ctx)
-                recomputeTableStats(ctx, tableId, snapshotId, rowCount)
-                recomputeTableColumnStats(ctx, tableId, snapshotId)
+                recomputeTableStats(ctx, tableId, snapshotId)
+                // The per-file aggregate covers Parquet rows only. While the table has LIVE inlined
+                // rows (DuckDB data inlining) those rows' values are not in any per-file stats, so
+                // rebuilding the global bounds from them would produce bounds that are too tight —
+                // and with no deletes outstanding DuckDB would treat them as exact. Leave the
+                // incrementally-widened values alone in that case (upstream's
+                // RecomputeGlobalStatsAfterRewrite bails the same way when it cannot fold inlined data).
+                if (!hasLiveInlinedRows(tableId, snapshotId)) {
+                    recomputeTableColumnStats(ctx, tableId, snapshotId)
+                }
                 conn.commit()
             }
             catch (e: Exception) {
@@ -1217,28 +1230,39 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
+    private fun hasLiveInlinedRows(tableId: Long, snapshotId: Long): Boolean =
+        getInlinedDataInfos(tableId, snapshotId).any { it.hasLiveRows }
+
     /**
-     * `ducklake_table_stats`: set record_count to the live [rowCount], recompute file_size_bytes
-     * from the active data files, and PRESERVE next_row_id (the row-id allocator high-water mark).
-     * No PK/UNIQUE on table_id → explicit probe + INSERT-or-UPDATE (matches the write path).
+     * `ducklake_table_stats`: recompute `record_count` as the GROSS row count — every row of every
+     * active data file plus every row ever inlined into the table's live inlined-data tables,
+     * deleted or not (upstream `MergeFileStats` / inlined-insert accounting; deletes never subtract) —
+     * recompute `file_size_bytes` from the active data files, and PRESERVE `next_row_id` (the
+     * row-id allocator high-water mark). No PK/UNIQUE on table_id → explicit probe + INSERT-or-UPDATE
+     * (matches the write path).
      */
-    private fun recomputeTableStats(ctx: DSLContext, tableId: Long, snapshotId: Long, rowCount: Long) {
+    private fun recomputeTableStats(ctx: DSLContext, tableId: Long, snapshotId: Long) {
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        // Sum the active data files' byte sizes (single-table read — plain ctx).
-        val totalFileSize: Long = ctx.select(file.FILE_SIZE_BYTES)
+        var grossRecordCount = 0L
+        var totalFileSize = 0L
+        ctx.select(file.RECORD_COUNT, file.FILE_SIZE_BYTES)
             .from(file)
             .where(file.TABLE_ID.eq(tableId))
             .and(activeAt(file, snapshotId))
-            .fetch(file.FILE_SIZE_BYTES)
-            .sumOf { orZero(it) }
+            .fetch()
+            .forEach { r ->
+                grossRecordCount += orZero(r.get(file.RECORD_COUNT))
+                totalFileSize += orZero(r.get(file.FILE_SIZE_BYTES))
+            }
+        grossRecordCount += countGrossInlinedRows(tableId, snapshotId)
 
         val existing: DucklakeTableStatsRecord? = ctx.selectFrom(tabstats)
             .where(tabstats.TABLE_ID.eq(tableId))
             .fetchOne()
         if (existing != null) {
             ctx.update(tabstats)
-                .set(tabstats.RECORD_COUNT, rowCount)
+                .set(tabstats.RECORD_COUNT, grossRecordCount)
                 .set(tabstats.FILE_SIZE_BYTES, totalFileSize)
                 .where(tabstats.TABLE_ID.eq(tableId))
                 .execute()
@@ -1246,13 +1270,65 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         else {
             ctx.insertInto(tabstats)
                 .set(tabstats.TABLE_ID, tableId)
-                .set(tabstats.RECORD_COUNT, rowCount)
+                .set(tabstats.RECORD_COUNT, grossRecordCount)
                 // No prior row (table never went through the insert path): seed the row-id
-                // allocator high-water mark at the live row count.
-                .set(tabstats.NEXT_ROW_ID, rowCount)
+                // allocator high-water mark at the gross row count.
+                .set(tabstats.NEXT_ROW_ID, grossRecordCount)
                 .set(tabstats.FILE_SIZE_BYTES, totalFileSize)
                 .execute()
         }
+    }
+
+    /**
+     * Rows ever inserted into the table's inlined-data tables that are still there (`begin_snapshot <=
+     * S`, deleted or not). Flushed rows have been physically removed and are counted through the
+     * Parquet file they were flushed into instead.
+     */
+    private fun countGrossInlinedRows(tableId: Long, snapshotId: Long): Long =
+        getInlinedDataInfos(tableId, snapshotId).sumOf { info ->
+            val inlined = InlinedDataTable.of(tableId, info.schemaVersion)
+            try {
+                dsl.fetchCount(DSL.selectOne().from(inlined.table).where(inlined.beginSnapshot.le(snapshotId))).toLong()
+            }
+            catch (e: DataAccessException) {
+                log.log(
+                    System.Logger.Level.DEBUG,
+                    "Could not count inlined data rows from {0} (table may not exist): {1}",
+                    inlined.name, e.message,
+                )
+                0L
+            }
+        }
+
+    override fun getLiveRowCount(tableId: Long, snapshotId: Long): Long {
+        val file = DUCKLAKE_DATA_FILE.`as`("file")
+        val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
+        // Upstream GetNetDataFileRowCountSql: sum(record_count) of active data files, minus
+        // sum(delete_count) of active delete files whose data file is itself active (a TRUNCATE /
+        // DROP end-snapshots the data file and its deletes must then not double-subtract), minus
+        // inlined file deletions on active data files; plus the live rows of the inlined tables.
+        val grossParquet: Long = dsl.select(DSL.coalesce(DSL.sum(file.RECORD_COUNT), DSL.inline(0)))
+            .from(file)
+            .where(file.TABLE_ID.eq(tableId))
+            .and(activeAt(file, snapshotId))
+            .fetchOne(0, Long::class.java) ?: 0L
+        val deletedByFiles: Long = metadata.fetchOne(
+            dsl,
+            dsl.select(DSL.coalesce(DSL.sum(delfile.DELETE_COUNT), DSL.inline(0)))
+                .from(delfile)
+                .innerJoin(file).on(delfile.DATA_FILE_ID.eq(file.DATA_FILE_ID))
+                .where(delfile.TABLE_ID.eq(tableId))
+                .and(activeAt(delfile, snapshotId))
+                .and(activeAt(file, snapshotId)),
+        )?.get(0, Long::class.java) ?: 0L
+        val activeFileIds: Set<Long> = getDataFiles(tableId, snapshotId).mapTo(HashSet()) { it.dataFileId }
+        val inlinedFileDeletes: Long = getInlinedDeletes(tableId, snapshotId)
+            .filterKeys { it in activeFileIds }
+            .values.sumOf { it.size.toLong() }
+        val liveInlined: Long = getInlinedDataInfos(tableId, snapshotId)
+            .filter { it.hasLiveRows }
+            .sumOf { countInlinedRows(tableId, it.schemaVersion, snapshotId) }
+        return (grossParquet - deletedByFiles - inlinedFileDeletes + liveInlined).coerceAtLeast(0L)
     }
 
     /**
@@ -1286,9 +1362,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val tabcolst = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tabcolst")
         val colstats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        // Column types drive the typed min/max fold.
-        val columnTypes: Map<Long, String> = getTableColumns(tableId, snapshotId)
-            .associate { it.columnId to it.columnType }
+        // Column types drive the typed min/max fold. Per-file stats are keyed by LEAF column_id
+        // (nested struct/list/map children included), so the type map must cover every
+        // ducklake_column row, not just the top-level columns getTableColumns returns — a leaf
+        // without a type would fall back to a lexical compare ("9" > "10").
+        val columnTypes: Map<Long, String> = loadColumnTypes(ctx, tableId)
 
         val seenColumns: MutableSet<Long> = linkedSetOf()
         val containsNull: MutableMap<Long, Boolean> = mutableMapOf()
@@ -3896,14 +3974,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         executeWriteTransaction("rewrite data files for table $tableId") { tx ->
             assertNoNewerDeleteOnRewriteSources(tx, sourceDataFileIds, readSnapshotId)
-            val retiredFileSize = sumActiveSourceFileSize(tx, tableId, sourceDataFileIds)
+            val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
             // Register the merged file(s): begin = newSnapshotId, ordinary (no partial_max). This
             // also bumps table_stats record_count/file_size/next_row_id UP by the merged amounts and
             // widens the per-column table stats (a no-op since merged ⊆ source range).
             applyInsertFragments(tx, tableId, fragments)
             endSnapshotRewriteSources(tx, tableId, sourceDataFileIds)
-            netRewriteStats(tx, tableId, fragments.sumOf { it.recordCount }, retiredFileSize)
+            netRewriteStats(tx, tableId, retired)
 
             // Recorded as delete + insert: reuses the full conflict machinery (LogicalConflictCheck
             // verifies the sources are still active at commit → stale-read aborts non-retryably;
@@ -3930,7 +4008,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // not end-snapshotted, so the DeletedFromTable active-file check would misfire).
             assertRewriteSourcesStillPresent(tx, tableId, sourceDataFileIds)
             assertNoNewerDeleteOnRewriteSources(tx, sourceDataFileIds, readSnapshotId)
-            val retiredFileSize = sumActiveSourceFileSize(tx, tableId, sourceDataFileIds)
+            val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
             for (merged in mergedFiles) {
                 applyInsertFragments(tx, tableId, listOf(merged.fragment))
@@ -3947,7 +4025,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
 
             scheduleAndDeleteRewriteSources(tx, sourceDataFileIds)
-            netRewriteStats(tx, tableId, mergedFiles.sumOf { it.fragment.recordCount }, retiredFileSize)
+            netRewriteStats(tx, tableId, retired)
             val columnIds: Set<Long> = mergedFiles.flatMap { it.fragment.columnStats }.mapTo(HashSet()) { it.columnId }
             tx.recordChange(WriteChange.InsertedIntoTable(tableId, columnIds))
         }
@@ -4068,31 +4146,26 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    /**
-     * Total `file_size_bytes` of the active source files about to be retired — used to net
-     * `ducklake_table_stats.file_size_bytes`. record_count is intentionally NOT read here:
-     * compaction is row-count-preserving, so [netRewriteStats] backs the merged file's record_count
-     * out and leaves record_count unchanged.
-     */
-    private fun sumActiveSourceFileSize(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>): Long {
+    /** Gross `record_count` and `file_size_bytes` of the active source files about to be retired. */
+    private data class RetiredSourceStats(val recordCount: Long, val fileSizeBytes: Long)
+
+    private fun sumActiveSourceStats(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>): RetiredSourceStats {
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        return tx.dsl().select(file.FILE_SIZE_BYTES)
+        var records = 0L
+        var bytes = 0L
+        tx.dsl().select(file.RECORD_COUNT, file.FILE_SIZE_BYTES)
             .from(file)
             .where(file.TABLE_ID.eq(tableId))
             .and(file.DATA_FILE_ID.`in`(sourceDataFileIds))
-            .and(activeAt(file, tx.getCurrentSnapshotId()))
-            .fetch(file.FILE_SIZE_BYTES)
-            .filterNotNull()
-            .sum()
+            .and(file.END_SNAPSHOT.isNull)
+            .fetch()
+            .forEach { r ->
+                records += orZero(r.get(file.RECORD_COUNT))
+                bytes += orZero(r.get(file.FILE_SIZE_BYTES))
+            }
+        return RetiredSourceStats(records, bytes)
     }
 
-    /**
-     * End-snapshot the retired sources' active delete files first (they reference the data files),
-     * then the source data files themselves, at the new snapshot. The merged file has those deletes
-     * applied to its bytes, so the delete files are no longer needed going forward (kept for
-     * time-travel until expire/cleanup reclaims them). Routed through `metadata` so the Quack RPC
-     * binder accepts the UPDATE.
-     */
     private fun endSnapshotRewriteSources(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>) {
         val ctx = tx.dsl()
         val file = DUCKLAKE_DATA_FILE.`as`("file")
@@ -4116,24 +4189,30 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /**
-     * Net the table stats back to a row-count-preserving result: subtract the merged file's
-     * record_count ([applyInsertFragments] added it; the live row set is unchanged by compaction)
-     * and subtract the retired sources' total file_size. GREATEST(0, …) defends against underflow
-     * if stats were ever inconsistent with the file ledger.
+     * Bring `ducklake_table_stats` in line with the post-rewrite file set: `record_count` is the GROSS
+     * row count of the active data files (see [applyDeleteFragments]), so it drops by the retired
+     * sources' gross rows ([applyInsertFragments] already added the merged files' rows), and
+     * `file_size_bytes` drops by the retired bytes. Then the per-column global stats are rebuilt from
+     * the surviving files' per-file stats — the retired sources may have held the only rows at a
+     * bound, and a rewrite that dropped their deleted rows can leave `record_count == net`, at which
+     * point DuckDB trusts those bounds as exact. Mirrors upstream
+     * `RecomputeGlobalStatsAfterRewrite`. GREATEST(0, …) defends against underflow if stats were
+     * ever inconsistent with the file ledger.
      */
-    private fun netRewriteStats(tx: DucklakeWriteTransaction, tableId: Long, mergedRecordCount: Long, retiredFileSize: Long) {
+    private fun netRewriteStats(tx: DucklakeWriteTransaction, tableId: Long, retired: RetiredSourceStats) {
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
         tx.dsl().update(tabstats)
             .set(
                 tabstats.RECORD_COUNT,
-                DSL.greatest(DSL.inline(0L), tabstats.RECORD_COUNT.minus(mergedRecordCount)),
+                DSL.greatest(DSL.inline(0L), tabstats.RECORD_COUNT.minus(retired.recordCount)),
             )
             .set(
                 tabstats.FILE_SIZE_BYTES,
-                DSL.greatest(DSL.inline(0L), tabstats.FILE_SIZE_BYTES.minus(retiredFileSize)),
+                DSL.greatest(DSL.inline(0L), tabstats.FILE_SIZE_BYTES.minus(retired.fileSizeBytes)),
             )
             .where(tabstats.TABLE_ID.eq(tableId))
             .execute()
+        recomputeTableColumnStats(tx.dsl(), tableId, tx.getNewSnapshotId())
     }
 
     /**
@@ -4150,8 +4229,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ) {
         val ctx = tx.dsl()
         val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
-        val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
-        var totalNewDeleteCount: Long = 0
         val deleteFileRecords: MutableList<DucklakeDeleteFileRecord> = mutableListOf()
 
         // End-snapshot any prior active delete files for the data_file_ids we're about to
@@ -4159,9 +4236,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // data_file_id per snapshot (README:223, checkDeleteFileOverlap:1311-1312); the sink
         // unions prior-active positions with this commit's new positions into the new file,
         // so superseding the prior is correct (no rows resurrect — the new file carries the
-        // union) PROVIDED the prior is the one the caller unioned. Record-count math below
-        // uses the DELTA (newDeleteCount), not the union total, because the prior's positions
-        // were already deducted at first commit.
+        // union) PROVIDED the prior is the one the caller unioned.
+        //
+        // ducklake_table_stats.record_count is deliberately NOT touched: it is the GROSS row
+        // count of the table's data files (upstream MergeFileStats only ever adds; a DELETE
+        // writes no stats). DuckDB treats `record_count == net live count` as "no row was ever
+        // deleted, so the cached global min/max are exact" and folds SELECT MIN/MAX to them
+        // (ducklake_scan.cpp min_max_exact). Decrementing here would keep that equality true
+        // after the row holding a bound was deleted -> wrong MIN/MAX in DuckDB.
         val touchedDataFileIds: Set<Long> = deleteFragments.mapTo(HashSet()) { it.dataFileId }
         assertNoDeleteNewerThanRead(ctx, touchedDataFileIds, readSnapshotId)
         if (touchedDataFileIds.isNotEmpty()) {
@@ -4193,24 +4275,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 r.setFooterSize(fragment.footerSize)
             }
             deleteFileRecords.add(r)
-
-            totalNewDeleteCount += fragment.newDeleteCount
         }
 
         if (deleteFileRecords.isNotEmpty()) {
             ctx.batchInsert(deleteFileRecords).execute()
         }
-
-        // Update table stats: decrement record count by the DELTA (positions added by this
-        // commit only). GREATEST(0, …) defends against arithmetic underflow if stats were
-        // ever inconsistent with the delete-file ledger.
-        ctx.update(tabstats)
-            .set(
-                tabstats.RECORD_COUNT,
-                DSL.greatest(DSL.inline(0L), tabstats.RECORD_COUNT.minus(totalNewDeleteCount)),
-            )
-            .where(tabstats.TABLE_ID.eq(tableId))
-            .execute()
     }
 
     // Existing table-level column-stat bounds loaded for the incremental merge.
@@ -4573,9 +4642,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // Leaf column_id -> canonical DuckLake type (e.g. "int128", "decimal(38,0)"), read via
         // the write transaction so freshly-created columns are visible. Column types are stable
         // per column_id, so no snapshot filtering is needed. Drives numeric-aware stat merging.
-        private fun loadColumnTypes(tx: DucklakeWriteTransaction, tableId: Long): Map<Long, String> {
+        private fun loadColumnTypes(tx: DucklakeWriteTransaction, tableId: Long): Map<Long, String> =
+            loadColumnTypes(tx.dsl(), tableId)
+
+        /** `column_id -> column_type` for EVERY `ducklake_column` row of the table (all versions, all
+         * nesting levels): per-file stats reference leaf ids, so a root-only map would leave nested
+         * leaves untyped. Type strings of a given column_id do not change comparison class across
+         * versions except via setColumnType, which invalidates the affected bounds itself. */
+        private fun loadColumnTypes(ctx: DSLContext, tableId: Long): Map<Long, String> {
             val col = DUCKLAKE_COLUMN.`as`("coltype")
-            return tx.dsl().select(col.COLUMN_ID, col.COLUMN_TYPE)
+            return ctx.select(col.COLUMN_ID, col.COLUMN_TYPE)
                 .from(col)
                 .where(col.TABLE_ID.eq(tableId))
                 .fetch()

@@ -26,17 +26,17 @@ import java.sql.DriverManager
  * `data_file_id` per snapshot (README:223, checkDeleteFileOverlap:1311-1312).
  *
  * Pre-fix behavior of `applyDeleteFragments`: each commitDelete simply
- * inserts a new delete-file row and decrements `record_count` by the new
- * file's `deleteCount`. After two commits against the same `data_file_id`
- * the catalog held two active rows and `record_count` was double-decremented
- * if the second fragment was written as the union of (prior ∪ new) positions.
+ * inserted a new delete-file row, so after two commits against the same
+ * `data_file_id` the catalog held two active rows.
  *
- * Post-fix behavior asserted here:
+ * Behavior asserted here:
  *  - The prior active delete file for that `data_file_id` is end-snapshotted
  *    in the same transaction (≤1 active row).
- *  - `record_count` decrements by `newDeleteCount` (the delta —
- *    positions added by THIS commit only), not by `deleteCount` (the total
- *    union size stored in the new parquet file).
+ *  - `ducklake_table_stats.record_count` is NOT touched by a DELETE: it is the
+ *    gross row count (upstream semantics; DuckDB uses `record_count == live
+ *    count` as the proof that cached column bounds are exact). The live count
+ *    is derived instead — `getLiveRowCount` subtracts the active delete file's
+ *    `delete_count` (the union total, so no double counting across commits).
  *
  * The sink-side coordination (read prior, union with new, write union) lives in
  * `DucklakeMergeSink`; this test exercises only the catalog half of the fix by
@@ -101,7 +101,7 @@ class TestApplyDeleteFragmentsEndSnapshotsPrior {
             /* footerSize */ 64L,
             /* newDeleteCount (delta for record_count) */ 1L,
         )
-        catalog!!.commitDelete(tableId, listOf(first))
+        catalog!!.commitDelete(tableId, listOf(first), catalog!!.currentSnapshotId)
 
         val activeAfterFirst = countActiveDeleteFiles(dataFileId)
         val recordCountAfterFirst = catalog!!.getTableStats(tableId)!!.recordCount
@@ -109,7 +109,10 @@ class TestApplyDeleteFragmentsEndSnapshotsPrior {
             .`as`("exactly one active delete file after the first commit")
             .isEqualTo(1L)
         assertThat(recordCountAfterFirst)
-            .`as`("record_count decremented by the first delta")
+            .`as`("record_count is gross: a DELETE leaves it unchanged")
+            .isEqualTo(initialRecordCount)
+        assertThat(catalog!!.getLiveRowCount(tableId, catalog!!.currentSnapshotId))
+            .`as`("live count = gross - active delete_count")
             .isEqualTo(initialRecordCount - 1L)
 
         // Second DELETE — sink would have unioned the prior position with one new one,
@@ -122,7 +125,7 @@ class TestApplyDeleteFragmentsEndSnapshotsPrior {
             /* footerSize */ 64L,
             /* newDeleteCount (delta only) */ 1L,
         )
-        catalog!!.commitDelete(tableId, listOf(second))
+        catalog!!.commitDelete(tableId, listOf(second), catalog!!.currentSnapshotId)
 
         val activeAfterSecond = countActiveDeleteFiles(dataFileId)
         val recordCountAfterSecond = catalog!!.getTableStats(tableId)!!.recordCount
@@ -135,10 +138,12 @@ class TestApplyDeleteFragmentsEndSnapshotsPrior {
             )
             .isEqualTo(1L)
         assertThat(recordCountAfterSecond)
+            .`as`("record_count is gross: still unchanged after the second DELETE")
+            .isEqualTo(initialRecordCount)
+        assertThat(catalog!!.getLiveRowCount(tableId, catalog!!.currentSnapshotId))
             .`as`(
-                "record_count must decrement by newDeleteCount (delta), not deleteCount (union total). " +
-                    "Decrementing by the union total double-counts the prior delete's positions, " +
-                    "which were already subtracted at the first commit.",
+                "live count subtracts only the ACTIVE delete file's delete_count (the union total, 2) — " +
+                    "the superseded file's count must not be double-counted",
             )
             .isEqualTo(initialRecordCount - 2L)
     }

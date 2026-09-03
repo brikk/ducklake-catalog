@@ -60,7 +60,20 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   `SELECT * FROM lake.information_schema.tables` through DuckDB.
 
 ### W-B2 · BUG · `ducklake_table_stats.record_count` decremented on DELETE — DuckDB then folds MIN/MAX to stale bounds
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `record_count` is now gross everywhere: `applyDeleteFragments` no longer decrements;
+  `netRewriteStats` subtracts the retired sources' GROSS rows (not the merged count) and then rebuilds
+  `ducklake_table_column_stats` from the surviving per-file stats (upstream `RecomputeGlobalStatsAfterRewrite`);
+  `analyzeTable(tableId)` recomputes gross (Σ active file `record_count` + rows still in inlined tables) and skips
+  the column-stat rebuild while live inlined rows exist (their values are in no per-file stats). New
+  `getLiveRowCount(tableId, snapshotId)` implements upstream's net formula for engines' row-count estimates.
+  `analyzeTable(tableId, rowCount)` is `@Deprecated` (rowCount ignored). KDoc on `DucklakeTableStats`,
+  `DucklakeDeleteFragment.newDeleteCount` (informational), `getTableStats`, `commitDelete`, `rewriteDataFiles`.
+  Tests: `TestJdbcDucklakeCatalogGrossRecordCountInterop` — pre-fix DuckDB returned `max(id)=5, count(*)=4`
+  after a library DELETE of the max row; post-fix `4, 4`. `getLiveRowCount` cross-checked against DuckDB
+  `count(*)` across deletes, consolidation, time travel and TRUNCATE.
+  **trino-ducklake follow-up:** `DucklakeMetadata.getTableStatistics` (`:423-426`) must use
+  `catalog.getLiveRowCount(tableId, snapshotId)` instead of `tableStats.recordCount`; `finishStatisticsCollection`
+  should call `analyzeTable(tableId)`.
 - Library: `JdbcDucklakeCatalog.kt:3946-3955` (`applyDeleteFragments` subtracts delete count), `:3879-3892`
   (`netRewriteStats`), `:1220-1226` (`analyzeTable` sets it to the live count). `DucklakeDeleteFragment.kt:18-24`
   documents the decrement as intended. `truncateTable` (`:2630-2678`) correctly leaves it alone — internally
@@ -318,7 +331,9 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   the caller window by embedded snapshot id when the column exists.
 
 ### R-B3 · BUG · Nested-leaf numeric stats merged lexically in `getColumnStats` / `analyzeTable`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (with W-B2). `getColumnStats` and `aggregateActiveColumnStats` now take their type map
+  from `loadColumnTypes(ctx, tableId)` (every `ducklake_column` row, nested leaves included) — the same source the
+  write path already used. Needed anyway because `netRewriteStats` now calls the recompute.
 - Library: `getColumnStats` (`:1118-1119, 1151`) and `aggregateActiveColumnStats`/`analyzeTable` (`:1271-1272, 1304`)
   build `columnTypes` from `getTableColumns` (top-level only, `:308-339`); `ducklake_file_column_stats` rows exist
   per leaf `column_id`, so leaves get type `""` → `DucklakeStatTypes.compare` lexical ("9" > "10"). The write path

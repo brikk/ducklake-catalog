@@ -207,9 +207,21 @@ interface DucklakeCatalog {
     fun findDataFileIdsInRange(tableId: Long, snapshotId: Long, predicate: ColumnRangePredicate): List<Long>
 
     /**
-     * Get table-level statistics (record count, file size) from ducklake_table_stats
+     * Get table-level statistics from `ducklake_table_stats`. NOTE: [DucklakeTableStats.recordCount]
+     * is the GROSS row count (rows ever written into the table's active files; deletes never subtract
+     * — upstream semantics, which DuckDB relies on to decide whether the cached column bounds are
+     * exact). For a live row count use [getLiveRowCount].
      */
     fun getTableStats(tableId: Long): DucklakeTableStats?
+
+    /**
+     * The number of live rows at [snapshotId], computed from the catalog the way upstream's
+     * `GetNetDataFileRowCount` + `GetNetInlinedRowCount` do: Σ `record_count` of the active data
+     * files − Σ `delete_count` of their active delete files − inlined file deletions on them + live
+     * inlined rows. Exact for the catalog state; this is what an engine should report as the table's
+     * row count (not [DucklakeTableStats.recordCount]).
+     */
+    fun getLiveRowCount(tableId: Long, snapshotId: Long): Long
 
     /**
      * Get aggregated column statistics across all active data files.
@@ -227,19 +239,26 @@ interface DucklakeCatalog {
      * maintenance only ever *widens* a column's min/max (it merges each new file's bounds in)
      * and never narrows them after a DELETE or file expiry, so the cached bounds can drift
      * loose over a table's lifetime. This forces a full refresh:
-     *  - `record_count` is set to [rowCount] (the engine's authoritative live count from the
-     *    ANALYZE scan — already net of deletes and inlined rows); `next_row_id` (the row-id
-     *    allocator high-water mark) is preserved.
+     *  - `record_count` is recomputed as the GROSS row count — Σ `record_count` of the active data
+     *    files plus every row still present in the table's inlined-data tables (deleted or not).
+     *    That is upstream's definition: DuckDB folds `SELECT MIN/MAX` to the cached bounds exactly
+     *    when `record_count` equals the live count, i.e. when no row was ever deleted. `next_row_id`
+     *    (the row-id allocator high-water mark) is preserved.
      *  - `file_size_bytes` is recomputed from the active data files.
      *  - the per-column aggregates are rebuilt from the authoritative per-file stats
-     *    (`ducklake_file_column_stats`) of the currently-active data files, tightening any
-     *    bounds that incremental maintenance left stale.
+     *    (`ducklake_file_column_stats`) of the currently-active data files, tightening any bounds
+     *    that incremental maintenance left stale — UNLESS the table has live inlined rows, whose
+     *    values are in no per-file stats; the existing bounds are then left as they are.
      *
      * These are mutable, non-snapshot-versioned side tables, so this runs in a plain catalog
      * transaction and does NOT mint a new snapshot or record a `changes_made` entry (there is
      * no stats change-type in the DuckLake vocabulary). The refreshed values are advisory
      * planner hints; run `ANALYZE` while the table is quiescent for an exact result.
      */
+    fun analyzeTable(tableId: Long)
+
+    /** Legacy form of [analyzeTable]; [rowCount] is ignored (`record_count` is gross, not the live count). */
+    @Deprecated("record_count is the gross row count and is recomputed from the catalog; use analyzeTable(tableId)")
     fun analyzeTable(tableId: Long, rowCount: Long)
 
     /**
@@ -607,8 +626,9 @@ interface DucklakeCatalog {
     fun commitAddFiles(tableId: Long, fragments: List<DucklakeWriteFragment>)
 
     /**
-     * Commit delete files for a table. Creates a new snapshot with `ducklake_delete_file` rows and
-     * updated table stats.
+     * Commit delete files for a table. Creates a new snapshot with `ducklake_delete_file` rows.
+     * `ducklake_table_stats.record_count` is NOT decremented — it is the gross row count (see
+     * [getTableStats]); live counts come from [getLiveRowCount].
      *
      * Each fragment's delete file is **cumulative** for its data file: the caller unioned the
      * positions of the delete file that was active when it planned the DELETE (at [readSnapshotId])
@@ -663,9 +683,11 @@ interface DucklakeCatalog {
      * `rewrite_data_files` shape (see dev-docs/DESIGN-maintenance.md § 7).
      *
      * Contract: the merged fragments must hold **exactly the live rows** of the retired sources
-     * (deletes already applied), so compaction is **row-count-preserving** — `ducklake_table_stats`
-     * `record_count` is left unchanged, `file_size_bytes` is adjusted by (Σmerged − Σretired), and
-     * `next_row_id` advances monotonically. The retired source/delete files are NOT physically
+     * (deletes already applied). `ducklake_table_stats` is brought in line with the new file set:
+     * gross `record_count` and `file_size_bytes` change by (Σmerged − Σretired) — the retired
+     * sources' deleted rows leave the gross count here — the per-column global bounds are rebuilt
+     * from the surviving files' per-file stats (as upstream's `RecomputeGlobalStatsAfterRewrite`
+     * does), and `next_row_id` advances monotonically. The retired source/delete files are NOT physically
      * removed here; time-travel still resolves them via `[begin,end)` liveness until
      * `expire_snapshots` → `cleanup_old_files` reclaims them.
      *
@@ -705,7 +727,7 @@ interface DucklakeCatalog {
      * Multiple merged files cover partitioned tables (one+ per partition) and size-bounded output.
      * Contract: every source must be NON-partial (`partial_max IS NULL`) so each source's rows share
      * one origin snapshot (its begin), and the merged files together must hold exactly the live source
-     * rows (row-count-preserving). Validated up front (active-source + no-newer-delete since
+     * rows (stats adjusted as in [rewriteDataFiles]). Validated up front (active-source + no-newer-delete since
      * [readSnapshotId]); a concurrent commit touching a source aborts non-retryably. No-op if either
      * argument is empty.
      */

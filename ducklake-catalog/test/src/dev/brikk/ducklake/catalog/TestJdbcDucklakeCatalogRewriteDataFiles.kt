@@ -36,7 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Pinned invariants:
  *  - sources end-snapshotted + merged file registered atomically; older snapshots still resolve the
  *    sources (time travel),
- *  - compaction is row-count-preserving (`record_count` unchanged) while `file_size_bytes` reflects
+ *  - compaction preserves the live row count (gross `record_count` only drops by rows the retired
+ *    sources had deleted) while `file_size_bytes` reflects
  *    the real space delta and `next_row_id` stays monotonic,
  *  - a source's active delete file is end-snapshotted (the merged file has the deletes applied),
  *  - a concurrent DELETE landing on a source after the read aborts the compaction non-retryably
@@ -194,6 +195,7 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
 
         val readSnapshot = catalog.currentSnapshotId
         val recordCountBefore = catalog.getTableStats(tableId)!!.recordCount
+        val liveBefore = catalog.getLiveRowCount(tableId, readSnapshot)
 
         val mergedPath = uniquePath("merged")
         // 7 live rows (10 − 3 deleted).
@@ -203,8 +205,11 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
             .`as`("source's delete file end-snapshotted — merged file already has deletes applied")
             .isEqualTo(0L)
         assertThat(catalog.getTableStats(tableId)!!.recordCount)
+            .`as`("gross record_count drops by the 3 deleted rows the rewrite left behind (10 retired, 7 merged)")
+            .isEqualTo(recordCountBefore - 3L)
+        assertThat(catalog.getLiveRowCount(tableId, catalog.currentSnapshotId))
             .`as`("live row count unchanged by compaction")
-            .isEqualTo(recordCountBefore)
+            .isEqualTo(liveBefore)
         val activePaths = catalog.getDataFiles(tableId, catalog.currentSnapshotId).map { it.path }
         assertThat(activePaths).contains(mergedPath)
     }

@@ -17,13 +17,12 @@ package dev.brikk.ducklake.catalog
  * Describes a delete Parquet file written during a DELETE/UPDATE/MERGE operation.
  * Each fragment corresponds to one data file's deletions.
  *
- * [deleteCount] is the TOTAL positions stored in the new parquet file
- * (union of prior-active-delete-file positions plus this commit's new deletes).
- * [newDeleteCount] is the DELTA that should be subtracted from the table's
- * `record_count` — i.e. the count of positions added by THIS commit only.
- * The prior file's positions were already deducted from `record_count` when
- * that file was first committed; the new file supersedes it (end-snapshotted in
- * the same transaction) and re-introducing its count would double-subtract.
+ * [deleteCount] is the TOTAL positions stored in the new parquet file (union of the
+ * prior-active-delete-file positions plus this commit's new deletes) — persisted to
+ * `ducklake_delete_file.delete_count`, which live-row-count math subtracts.
+ * [newDeleteCount] is the DELTA added by THIS commit only. It is informational: the catalog no
+ * longer subtracts it from `ducklake_table_stats.record_count`, which is the gross row count
+ * (see [DucklakeTableStats]). Retained on the wire for compatibility.
  */
 @JvmRecord
 @JacksonSerializedInternalJavaCompatibleClass
