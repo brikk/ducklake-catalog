@@ -30,8 +30,15 @@ import org.junit.jupiter.api.Test
  * (`tables_deleted_from × tables_deleted_from` alone is not a conflict)
  * nor the state-based [LogicalConflictCheck] catch — the data file
  * itself stays active across delete commits. Detection requires querying
- * `ducklake_delete_file` for intervening rows referencing the
- * contended `data_file_id`s.
+ * `ducklake_delete_file` for rows referencing the contended
+ * `data_file_id`s that are newer than the loser's read snapshot.
+ *
+ * Two layers do that: `applyDeleteFragments` checks against the caller's
+ * read snapshot inside the action (so the loser here fails on its FIRST
+ * attempt — the winner committed while it was parked, after the attempt's
+ * base snapshot was read), and the retry-path conflict matrix
+ * (`checkDeleteFileOverlap`) covers the intervening-snapshot range for
+ * anything the first layer let through.
  */
 class TestConcurrentDeleteVsDelete {
     companion object {
@@ -115,7 +122,7 @@ class TestConcurrentDeleteVsDelete {
             .`as`("logical conflicts are non-retryable")
             .isFalse()
         assertThat(result.loserAttemptCount)
-            .`as`("loser must NOT burn the retry budget — exactly two attempts: parked + matrix-failed")
-            .isEqualTo(2)
+            .`as`("loser must NOT burn the retry budget — the read-snapshot guard fails the parked attempt itself")
+            .isEqualTo(1)
     }
 }

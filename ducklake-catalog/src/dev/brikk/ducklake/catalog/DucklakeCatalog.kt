@@ -607,15 +607,49 @@ interface DucklakeCatalog {
     fun commitAddFiles(tableId: Long, fragments: List<DucklakeWriteFragment>)
 
     /**
-     * Commit delete files for a table.
-     * Creates a new snapshot with ducklake_delete_file rows and updated table stats.
+     * Commit delete files for a table. Creates a new snapshot with `ducklake_delete_file` rows and
+     * updated table stats.
+     *
+     * Each fragment's delete file is **cumulative** for its data file: the caller unioned the
+     * positions of the delete file that was active when it planned the DELETE (at [readSnapshotId])
+     * with the newly deleted positions, and this commit end-snapshots that prior file. A delete file
+     * committed by ANOTHER writer for the same data file between [readSnapshotId] and this commit
+     * would therefore be superseded by a file that does NOT contain its positions — resurrecting
+     * those rows. The commit aborts with a non-retryable [LogicalConflictException] if any touched
+     * data file has a delete file with `begin_snapshot > readSnapshotId` (or a recorded
+     * `partial_max > readSnapshotId`, upstream's consolidated shape); the caller must re-plan from
+     * the current snapshot. Mirrors upstream, whose delete conflict check runs against the
+     * transaction's read snapshot (`ducklake_transaction_state.cpp` `transaction_snapshot`).
+     *
+     * @param readSnapshotId the snapshot the caller read the data files and their active delete
+     *   files at (the table handle's snapshot in an engine).
      */
+    fun commitDelete(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>, readSnapshotId: Long)
+
+    /**
+     * Legacy form of [commitDelete] without a read snapshot: the newer-delete guard degrades to the
+     * commit-time base snapshot, so a concurrent delete committed between the caller's read and the
+     * first commit attempt is NOT detected (its rows resurrect). Retained for binary compatibility.
+     */
+    @Deprecated("Pass the planning read snapshot so concurrent deletes on the same data file are detected")
     fun commitDelete(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>)
 
     /**
-     * Atomically commit both delete files and inserted data files in a single snapshot.
-     * Used for UPDATE (delete old rows + insert new rows) and MERGE operations.
+     * Atomically commit both delete files and inserted data files in a single snapshot. Used for
+     * UPDATE (delete old rows + insert new rows) and MERGE operations. The delete half carries the
+     * same newer-delete guard as [commitDelete] against [readSnapshotId].
      */
+    fun commitMerge(
+        tableId: Long,
+        deleteFragments: List<DucklakeDeleteFragment>,
+        insertFragments: List<DucklakeWriteFragment>,
+        readSnapshotId: Long,
+    )
+
+    /**
+     * Legacy form of [commitMerge] without a read snapshot — see the deprecated [commitDelete].
+     */
+    @Deprecated("Pass the planning read snapshot so concurrent deletes on the same data file are detected")
     fun commitMerge(
         tableId: Long,
         deleteFragments: List<DucklakeDeleteFragment>,

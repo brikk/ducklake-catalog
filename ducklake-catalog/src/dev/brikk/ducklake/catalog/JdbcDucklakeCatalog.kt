@@ -3825,13 +3825,22 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
+    override fun commitDelete(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>, readSnapshotId: Long) {
+        commitDeleteInternal(tableId, deleteFragments, readSnapshotId)
+    }
+
+    @Deprecated("Pass the planning read snapshot so concurrent deletes on the same data file are detected")
     override fun commitDelete(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>) {
+        commitDeleteInternal(tableId, deleteFragments, readSnapshotId = null)
+    }
+
+    private fun commitDeleteInternal(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>, readSnapshotId: Long?) {
         if (deleteFragments.isEmpty()) {
             return
         }
 
         executeWriteTransaction("delete from table $tableId") { tx ->
-            applyDeleteFragments(tx, tableId, deleteFragments)
+            applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId ?: tx.getCurrentSnapshotId())
             tx.recordChange(WriteChange.DeletedFromTable(tableId, referencedDataFileIds(deleteFragments)))
         }
     }
@@ -3840,6 +3849,25 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         tableId: Long,
         deleteFragments: List<DucklakeDeleteFragment>,
         insertFragments: List<DucklakeWriteFragment>,
+        readSnapshotId: Long,
+    ) {
+        commitMergeInternal(tableId, deleteFragments, insertFragments, readSnapshotId)
+    }
+
+    @Deprecated("Pass the planning read snapshot so concurrent deletes on the same data file are detected")
+    override fun commitMerge(
+        tableId: Long,
+        deleteFragments: List<DucklakeDeleteFragment>,
+        insertFragments: List<DucklakeWriteFragment>,
+    ) {
+        commitMergeInternal(tableId, deleteFragments, insertFragments, readSnapshotId = null)
+    }
+
+    private fun commitMergeInternal(
+        tableId: Long,
+        deleteFragments: List<DucklakeDeleteFragment>,
+        insertFragments: List<DucklakeWriteFragment>,
+        readSnapshotId: Long?,
     ) {
         if (deleteFragments.isEmpty() && insertFragments.isEmpty()) {
             return
@@ -3847,7 +3875,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         executeWriteTransaction("merge into table $tableId") { tx ->
             if (deleteFragments.isNotEmpty()) {
-                applyDeleteFragments(tx, tableId, deleteFragments)
+                applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId ?: tx.getCurrentSnapshotId())
                 tx.recordChange(WriteChange.DeletedFromTable(tableId, referencedDataFileIds(deleteFragments)))
             }
             if (insertFragments.isNotEmpty()) {
@@ -3987,17 +4015,48 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * the deleted rows. Abort non-retryably if any delete file on a source is newer than the
      * snapshot the caller read at. Runs inside the action so it re-checks on every retry.
      */
+    /**
+     * Aborts (non-retryably) if any of [dataFileIds] has a delete file the caller could not have seen
+     * at [readSnapshotId]: `begin_snapshot > readSnapshotId`, or — upstream's consolidated shape,
+     * which keeps the OLD begin and re-points the row at a new file — `partial_max > readSnapshotId`.
+     * The caller's cumulative delete file would supersede it and resurrect its deletions. Not
+     * retried: the fragments were built from the stale read and would fail identically.
+     */
+    private fun assertNoDeleteNewerThanRead(ctx: DSLContext, dataFileIds: Set<Long>, readSnapshotId: Long) {
+        if (dataFileIds.isEmpty()) {
+            return
+        }
+        val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
+        val contended: Set<Long> = ctx.select(delfile.DATA_FILE_ID)
+            .from(delfile)
+            .where(delfile.DATA_FILE_ID.`in`(dataFileIds))
+            .and(delfile.BEGIN_SNAPSHOT.gt(readSnapshotId).or(delfile.PARTIAL_MAX.gt(readSnapshotId)))
+            .fetchSet(delfile.DATA_FILE_ID)
+        if (contended.isNotEmpty()) {
+            throw LogicalConflictException(
+                "Transaction conflict - attempting to delete from data_file_id(s) " + TreeSet(contended) +
+                    " - but another transaction wrote delete files for the same data files after this " +
+                    "operation read them (read snapshot $readSnapshotId). Committing would supersede " +
+                    "those deletions with a delete file that does not contain them; re-plan from the " +
+                    "current snapshot. This conflict is not retried.",
+            )
+        }
+    }
+
     private fun assertNoNewerDeleteOnRewriteSources(
         tx: DucklakeWriteTransaction,
         sourceDataFileIds: Set<Long>,
         readSnapshotId: Long,
     ) {
         val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
+        // Same predicate as assertNoDeleteNewerThanRead: begin_snapshot alone misses upstream's
+        // consolidated delete files, which keep the OLD begin and record the newest deletion
+        // snapshot in partial_max.
         val hasNewerDelete: Boolean = tx.dsl().fetchExists(
             DSL.selectOne()
                 .from(delfile)
                 .where(delfile.DATA_FILE_ID.`in`(sourceDataFileIds))
-                .and(delfile.BEGIN_SNAPSHOT.gt(readSnapshotId)),
+                .and(delfile.BEGIN_SNAPSHOT.gt(readSnapshotId).or(delfile.PARTIAL_MAX.gt(readSnapshotId))),
         )
         if (hasNewerDelete) {
             throw LogicalConflictException(
@@ -4077,7 +4136,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .execute()
     }
 
-    private fun applyDeleteFragments(tx: DucklakeWriteTransaction, tableId: Long, deleteFragments: List<DucklakeDeleteFragment>) {
+    /**
+     * Writes [deleteFragments] as the new active delete files of their data files, superseding the
+     * prior active ones. [readSnapshotId] is the snapshot the caller planned against: the union the
+     * caller built only covers delete files active at THAT snapshot, so any delete file that appeared
+     * on a touched data file afterwards must abort the commit (see [DucklakeCatalog.commitDelete]).
+     */
+    private fun applyDeleteFragments(
+        tx: DucklakeWriteTransaction,
+        tableId: Long,
+        deleteFragments: List<DucklakeDeleteFragment>,
+        readSnapshotId: Long,
+    ) {
         val ctx = tx.dsl()
         val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
@@ -4089,9 +4159,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // data_file_id per snapshot (README:223, checkDeleteFileOverlap:1311-1312); the sink
         // unions prior-active positions with this commit's new positions into the new file,
         // so superseding the prior is correct (no rows resurrect — the new file carries the
-        // union). Record-count math below uses the DELTA (newDeleteCount), not the union
-        // total, because the prior's positions were already deducted at first commit.
+        // union) PROVIDED the prior is the one the caller unioned. Record-count math below
+        // uses the DELTA (newDeleteCount), not the union total, because the prior's positions
+        // were already deducted at first commit.
         val touchedDataFileIds: Set<Long> = deleteFragments.mapTo(HashSet()) { it.dataFileId }
+        assertNoDeleteNewerThanRead(ctx, touchedDataFileIds, readSnapshotId)
         if (touchedDataFileIds.isNotEmpty()) {
             ctx.update(delfile)
                 .set(delfile.END_SNAPSHOT, tx.getNewSnapshotId())

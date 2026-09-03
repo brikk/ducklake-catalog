@@ -329,7 +329,10 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
 - Fix direction: use `getAllColumnsWithParentage` / `loadColumnTypes` for the type map in both places.
 
 ### R-B4 · BUG · Newer-delete detection keyed on `begin_snapshot >` misses upstream v1.5 consolidated delete files
-- [ ] **Status:** open
+- [ ] **Status:** PARTIAL — `assertNoNewerDeleteOnRewriteSources` and the new `assertNoDeleteNewerThanRead` (C-B3)
+  now also test `partial_max > readSnapshotId`, which upstream sets on every consolidated regular delete. Still open:
+  `checkDeleteFileOverlap` (retry-path matrix) uses `begin_snapshot` only, and a table-level
+  compaction-vs-`tables_deleted_from` conflict as upstream does is not implemented.
 - Upstream's 2nd+ DELETE on a data file with a committed delete file writes a consolidated file whose row has
   `begin_snapshot` = OLD file's begin (`ducklake_delete.cpp:405-470, 96-146`) and **DELETEs** the old row
   (mm.cpp:3860-3867; `ducklake_transaction_state.cpp:1511-1519`).
@@ -460,7 +463,14 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `ducklake_column.column_id`, `ducklake_partition_info.partition_id`; see DDL mm.cpp:195-224).
 
 ### C-B3 · BUG (data loss) · `commitDelete` / `commitMerge` have no caller read-snapshot
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (catalog side). New overloads `commitDelete(tableId, fragments, readSnapshotId)` /
+  `commitMerge(…, readSnapshotId)`; the old signatures remain as `@Deprecated` delegates (guard degrades to the
+  attempt's base snapshot). `applyDeleteFragments` → `assertNoDeleteNewerThanRead` aborts with a non-retryable
+  `LogicalConflictException` when a touched data file has a delete file with `begin_snapshot > read` **or**
+  `partial_max > read` (upstream's consolidated shape — closes the same blind spot in
+  `assertNoNewerDeleteOnRewriteSources`, partially addressing R-B4). Tests:
+  `TestJdbcDucklakeCatalogDeleteReadSnapshotGuard` (5); `TestConcurrentDeleteVsDelete` now fails the loser on its
+  first attempt. **trino-ducklake follow-up:** pass `tableHandle.snapshotId` at `DucklakeMetadata.kt:1415/1418`.
 - `DucklakeCatalog.kt:602-612` — no `readSnapshotId` (unlike `rewriteDataFiles :643`). `applyDeleteFragments
   :3908-3915` end-snapshots every active delete file for the touched `data_file_id`s and inserts a replacement whose
   positions are the union computed by the caller at its planning snapshot R. `checkDeleteFileOverlap :4139-4177`
