@@ -278,7 +278,15 @@ cascade (mm.cpp:4835-4994); cleanup `schedule_start <` (ducklake_cleanup_files.c
 set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition transform strings.
 
 ### R-B1 · BUG · Delete-file snapshot filtering gated on `partial_max > S`; upstream filters embedded snapshot ids unconditionally
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (catalog side). Contract rewritten on `DucklakeDataFile.deleteFilePartialMax` ("advisory
+  only — never the gate; filter `_ducklake_internal_snapshot_id <= S` whenever the column exists") and on
+  `hasPartialDeleteFilesRequiringSnapshotFilter`, whose predicate no longer requires `partial_max > S`.
+  `TestJdbcDucklakeCatalogDeleteFileSnapshotFilterContract` pins the upstream fact live (flush-written delete file:
+  2 embedded snapshot ids, `partial_max` NULL, active at the earlier one; DuckDB reads 3 rows then 2).
+  **trino-ducklake follow-up (the behavioural half):** `DucklakeSplitManager.needsPartialDeleteSnapshotFilter`
+  must return true for every PARQUET/PUFFIN delete file (drop the `deleteFilePartialMax` gate) so
+  `DucklakeSplit.deleteFileSnapshotFilters` always carries S; the delete reader already ignores it for 2-column
+  files.
 - Library: `DucklakeDataFile.kt:52-57`, `DucklakeCatalog.kt:118-126` — deletions are windowed to `<= S` "only when
   `deleteFilePartialMax` exceeds S".
 - Upstream: always calls `SetSnapshotFilter(read snapshot)` (`ducklake_multi_file_reader.cpp:279-284`,

@@ -116,12 +116,14 @@ interface DucklakeCatalog {
     fun getDeletionsBetween(tableId: Long, startSnapshot: Long, endSnapshot: Long): List<DucklakeChangeFeedDeletion>
 
     /**
-     * True only if the table has a partial DELETE file active at [snapshotId] in a format this
-     * connector cannot snapshot-filter. Both PARQUET (filtered via `_ducklake_internal_snapshot_id`)
-     * and PUFFIN (each blob's embedded `ducklake-snapshot-id`) partial delete files are now handled
-     * on read, so this returns false for them; it only flags an unknown delete-file format, which
-     * [io.trino] validateDeleteFileFormats already rejects regardless of `partial_max`. Kept as a
-     * defensive double-gate. See dev-docs/DESIGN-maintenance.md § 6.
+     * True only if the table has an active DELETE file at [snapshotId] in a format the reader cannot
+     * snapshot-filter (anything other than PARQUET, whose `_ducklake_internal_snapshot_id` column is
+     * filtered per position, or PUFFIN, whose blobs carry their own snapshot id). Such a file may hold
+     * deletions recorded after [snapshotId] that the reader would wrongly apply. This is NOT gated on
+     * `partial_max` — upstream leaves it NULL on multi-snapshot delete files written by
+     * `flush_inlined_data`, so its absence proves nothing (see
+     * [DucklakeDataFile.deleteFilePartialMax]). Engines already reject unknown delete-file formats
+     * up front, so this is a defensive double-gate. See dev-docs/DESIGN-maintenance.md § 6.
      */
     fun hasPartialDeleteFilesRequiringSnapshotFilter(tableId: Long, snapshotId: Long): Boolean
 
