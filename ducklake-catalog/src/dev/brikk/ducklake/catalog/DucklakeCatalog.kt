@@ -124,7 +124,8 @@ interface DucklakeCatalog : AutoCloseable {
     /**
      * True only if the table has an active DELETE file at [snapshotId] in a format the reader cannot
      * snapshot-filter (anything other than PARQUET, whose `_ducklake_internal_snapshot_id` column is
-     * filtered per position, or PUFFIN, whose blobs carry their own snapshot id). Such a file may hold
+     * filtered per position, or PUFFIN deletion vectors, which upstream always writes whole at their
+     * `begin_snapshot` — no per-position snapshot exists, so nothing to filter). Such a file may hold
      * deletions recorded after [snapshotId] that the reader would wrongly apply. This is NOT gated on
      * `partial_max` — upstream leaves it NULL on multi-snapshot delete files written by
      * `flush_inlined_data`, so its absence proves nothing (see
@@ -349,8 +350,9 @@ interface DucklakeCatalog : AutoCloseable {
      * `ducklake_inlined_delete_<tableId>`).
      *
      * Snapshot filter: `begin_snapshot <= snapshotId`. There is no
-     * `end_snapshot` — once a row is inlined-deleted it stays deleted
-     * until compaction rewrites the data file.
+     * `end_snapshot` — once a row is inlined-deleted it stays deleted; the rows are physically
+     * removed when compaction rewrites the data file or `flush_inlined_data` folds them into a
+     * delete file.
      *
      * Returns an empty map when the per-table inlined-delete metadata table
      * does not exist (the common case for tables DuckDB never inlined deletes

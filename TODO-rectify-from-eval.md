@@ -245,7 +245,10 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (`_state.cpp:793-929`); library only nets sizes.
 
 ### W-D4 · DRIFT · `ducklake_file_column_stats`
-- [ ] **Status:** open
+- [ ] **Status:** PARTIAL — NUL-containing stat values are stored as NULL (upstream `StatsToString`). Still open:
+  nullable `value_count` / `null_count` / `column_size_bytes` on `DucklakeFileColumnStats` (wire-format change),
+  `extra_stats` / variant stats (unsupported feature), and the Trino extractor's hard-coded `containsNan = false`
+  (trino-ducklake follow-up).
 - Library always writes non-NULL `value_count` / `null_count` / `column_size_bytes`; upstream writes NULL when
   unknown (`ducklake_transaction.cpp:1198-1212`). Allow nullable in `DucklakeWriteFragment` stats.
 - Upstream `StatsToString` (`common/ducklake_util.cpp:92-99`) writes NULL for values containing `\0`; library stores
@@ -453,7 +456,8 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   document the contract on `DucklakeCatalog.readInlinedData`.
 
 ### R-D5 · DRIFT · Expire GC gaps
-- [ ] **Status:** PARTIAL — `ducklake_inlined_delete_<tableId>` is now dropped for dead tables (C-B5). Still open:
+- [x] **Status:** RESOLVED — dead `ducklake_tag` rows are GC'd with upstream's survivor test (inlined-delete tables
+  were done in C-B5).
   dead `ducklake_tag` rows (upstream mm.cpp:5043-5052) are not deleted. Metadata leak only.
 
 ### R-D6 · DRIFT · `getColumnStats` NULL min/max handling
@@ -475,15 +479,11 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   UTF-8 bytes.
 
 ### R-N1 · NIT · Misc read path
-- [ ] `getTableStats` `fetchOne()` (`:1111-1113`) throws on duplicate `table_id` rows (no PK); upstream filters
-  `record_count IS NOT NULL` (mm.cpp:986-993).
-- [ ] `SortTypes.kt:49-56, 70-77` throw on unknown direction/null_order; upstream treats non-`DESC` as ASC,
-  non-`NULLS_FIRST` as NULLS_LAST (mm.cpp:878-884).
-- [ ] Docs claim Puffin blobs embed `ducklake-snapshot-id` (`DucklakeCatalog.kt:121`, `:601-602`); upstream DV files
-  carry no snapshot ids and `partial_max` NULL (`ducklake_delete.cpp:370-395`).
+- [x] `getTableStats` tolerates duplicate `table_id` rows (`record_count IS NOT NULL`, first by record_count).
+- [x] `SortTypes` lenient like upstream (non-`DESC` → ASC, non-`NULLS_FIRST` → NULLS_LAST).
+- [x] Puffin snapshot-id docs corrected (DVs carry no per-position snapshot; written whole at begin_snapshot).
 - [ ] `resolveColumnType` (`:3992-4018`) emits `struct<name:type,...>` without escaping names containing `:`/`,`/`<`.
-- [ ] `getInlinedDeletes` KDoc (`DucklakeCatalog.kt:324-326`) — rows are also physically removed by
-  `flush_inlined_data` (`ducklake_flush_inlined_data.cpp:571-576`), not only compaction.
+- [x] `getInlinedDeletes` KDoc mentions `flush_inlined_data` removal.
 - [ ] `listExpirableSnapshots(null,null)` returns all non-latest; upstream `expire_snapshots` with no criteria is a
   no-op (`ducklake_expire_snapshots.cpp:52-55`).
 - [ ] `default_value` / `default_value_type` never surfaced on `DucklakeColumn` (mm.cpp:644, 716-726). Related to W-B6.

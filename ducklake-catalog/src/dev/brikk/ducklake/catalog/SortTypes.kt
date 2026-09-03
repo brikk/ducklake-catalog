@@ -13,7 +13,6 @@
  */
 package dev.brikk.ducklake.catalog
 
-import java.util.Locale
 
 /**
  * One entry from `ducklake_sort_expression`, joined with the active
@@ -46,14 +45,9 @@ enum class DucklakeSortDirection {
     ;
 
     companion object {
-        fun fromCatalog(value: String?): DucklakeSortDirection {
-            value ?: throw IllegalArgumentException("sort_direction is null")
-            return when (value.trim().uppercase(Locale.ROOT)) {
-                "ASC" -> ASC
-                "DESC" -> DESC
-                else -> throw IllegalArgumentException("Unknown sort_direction: $value")
-            }
-        }
+        /** Upstream: `CIEquals(value, "DESC") ? DESCENDING : ASCENDING` — anything else (or NULL) is ASC. */
+        fun fromCatalog(value: String?): DucklakeSortDirection =
+            if (value != null && value.trim().equals("DESC", ignoreCase = true)) DESC else ASC
     }
 }
 
@@ -67,13 +61,8 @@ enum class DucklakeNullOrder {
     ;
 
     companion object {
-        fun fromCatalog(value: String?): DucklakeNullOrder {
-            value ?: throw IllegalArgumentException("null_order is null")
-            return when (value.trim().uppercase(Locale.ROOT)) {
-                "NULLS_FIRST" -> NULLS_FIRST
-                "NULLS_LAST" -> NULLS_LAST
-                else -> throw IllegalArgumentException("Unknown null_order: $value")
-            }
-        }
+        /** Upstream: `CIEquals(value, "NULLS_FIRST") ? NULLS_FIRST : NULLS_LAST` — anything else (or NULL) is NULLS_LAST. */
+        fun fromCatalog(value: String?): DucklakeNullOrder =
+            if (value != null && value.trim().equals("NULLS_FIRST", ignoreCase = true)) NULLS_FIRST else NULLS_LAST
     }
 }

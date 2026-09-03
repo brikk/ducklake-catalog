@@ -637,10 +637,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .and(activeAt(delf, snapshotId))
             // Deliberately NOT gated on partial_max: upstream writes multi-snapshot delete files
             // with partial_max NULL (flush_inlined_data), so a NULL/low partial_max does not mean
-            // "no deletions newer than S". Both PARQUET (via _ducklake_internal_snapshot_id) and
-            // PUFFIN (via each blob's embedded ducklake-snapshot-id) are snapshot-filtered on read;
-            // anything else is an unknown format that engines already reject — this stays only as
-            // a defensive double-gate.
+            // "no deletions newer than S". PARQUET files are snapshot-filtered on read via
+            // _ducklake_internal_snapshot_id; PUFFIN deletion vectors carry no per-position
+            // snapshot (upstream ducklake_delete.cpp: "Deletion vectors don't support per-position
+            // snapshot tracking") and are always written whole at their begin_snapshot, so they
+            // need no filter. Anything else is an unknown format that engines already reject —
+            // this stays only as a defensive double-gate.
             .and(delf.FORMAT.isNotNull)
             .and(DSL.lower(delf.FORMAT).ne("parquet"))
             .and(DSL.lower(delf.FORMAT).ne("puffin"))
@@ -894,6 +896,20 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_MACRO_PARAMETERS).where(DUCKLAKE_MACRO_PARAMETERS.MACRO_ID.`in`(deadMacroIds)))
             metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_MACRO).where(DUCKLAKE_MACRO.MACRO_ID.`in`(deadMacroIds)))
         }
+        // Dead ducklake_tag rows (upstream GCs them with the same half-open survivor test as views
+        // and schemas): end-snapshotted with no surviving snapshot in [begin, end).
+        val tag = DUCKLAKE_TAG.`as`("tag")
+        val surv = DUCKLAKE_SNAPSHOT.`as`("tagsurv")
+        metadata.execute(
+            ctx,
+            ctx.deleteFrom(DUCKLAKE_TAG)
+                .where(DUCKLAKE_TAG.END_SNAPSHOT.isNotNull)
+                .andNotExists(
+                    ctx.selectOne().from(surv)
+                        .where(surv.SNAPSHOT_ID.ge(DUCKLAKE_TAG.BEGIN_SNAPSHOT))
+                        .and(surv.SNAPSHOT_ID.lt(DUCKLAKE_TAG.END_SNAPSHOT)),
+                ),
+        )
         // Name-mapping rows whose mapping_id no longer has a column_mapping owner (the table GC
         // removed it). mapping_id originates in ducklake_column_mapping, so an unreferenced one is
         // dead. Routed through a NOT IN subquery on the surviving column_mapping owners.
@@ -1196,8 +1212,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun getTableStats(tableId: Long): DucklakeTableStats? {
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
+        // No PK on table_id; upstream reads `WHERE record_count IS NOT NULL` and takes what it gets.
+        // Prefer a populated row and never fail on a stray duplicate.
         return dsl.selectFrom(tabstats)
             .where(tabstats.TABLE_ID.eq(tableId))
+            .and(tabstats.RECORD_COUNT.isNotNull)
+            .orderBy(tabstats.RECORD_COUNT.desc())
+            .limit(1)
             .fetchOne()
             ?.let { toDucklakeTableStats(it) }
     }
@@ -3774,8 +3795,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     r.setMaxValue(null)
                 }
                 else {
-                    r.setMinValue(columnStats.minValue)
-                    r.setMaxValue(columnStats.maxValue)
+                    // Upstream StatsToString: a value containing NUL is stored as NULL (PostgreSQL
+                    // rejects NUL in text; the bound is simply unknown then).
+                    r.setMinValue(statText(columnStats.minValue))
+                    r.setMaxValue(statText(columnStats.maxValue))
                 }
                 fileColumnStatsRecords.add(r)
             }
@@ -4558,6 +4581,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .fetchOne(0, Long::class.java)
             return maxId ?: throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
         }
+
+        /** A stat bound as stored: NULL when it contains a NUL byte (upstream `StatsToString`). */
+        private fun statText(value: String?): String? = if (value != null && value.indexOf('\u0000') >= 0) null else value
 
         /**
          * Default storage directory for a new schema/table: `<name>/` when the name is path-safe
