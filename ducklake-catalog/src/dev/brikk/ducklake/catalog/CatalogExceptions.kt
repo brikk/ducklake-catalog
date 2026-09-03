@@ -89,3 +89,21 @@ open class LogicalConflictException
         return false
     }
 }
+
+/**
+ * Thrown by [DucklakeCatalog.dropSchema] when the schema still owns active objects (tables,
+ * views, or macros) at the current snapshot. DuckLake has no schema-level CASCADE in this
+ * library; the caller drops the contents first. Refusing here is what keeps a live view/macro
+ * from being left pointing at an end-snapshotted schema — a shape upstream DuckDB refuses to
+ * load ("could not find schema that corresponds to the view entry").
+ *
+ * @property schemaName the schema that was not dropped.
+ * @property remainingObjectKinds which kinds of object still exist, in upstream's order
+ *   (`tables`, `views`, `macros`) — for the engine's user-facing message.
+ */
+open class DucklakeSchemaNotEmptyException(
+    val schemaName: String,
+    val remainingObjectKinds: List<String>,
+) : DucklakeException(
+    "Cannot drop schema $schemaName: schema is not empty (still has ${remainingObjectKinds.joinToString(", ")})",
+)

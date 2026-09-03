@@ -125,9 +125,44 @@ class DucklakeWriteTransaction(
      * Checks whether a schema has any active tables at the current snapshot.
      */
     @Throws(SQLException::class)
-    fun hasTablesInSchema(schemaId: Long): Boolean {
+    fun hasTablesInSchema(schemaId: Long): Boolean = hasActiveRowsInSchema("ducklake_table", schemaId)
+
+    /**
+     * Checks whether a schema has any active views at the current snapshot.
+     */
+    @Throws(SQLException::class)
+    fun hasViewsInSchema(schemaId: Long): Boolean = hasActiveRowsInSchema("ducklake_view", schemaId)
+
+    /**
+     * Checks whether a schema has any active macros at the current snapshot. This library never
+     * writes macros, but DuckDB does (`CREATE MACRO` in a DuckLake schema), and upstream refuses to
+     * drop a schema that still owns one (`DuckLakeSchemaEntry::TryDropSchema`).
+     */
+    @Throws(SQLException::class)
+    fun hasMacrosInSchema(schemaId: Long): Boolean = hasActiveRowsInSchema("ducklake_macro", schemaId)
+
+    /**
+     * Names of the object kinds still active in the schema at the current snapshot, in upstream's
+     * order (tables, views, macros). Empty means the schema can be dropped without orphaning
+     * anything — upstream's catalog loader throws on a view/table whose schema row is gone.
+     */
+    @Throws(SQLException::class)
+    fun activeObjectKindsInSchema(schemaId: Long): List<String> =
+        buildList {
+            if (hasTablesInSchema(schemaId)) add("tables")
+            if (hasViewsInSchema(schemaId)) add("views")
+            if (hasMacrosInSchema(schemaId)) add("macros")
+        }
+
+    /**
+     * True when [metadataTable] (a fixed `ducklake_*` name — never user input) has a row for
+     * [schemaId] that is active at the current snapshot. All three schema-scoped catalog tables
+     * share the `schema_id` / `begin_snapshot` / `end_snapshot` column shape.
+     */
+    @Throws(SQLException::class)
+    private fun hasActiveRowsInSchema(metadataTable: String, schemaId: Long): Boolean {
         connection.prepareStatement(
-            "SELECT 1 FROM ducklake_table " +
+            "SELECT 1 FROM $metadataTable " +
                 "WHERE schema_id = ? AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL) LIMIT 1",
         ).use { stmt ->
             stmt.setLong(1, schemaId)

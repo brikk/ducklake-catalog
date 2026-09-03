@@ -399,8 +399,9 @@ interface DucklakeCatalog {
     fun createSchema(schemaName: String)
 
     /**
-     * Drop a schema. Fails if the schema contains tables.
-     * Creates a new snapshot atomically.
+     * Drop a schema. Throws [DucklakeSchemaNotEmptyException] if the schema still owns any active
+     * table, view, or macro (no CASCADE — same rule as upstream `DROP SCHEMA`; a live view/macro whose
+     * schema row is gone makes DuckDB refuse to load the catalog). Creates a new snapshot atomically.
      */
     fun dropSchema(schemaName: String)
 
@@ -515,8 +516,10 @@ interface DucklakeCatalog {
     fun addColumn(tableId: Long, column: TableColumnSpec)
 
     /**
-     * Drop a column from a table. Sets end_snapshot on the column's current row.
-     * Increments schema version. Creates a new snapshot atomically.
+     * Drop a column from a table. Sets end_snapshot on the column's current row and on every
+     * transitive descendant row (nested struct/list/map children at any depth), so no active row is
+     * left with a dangling `parent_column`. Fails if the column is not active at the current
+     * snapshot. Increments schema version. Creates a new snapshot atomically.
      */
     fun dropColumn(tableId: Long, columnId: Long)
 

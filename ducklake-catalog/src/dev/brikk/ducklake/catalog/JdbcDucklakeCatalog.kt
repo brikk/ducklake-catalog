@@ -2540,8 +2540,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         executeWriteTransaction("drop schema $schemaName") { tx ->
             val schemaId = tx.resolveSchemaId(schemaName)
 
-            if (tx.hasTablesInSchema(schemaId)) {
-                throw RuntimeException("Cannot drop schema $schemaName: schema is not empty")
+            // Refuse on ANY active object, not just tables: upstream's loader throws
+            // ("could not find schema that corresponds to the view entry") when a live view or
+            // macro points at an end-snapshotted schema, taking the whole catalog down for
+            // DuckDB. Mirrors DuckLakeSchemaEntry::TryDropSchema without CASCADE.
+            val stillOwns = tx.activeObjectKindsInSchema(schemaId)
+            if (stillOwns.isNotEmpty()) {
+                throw DucklakeSchemaNotEmptyException(schemaName, stillOwns)
             }
 
             tx.recordChange(WriteChange.DroppedSchema(schemaId, schemaName))
@@ -3181,14 +3186,22 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     override fun dropColumn(tableId: Long, columnId: Long) {
         val col = DUCKLAKE_COLUMN.`as`("col")
         executeWriteTransaction("drop column from table $tableId") { tx ->
-            // End-snapshot the column and all its children (for nested types)
-            tx.dsl().update(col)
+            val ctx = tx.dsl()
+            val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())
+            if (columns.none { it.columnId == columnId }) {
+                throw RuntimeException("Column not found: $columnId")
+            }
+            // End-snapshot the column and EVERY transitive descendant. Nested types nest
+            // arbitrarily (struct<struct<...>>, list<struct<...>>, map<k, struct<...>>); a
+            // one-level `parent_column = columnId` cascade leaves grandchildren active with a
+            // dangling parent, and upstream's loader then fails the whole catalog with
+            // "Could not find parent column for column ...". Mirrors
+            // DuckLakeTableEntry::RemoveColumns, which recurses.
+            val subtree = collectSubtreeIds(columns, columnId)
+            ctx.update(col)
                 .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(col.TABLE_ID.eq(tableId))
-                .and(
-                    col.COLUMN_ID.eq(columnId)
-                        .or(col.PARENT_COLUMN.eq(columnId)),
-                )
+                .and(col.COLUMN_ID.`in`(subtree))
                 .and(col.END_SNAPSHOT.isNull)
                 .execute()
 
@@ -3430,7 +3443,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())
             val targetId = resolveColumnIdByPath(columns, fieldPath)
             // End-snapshot the field and every transitive descendant (struct subfields nest
-            // arbitrarily — improves on dropColumn's single-level cascade).
+            // arbitrarily) — same recursive cascade as dropColumn.
             val subtree = collectSubtreeIds(columns, targetId)
             ctx.update(col)
                 .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
