@@ -2251,6 +2251,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             RETRY_BACKOFF_MULTIPLIER,
             { millis -> Thread.sleep(millis) },
             operationDescription,
+            WriteTransactionRetry.RANDOM_JITTER,
         ) {
             attemptWriteTransaction(operationDescription, action, transactionStartSnapshotId)
         }

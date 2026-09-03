@@ -76,6 +76,16 @@ class InterveningChanges {
     internal val tablesFlushedInlined: MutableSet<Long> = mutableSetOf()
 
     /**
+     * `changes_made` entries whose kind this parser does not know (a newer DuckLake, or a
+     * non-conformant writer such as pg_ducklake's bare `inlined_data_insert`). Recorded verbatim
+     * (`kind:value`) instead of failing the parse: the conflict matrix treats them as "some table
+     * changed in an unknown way" and conflicts every DATA change of ours with them, while pure
+     * catalog DDL proceeds. Upstream throws here — but upstream is versioned with its own parser;
+     * this library must keep committing against catalogs written by newer DuckDBs.
+     */
+    internal val unknownChanges: MutableList<String> = mutableListOf()
+
+    /**
      * Merge `other` into `this`; cumulative across multiple
      * intervening snapshots' rows.
      */
@@ -99,6 +109,7 @@ class InterveningChanges {
         tablesInsertedInlined.addAll(other.tablesInsertedInlined)
         tablesDeletedInlined.addAll(other.tablesDeletedInlined)
         tablesFlushedInlined.addAll(other.tablesFlushedInlined)
+        unknownChanges.addAll(other.unknownChanges)
     }
 
     // Test helpers — let unit tests inspect the parsed shape without
@@ -134,26 +145,29 @@ class InterveningChanges {
             }
             val cur = Cursor(changesMade)
             while (cur.pos < cur.input.length) {
-                val kind = parseChangeKind(cur)
-                if (cur.pos >= cur.input.length || cur.input[cur.pos] != ':') {
-                    throw IllegalArgumentException(
-                        "Expected a colon after the change type at position ${cur.pos} in: $changesMade",
-                    )
+                parseEntry(cur, result)
+                if (cur.pos < cur.input.length) {
+                    if (cur.input[cur.pos] != ',') {
+                        throw IllegalArgumentException(
+                            "Expected a comma separating change entries at position ${cur.pos} in: $changesMade",
+                        )
+                    }
+                    cur.pos++
                 }
-                cur.pos++
-                val value = parseChangeValue(cur)
-                applyEntry(result, kind, value)
-                if (cur.pos >= cur.input.length) {
-                    break
-                }
-                if (cur.input[cur.pos] != ',') {
-                    throw IllegalArgumentException(
-                        "Expected a comma separating change entries at position ${cur.pos} in: $changesMade",
-                    )
-                }
-                cur.pos++
             }
             return result
+        }
+
+        /** One `kind:value` entry — or a bare `kind` (pg_ducklake's `inlined_data_insert`), recorded as unknown. */
+        private fun parseEntry(cur: Cursor, result: InterveningChanges) {
+            val kind = parseChangeKind(cur)
+            if (cur.pos >= cur.input.length || cur.input[cur.pos] != ':') {
+                result.unknownChanges.add(kind)
+                return
+            }
+            cur.pos++
+            val value = parseChangeValue(cur)
+            applyEntry(result, kind, value)
         }
 
         /**
@@ -169,7 +183,9 @@ class InterveningChanges {
             return combined
         }
 
-        private fun applyEntry(result: InterveningChanges, kind: String, value: String) {
+        private fun applyEntry(result: InterveningChanges, rawKind: String, value: String) {
+            // Upstream compares kinds case-insensitively (CIEquals).
+            val kind = rawKind.lowercase(java.util.Locale.ROOT)
             when (kind) {
                 "created_table" -> {
                     val e = parseCatalogEntry(value)
@@ -201,15 +217,13 @@ class InterveningChanges {
                 // that contains macro changes (e.g. written by DuckDB) still parses.
                 "created_scalar_macro", "created_table_macro",
                 "dropped_scalar_macro", "dropped_table_macro" -> { /* ignored */ }
-                else -> throw IllegalArgumentException(
-                    "Unsupported change type \"$kind\" in changes_made",
-                )
+                else -> result.unknownChanges.add("$rawKind:$value")
             }
         }
 
         private fun parseChangeKind(cur: Cursor): String {
             val start = cur.pos
-            while (cur.pos < cur.input.length && cur.input[cur.pos] != ':') {
+            while (cur.pos < cur.input.length && cur.input[cur.pos] != ':' && cur.input[cur.pos] != ',') {
                 cur.pos++
             }
             return cur.input.substring(start, cur.pos)

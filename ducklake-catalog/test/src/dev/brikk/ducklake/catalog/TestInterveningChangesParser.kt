@@ -175,17 +175,26 @@ class TestInterveningChangesParser {
     // ==================== malformed input ====================
 
     @Test
-    fun unsupportedChangeKindThrows() {
-        assertThatThrownBy(ThrowingCallable { InterveningChanges.parse("totally_made_up:1") })
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("totally_made_up")
+    fun unsupportedChangeKindIsRecordedNotThrown() {
+        // A newer DuckLake may add kinds; the matrix treats them conservatively (see
+        // ConflictMatrix.checkUnknownChanges) instead of failing every retried commit.
+        val out = InterveningChanges.parse("totally_made_up:1,dropped_table:2")
+        assertThat(out.unknownChanges).containsExactly("totally_made_up:1")
+        assertThat(out.droppedTables).containsExactly(2L)
     }
 
     @Test
-    fun missingColonAfterKindThrows() {
-        assertThatThrownBy(ThrowingCallable { InterveningChanges.parse("dropped_table") })
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("Expected a colon")
+    fun bareKindWithoutValueIsRecorded() {
+        // pg_ducklake's direct-insert path writes `inlined_data_insert` with no `:value`.
+        val out = InterveningChanges.parse("inlined_data_insert,dropped_table:2")
+        assertThat(out.unknownChanges).containsExactly("inlined_data_insert")
+        assertThat(out.droppedTables).containsExactly(2L)
+        assertThat(InterveningChanges.parse("dropped_table").unknownChanges).containsExactly("dropped_table")
+    }
+
+    @Test
+    fun kindsAreCaseInsensitive() {
+        assertThat(InterveningChanges.parse("Dropped_Table:3").droppedTables).containsExactly(3L)
     }
 
     @Test
@@ -214,11 +223,10 @@ class TestInterveningChangesParser {
     }
 
     @Test
-    fun emptyEntryAfterCommaThrows() {
-        // The natural follow-up to the trailing-comma test: a comma followed by
-        // something that's not a valid kind:value entry must error.
-        assertThatThrownBy(ThrowingCallable { InterveningChanges.parse("dropped_table:1,bad") })
-            .isInstanceOf(IllegalArgumentException::class.java)
+    fun entryAfterCommaWithoutValueIsRecordedAsUnknown() {
+        val out = InterveningChanges.parse("dropped_table:1,bad")
+        assertThat(out.droppedTables).containsExactly(1L)
+        assertThat(out.unknownChanges).containsExactly("bad")
     }
 
     @Test

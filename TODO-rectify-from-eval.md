@@ -589,7 +589,10 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   what `analyzeTable` may write at all).
 
 ### C-D2 · DRIFT · ConflictMatrix vs upstream v1.5 (`ducklake_transaction_state.cpp:203-262`) — beyond W-D2
-- [ ] **Status:** PARTIAL — matrix rows re-ported (see W-D2). Still open: `InterveningChanges` throws on an unknown
+- [x] **Status:** RESOLVED (author/commit_message left for a future API addition). `InterveningChanges` records unknown
+  or bare kinds (`unknownChanges`) instead of throwing, compares kinds case-insensitively; `ConflictMatrix` aborts any
+  DATA change of ours when unknown kinds intervened and lets DDL proceed (`TestConflictMatrix`,
+  `TestInterveningChangesParser`).
   change kind / bare `inlined_data_insert` (pg_ducklake) instead of degrading to a conservative conflict; author /
   commit_message / commit_extra_info are not written; ConflictMatrix only runs on retry attempts (documented).
 - `ConflictMatrix.kt:147-156` insert lacks `× tablesDeletedInlined` (upstream :207).
@@ -610,7 +613,10 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   a row upstream wouldn't. Reads still resolve via `getSnapshotIdForSchemaVersion :1870` fallback.
 
 ### C-D4 · DRIFT · `WriteTransactionRetry`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. Upstream's 0.5–1.0 random jitter on every wait (`RANDOM_JITTER`, production path;
+  `NO_JITTER` overload keeps tests deterministic); PG `40001`/`40P01` and MySQL `1213`/`1205` are retried (C-B1);
+  the `throw e as RuntimeException` CCE is gone (Q-1); `InterruptedException` → `DucklakeException`. The post-rollback
+  `readLatestSnapshotId` implicit-tx nit and the public `beforeWriteTransactionAction` test seam are left as-is.
 - Retryable: only `TransactionConflictException.retryable()`. PG `40001`/`40P01`, MySQL `1213` deadlocks are not
   retried (upstream retries on "concurrent").
 - No jitter (`WriteTransactionRetry.kt:87`); upstream uses a 0.5–1.0 random multiplier

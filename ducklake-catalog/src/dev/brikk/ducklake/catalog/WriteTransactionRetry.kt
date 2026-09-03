@@ -43,12 +43,45 @@ object WriteTransactionRetry {
         fun run()
     }
 
+    /** Maps a computed back-off wait to the actual wait — see [RANDOM_JITTER]. */
+    fun interface Jitter {
+        fun apply(waitMs: Long): Long
+    }
+
+    /** No jitter: deterministic waits (tests). */
+    @JvmField
+    val NO_JITTER: Jitter = Jitter { it }
+
+    /**
+     * Upstream's jitter (`ducklake_transaction_state.cpp`): a random multiplier in `[0.5, 1.0)` on
+     * every wait, so N writers that conflicted on the same snapshot do not retry in lock-step and
+     * conflict again.
+     */
+    @JvmField
+    val RANDOM_JITTER: Jitter = Jitter { waitMs ->
+        val multiplier = (java.util.concurrent.ThreadLocalRandom.current().nextDouble() + 1.0) / 2.0
+        (waitMs * multiplier).toLong().coerceAtLeast(1L)
+    }
+
+    /** Deterministic waits ([NO_JITTER]); the production path uses the [Jitter] overload. */
     fun retryOnConflict(
         maxRetries: Int,
         initialWaitMs: Long,
         backoffMultiplier: Double,
         sleeper: Sleeper,
         operationDescription: String,
+        attempt: Attempt,
+    ) {
+        retryOnConflict(maxRetries, initialWaitMs, backoffMultiplier, sleeper, operationDescription, NO_JITTER, attempt)
+    }
+
+    fun retryOnConflict(
+        maxRetries: Int,
+        initialWaitMs: Long,
+        backoffMultiplier: Double,
+        sleeper: Sleeper,
+        operationDescription: String,
+        jitter: Jitter,
         attempt: Attempt,
     ) {
         var lastConflict: TransactionConflictException? = null
@@ -76,13 +109,11 @@ object WriteTransactionRetry {
                     operationDescription, i + 1, maxRetries, waitMs, e.message,
                 )
                 try {
-                    sleeper.sleep(waitMs)
+                    sleeper.sleep(jitter.apply(waitMs))
                 }
                 catch (ie: InterruptedException) {
                     Thread.currentThread().interrupt()
-                    throw RuntimeException(
-                        "Interrupted while waiting to retry $operationDescription", ie,
-                    )
+                    throw DucklakeException("Interrupted while waiting to retry $operationDescription", ie)
                 }
                 waitMs = ceil(waitMs * backoffMultiplier).toLong()
             }

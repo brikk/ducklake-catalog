@@ -109,6 +109,19 @@ class TestConflictMatrix {
     }
 
     @Test
+    fun unknownChangeKindsConflictWithDataChangesOnly() {
+        // pg_ducklake bare kind / a newer DuckLake kind: we cannot tell which table, so data changes abort ...
+        for (mine in listOf(insert, delete, rewrite, merge, flush)) {
+            conflicts(mine, "inlined_data_insert")
+            conflicts(mine, "brand_new_kind:7")
+        }
+        // ... while catalog DDL proceeds.
+        for (mine in listOf(alter, WriteChange.CreatedSchema("s"), WriteChange.DroppedTable(7), WriteChange.CreatedTable(1, "s", "t"))) {
+            noConflict(mine, "inlined_data_insert", "brand_new_kind:7")
+        }
+    }
+
+    @Test
     fun dropSchemaConflictsWithAnythingCreatedInIt() {
         val drop = WriteChange.DroppedSchema(1, "s")
         conflicts(drop, "created_table:\"s\".\"t\"")

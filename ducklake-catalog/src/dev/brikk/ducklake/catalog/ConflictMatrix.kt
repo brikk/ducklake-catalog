@@ -48,6 +48,30 @@ object ConflictMatrix {
         for (change in myChanges) {
             checkOne(change, other)
         }
+        checkUnknownChanges(myChanges, other)
+    }
+
+    /**
+     * An intervening commit recorded a change kind this library does not know (newer DuckLake, or a
+     * non-conformant writer). We cannot tell which table it touched or how, so any DATA change of
+     * ours might conflict with it — abort those conservatively. Pure catalog DDL (schemas, tables,
+     * views, columns, comments) is unaffected: every data-vs-DDL row of the matrix is keyed on the
+     * altered/dropped side, which known kinds already cover.
+     */
+    private fun checkUnknownChanges(myChanges: List<WriteChange>, other: InterveningChanges) {
+        if (other.unknownChanges.isEmpty()) {
+            return
+        }
+        val dataChange = myChanges.firstOrNull {
+            it is WriteChange.InsertedIntoTable || it is WriteChange.DeletedFromTable ||
+                it is WriteChange.FlushedInlinedData || it is WriteChange.RewriteDelete || it is WriteChange.MergeAdjacent
+        } ?: return
+        throw conflict(
+            "commit data change $dataChange",
+            "another transaction recorded change(s) this client does not understand: " +
+                other.unknownChanges.distinct().joinToString(", ") +
+                " (possibly a newer DuckLake writer). The change may affect the same table",
+        )
     }
 
     private fun checkOne(change: WriteChange, other: InterveningChanges) {

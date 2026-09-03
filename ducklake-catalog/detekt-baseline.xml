@@ -27,6 +27,5 @@
     <ID>TooGenericExceptionThrown:ConcurrentWriterHarness.kt:ConcurrentWriterHarness$throw RuntimeException(e)</ID>
     <ID>TooGenericExceptionThrown:JdbcDucklakeCatalogTestDataGenerator.kt:JdbcDucklakeCatalogTestDataGenerator$throw RuntimeException("Failed to delete $path", e)</ID>
     <ID>TooGenericExceptionThrown:TestingDucklakeLocalDuckDbCatalogFixture.kt:TestingDucklakeLocalDuckDbCatalogFixture$throw RuntimeException("Failed to create local-DuckDB catalog root dir", ex)</ID>
-    <ID>TooGenericExceptionThrown:WriteTransactionRetry.kt:WriteTransactionRetry$throw RuntimeException( "Interrupted while waiting to retry $operationDescription", ie, )</ID>
   </CurrentIssues>
 </SmellBaseline>
