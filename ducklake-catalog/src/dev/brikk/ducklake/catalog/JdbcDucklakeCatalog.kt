@@ -3054,12 +3054,76 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // original min row-id (the per-row ids are embedded in the file), and record_count /
             // next_row_id are NOT advanced (the rows were already counted + allocated when inlined).
             if (fragments.isNotEmpty()) {
-                applyInsertFragments(tx, tableId, fragments, flushRowIdStart = preservedRowIdStart)
+                applyInsertFragments(tx, tableId, fragments, InsertMode.FLUSH, preservedRowIdStart)
             }
             endSnapshotLiveInlinedRows(ctx, tableId, newSnapshotId, "flush")
 
             // Data move, not schema — no schema-version bump.
             tx.recordChange(WriteChange.FlushedInlinedData(tableId))
+        }
+    }
+
+    override fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>, preservedRowIdStart: Long) {
+        requireFileWritesSupported()
+        for (f in files) {
+            require(f.deleteFragment == null || f.deleteFragment.hasEmbeddedSnapshots) {
+                "flushInlinedDataWithSnapshots: delete fragment for ${f.fragment.path} must carry embedded snapshot ids"
+            }
+            require(f.beginSnapshot <= f.partialMax) { "flushInlinedDataWithSnapshots: begin > partial_max for ${f.fragment.path}" }
+        }
+        val file = DUCKLAKE_DATA_FILE.`as`("file")
+        executeWriteTransaction("flush inlined data (with snapshots) for table $tableId") { tx ->
+            val ctx = tx.dsl()
+            for (flushed in files) {
+                // Register the materialised file, then back-date it: begin = MIN embedded insert
+                // snapshot, partial_max = MAX — what upstream's insert path derives from the written
+                // file's _ducklake_internal_snapshot_id stats (ducklake_insert.cpp).
+                applyInsertFragments(tx, tableId, listOf(flushed.fragment), InsertMode.FLUSH, preservedRowIdStart)
+                val dataFileId: Long = ctx.select(file.DATA_FILE_ID).from(file)
+                    .where(file.TABLE_ID.eq(tableId))
+                    .and(file.PATH.eq(flushed.fragment.path))
+                    .and(file.BEGIN_SNAPSHOT.eq(tx.getNewSnapshotId()))
+                    .fetchOne(file.DATA_FILE_ID) ?: throw DucklakeCatalogCorruptionException(
+                    "flush: registered data file ${flushed.fragment.path} not found",
+                )
+                ctx.update(file)
+                    .set(file.BEGIN_SNAPSHOT, flushed.beginSnapshot)
+                    .set(file.PARTIAL_MAX, flushed.partialMax)
+                    .where(file.DATA_FILE_ID.eq(dataFileId))
+                    .execute()
+                // Delete file for the rows that were already deleted while inlined. The data file is
+                // brand new, so there is nothing to supersede; `embeddedSnapshotMax` is the last
+                // ORIGINAL deletion snapshot, not this commit's (no new deletion happens here).
+                flushed.deleteFragment?.let { del ->
+                    insertDeleteFileRows(tx, tableId, listOf(del.copy(dataFileId = dataFileId)), requireCommitSnapshotMatch = false)
+                }
+            }
+            // Upstream DeleteFlushedInlinedData: the rows now live in the back-dated files.
+            deleteFlushedInlinedRows(ctx, tableId, tx.getCurrentSnapshotId())
+            tx.recordChange(WriteChange.FlushedInlinedData(tableId))
+        }
+    }
+
+    /**
+     * Physically remove every inlined row with `begin_snapshot <= [upToSnapshot]` from all of the
+     * table's inlined tables (upstream `DeleteFlushedInlinedData`) — used only when the flushed
+     * files were registered back-dated, so time travel still resolves those rows through Parquet.
+     */
+    private fun deleteFlushedInlinedRows(ctx: DSLContext, tableId: Long, upToSnapshot: Long) {
+        val inlinedTables = DUCKLAKE_INLINED_DATA_TABLES.`as`("inlined")
+        val schemaVersions: List<Long> = ctx.select(inlinedTables.SCHEMA_VERSION)
+            .from(inlinedTables)
+            .where(inlinedTables.TABLE_ID.eq(tableId))
+            .fetch(inlinedTables.SCHEMA_VERSION)
+            .filterNotNull()
+        for (schemaVersion in schemaVersions) {
+            val inlined = InlinedDataTable.of(tableId, schemaVersion)
+            try {
+                metadata.execute(ctx, ctx.deleteFrom(inlined.table).where(inlined.beginSnapshot.le(upToSnapshot)))
+            }
+            catch (e: DataAccessException) {
+                rethrowUnlessMissingTable(e, inlined.name, "delete flushed inlined rows")
+            }
         }
     }
 
@@ -3685,14 +3749,27 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
+    /**
+     * How [applyInsertFragments] treats row ids and table-level counts.
+     *  - [INSERT]: allocate fresh row ids from `next_row_id` and advance it; add the rows to gross
+     *    `record_count`.
+     *  - [FLUSH]: register at [preservedRowIdStart] (the flushed rows' original ids; per-row ids are
+     *    embedded in the file) and leave `next_row_id` AND `record_count` alone — the rows were
+     *    counted and allocated when they were inlined.
+     *  - [REWRITE]: register at [preservedRowIdStart] (smallest retired source's `row_id_start`; the
+     *    merged files embed `_ducklake_internal_row_id`), do not advance `next_row_id`, but DO add the
+     *    merged rows to gross `record_count` — [netRewriteStats] then subtracts the retired sources.
+     */
+    private enum class InsertMode { INSERT, FLUSH, REWRITE }
+
     private fun applyInsertFragments(
         tx: DucklakeWriteTransaction,
         tableId: Long,
         fragments: List<DucklakeWriteFragment>,
-        // Non-null => this is a flush_inlined_data move: register the (single) file at this
-        // original row-id start and leave record_count / next_row_id unchanged.
-        flushRowIdStart: Long? = null,
+        mode: InsertMode = InsertMode.INSERT,
+        preservedRowIdStart: Long? = null,
     ) {
+        require(mode == InsertMode.INSERT || preservedRowIdStart != null) { "$mode requires preservedRowIdStart" }
         val ctx = tx.dsl()
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
@@ -3707,7 +3784,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .where(tabstats.TABLE_ID.eq(tableId))
             .fetchOne()
 
-        var runningRowId: Long = flushRowIdStart ?: (if (existingStats == null) 0L else orZero(existingStats.nextRowId))
+        var runningRowId: Long = preservedRowIdStart ?: (if (existingStats == null) 0L else orZero(existingStats.nextRowId))
         var totalRecords: Long = 0
         var totalFileSize: Long = 0
         val partitionValueRecords: MutableList<DucklakeFilePartitionValueRecord> = mutableListOf()
@@ -3839,11 +3916,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             ctx.batchInsert(fileColumnStatsRecords).execute()
         }
 
-        // Insert or update ducklake_table_stats (no PK/UNIQUE → can't use ON CONFLICT).
-        // A flush is a storage move: it grows file_size_bytes (a real file now exists) but must
-        // NOT advance record_count or next_row_id — the rows were already counted and their ids
-        // already allocated when the data was inlined.
-        val isFlush = flushRowIdStart != null
+        // Insert or update ducklake_table_stats (no PK/UNIQUE → can't use ON CONFLICT). See
+        // InsertMode for which counters each mode touches.
+        val countRecords = mode != InsertMode.FLUSH
+        val advanceRowIds = mode == InsertMode.INSERT
         if (existingStats != null) {
             // Relative (`col = col + n`) rather than read-modify-write with the values loaded above:
             // the snapshot PK forces a retry on a concurrent commit anyway, but relative updates
@@ -3852,20 +3928,21 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // above were derived from the read value, so it MUST stay consistent with them.
             var upd = ctx.update(tabstats)
                 .set(tabstats.FILE_SIZE_BYTES, DSL.coalesce(tabstats.FILE_SIZE_BYTES, DSL.inline(0L)).plus(totalFileSize))
-            if (!isFlush) {
-                upd = upd
-                    .set(tabstats.RECORD_COUNT, DSL.coalesce(tabstats.RECORD_COUNT, DSL.inline(0L)).plus(totalRecords))
-                    .set(tabstats.NEXT_ROW_ID, orZero(existingStats.nextRowId) + totalRecords)
+            if (countRecords) {
+                upd = upd.set(tabstats.RECORD_COUNT, DSL.coalesce(tabstats.RECORD_COUNT, DSL.inline(0L)).plus(totalRecords))
+            }
+            if (advanceRowIds) {
+                upd = upd.set(tabstats.NEXT_ROW_ID, orZero(existingStats.nextRowId) + totalRecords)
             }
             upd.where(tabstats.TABLE_ID.eq(tableId)).execute()
         }
         else {
-            // No prior stats. For a flush this is unexpected (inlined rows imply stats exist), but
-            // stay safe: record the moved rows once and set the allocator past their ids.
+            // No prior stats. For a flush/rewrite this is unexpected (existing rows imply stats
+            // exist), but stay safe: record the rows once and set the allocator past their ids.
             ctx.insertInto(tabstats)
                 .set(tabstats.TABLE_ID, tableId)
                 .set(tabstats.RECORD_COUNT, totalRecords)
-                .set(tabstats.NEXT_ROW_ID, if (isFlush) flushRowIdStart!! + totalRecords else totalRecords)
+                .set(tabstats.NEXT_ROW_ID, (preservedRowIdStart ?: 0L) + totalRecords)
                 .set(tabstats.FILE_SIZE_BYTES, totalFileSize)
                 .execute()
         }
@@ -4069,10 +4146,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             assertNoNewerDeleteOnRewriteSources(tx, sourceDataFileIds, readSnapshotId)
             val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
-            // Register the merged file(s): begin = newSnapshotId, ordinary (no partial_max). This
-            // also bumps table_stats record_count/file_size/next_row_id UP by the merged amounts and
-            // widens the per-column table stats (a no-op since merged ⊆ source range).
-            applyInsertFragments(tx, tableId, fragments)
+            // Register the merged file(s): begin = newSnapshotId, ordinary (no partial_max), at the
+            // retired sources' smallest row_id_start (rows carry their original ids in the embedded
+            // _ducklake_internal_row_id column — a compaction allocates no new row ids, as upstream).
+            // This also bumps table_stats record_count/file_size UP by the merged amounts and widens
+            // the per-column table stats (a no-op since merged ⊆ source range).
+            applyInsertFragments(tx, tableId, fragments, InsertMode.REWRITE, retired.minRowIdStart)
             endSnapshotRewriteSources(tx, tableId, sourceDataFileIds)
             netRewriteStats(tx, tableId, retired)
 
@@ -4104,7 +4183,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
             for (merged in mergedFiles) {
-                applyInsertFragments(tx, tableId, listOf(merged.fragment))
+                applyInsertFragments(tx, tableId, listOf(merged.fragment), InsertMode.REWRITE, retired.minRowIdStart)
                 // Back-date the just-registered merged file to begin = MIN row snapshot + tag it
                 // partial (partial_max = MAX row snapshot); rows newer than a time-travel read are
                 // filtered via the file's _ducklake_internal_snapshot_id column.
@@ -4239,14 +4318,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    /** Gross `record_count` and `file_size_bytes` of the active source files about to be retired. */
-    private data class RetiredSourceStats(val recordCount: Long, val fileSizeBytes: Long)
+    /**
+     * Gross `record_count`, `file_size_bytes` and smallest `row_id_start` of the active source files
+     * about to be retired.
+     */
+    private data class RetiredSourceStats(val recordCount: Long, val fileSizeBytes: Long, val minRowIdStart: Long)
 
     private fun sumActiveSourceStats(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>): RetiredSourceStats {
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         var records = 0L
         var bytes = 0L
-        tx.dsl().select(file.RECORD_COUNT, file.FILE_SIZE_BYTES)
+        var minRowIdStart = Long.MAX_VALUE
+        tx.dsl().select(file.RECORD_COUNT, file.FILE_SIZE_BYTES, file.ROW_ID_START)
             .from(file)
             .where(file.TABLE_ID.eq(tableId))
             .and(file.DATA_FILE_ID.`in`(sourceDataFileIds))
@@ -4255,8 +4338,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .forEach { r ->
                 records += orZero(r.get(file.RECORD_COUNT))
                 bytes += orZero(r.get(file.FILE_SIZE_BYTES))
+                minRowIdStart = minOf(minRowIdStart, orZero(r.get(file.ROW_ID_START)))
             }
-        return RetiredSourceStats(records, bytes)
+        return RetiredSourceStats(records, bytes, if (minRowIdStart == Long.MAX_VALUE) 0L else minRowIdStart)
     }
 
     private fun endSnapshotRewriteSources(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>) {
@@ -4313,6 +4397,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * prior active ones. [readSnapshotId] is the snapshot the caller planned against: the union the
      * caller built only covers delete files active at THAT snapshot, so any delete file that appeared
      * on a touched data file afterwards must abort the commit (see [DucklakeCatalog.commitDelete]).
+     *
+     * Two shapes per fragment (see [DucklakeDeleteFragment]):
+     *  - snapshot-tagged (3-column): upstream v1.5 — the superseded row is DELETED and its file
+     *    scheduled for removal; the new row is back-dated to the MIN embedded snapshot with
+     *    `partial_max` = MAX, which must be THIS commit's snapshot;
+     *  - plain (2-column): the superseded row is end-snapshotted and the new row begins now.
+     *
+     * `ducklake_table_stats.record_count` is deliberately NOT touched: it is the GROSS row count of
+     * the table's data files (upstream MergeFileStats only ever adds; a DELETE writes no stats).
+     * DuckDB treats `record_count == net live count` as "no row was ever deleted, so the cached
+     * global min/max are exact" and folds SELECT MIN/MAX to them; decrementing here would keep that
+     * equality true after the row holding a bound was deleted -> wrong MIN/MAX in DuckDB.
      */
     private fun applyDeleteFragments(
         tx: DucklakeWriteTransaction,
@@ -4322,38 +4418,87 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ) {
         val ctx = tx.dsl()
         val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
-        val deleteFileRecords: MutableList<DucklakeDeleteFileRecord> = mutableListOf()
-
-        // End-snapshot any prior active delete files for the data_file_ids we're about to
-        // write new delete files for. DuckLake's spec invariant is ≤1 active delete file per
-        // data_file_id per snapshot (README:223, checkDeleteFileOverlap:1311-1312); the sink
-        // unions prior-active positions with this commit's new positions into the new file,
-        // so superseding the prior is correct (no rows resurrect — the new file carries the
-        // union) PROVIDED the prior is the one the caller unioned.
-        //
-        // ducklake_table_stats.record_count is deliberately NOT touched: it is the GROSS row
-        // count of the table's data files (upstream MergeFileStats only ever adds; a DELETE
-        // writes no stats). DuckDB treats `record_count == net live count` as "no row was ever
-        // deleted, so the cached global min/max are exact" and folds SELECT MIN/MAX to them
-        // (ducklake_scan.cpp min_max_exact). Decrementing here would keep that equality true
-        // after the row holding a bound was deleted -> wrong MIN/MAX in DuckDB.
         val touchedDataFileIds: Set<Long> = deleteFragments.mapTo(HashSet()) { it.dataFileId }
         assertNoDeleteNewerThanRead(ctx, touchedDataFileIds, readSnapshotId)
-        if (touchedDataFileIds.isNotEmpty()) {
+
+        // DuckLake's invariant is <=1 active delete file per data_file_id per snapshot; the sink
+        // unions the prior-active positions with this commit's new positions into the new file, so
+        // superseding the prior is correct PROVIDED the prior is the one the caller unioned (the
+        // guard above).
+        val (tagged, plain) = deleteFragments.partition { it.hasEmbeddedSnapshots }
+        if (tagged.isNotEmpty()) {
+            // Upstream DeleteOverwrittenDeleteFiles: drop the superseded rows outright and schedule
+            // their files — the new back-dated file carries their positions with their snapshots.
+            val superseded = ctx.selectFrom(delfile)
+                .where(delfile.TABLE_ID.eq(tableId))
+                .and(delfile.DATA_FILE_ID.`in`(tagged.mapTo(HashSet()) { it.dataFileId }))
+                .and(delfile.END_SNAPSHOT.isNull)
+                .fetch()
+            if (superseded.isNotEmpty()) {
+                val cache = HashMap<Long, String?>()
+                for (old in superseded) {
+                    scheduleFile(
+                        ctx,
+                        DeadFile(orZero(old.deleteFileId), tableId, old.path!!, old.pathIsRelative == true),
+                        cache,
+                    )
+                }
+                metadata.execute(
+                    ctx,
+                    ctx.deleteFrom(delfile).where(delfile.DELETE_FILE_ID.`in`(superseded.map { orZero(it.deleteFileId) })),
+                )
+            }
+        }
+        if (plain.isNotEmpty()) {
             ctx.update(delfile)
                 .set(delfile.END_SNAPSHOT, tx.getNewSnapshotId())
-                .where(delfile.DATA_FILE_ID.`in`(touchedDataFileIds))
+                .where(delfile.DATA_FILE_ID.`in`(plain.mapTo(HashSet()) { it.dataFileId }))
                 .and(delfile.END_SNAPSHOT.isNull)
                 .execute()
         }
+        insertDeleteFileRows(tx, tableId, deleteFragments, requireCommitSnapshotMatch = true)
+    }
 
+    /**
+     * Inserts the `ducklake_delete_file` rows for [deleteFragments]. A snapshot-tagged fragment is
+     * registered at `begin_snapshot = embeddedSnapshotMin`, `partial_max = embeddedSnapshotMax`;
+     * when [requireCommitSnapshotMatch] (a DELETE / MERGE, whose new positions were tagged with the
+     * writer's guess of the commit snapshot) the max must equal this commit's snapshot — otherwise
+     * a time-travel read between the two would apply the deletions early or late, so the commit is
+     * aborted non-retryably and the caller re-plans. A plain fragment begins at the commit snapshot.
+     */
+    private fun insertDeleteFileRows(
+        tx: DucklakeWriteTransaction,
+        tableId: Long,
+        deleteFragments: List<DucklakeDeleteFragment>,
+        requireCommitSnapshotMatch: Boolean,
+    ) {
+        val ctx = tx.dsl()
+        val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
+        val deleteFileRecords: MutableList<DucklakeDeleteFileRecord> = mutableListOf()
         for (fragment in deleteFragments) {
-            val deleteFileId = tx.allocateFileId()
-
+            if (fragment.hasEmbeddedSnapshots) {
+                val min = fragment.embeddedSnapshotMin!!
+                val max = fragment.embeddedSnapshotMax!!
+                if (min > max || max > tx.getNewSnapshotId()) {
+                    throw DucklakeInvalidOperationException(
+                        "Delete file ${fragment.path}: embedded snapshot range [$min, $max] is invalid for commit snapshot " +
+                            "${tx.getNewSnapshotId()}",
+                    )
+                }
+                if (requireCommitSnapshotMatch && max != tx.getNewSnapshotId()) {
+                    throw LogicalConflictException(
+                        "Delete file ${fragment.path} tags its new deletions with snapshot $max but this commit lands at " +
+                            "snapshot ${tx.getNewSnapshotId()} (another writer committed in between). The file must be " +
+                            "rewritten from a fresh read; this conflict is not retried.",
+                    )
+                }
+            }
             val r = ctx.newRecord(delfile)
-            r.setDeleteFileId(deleteFileId)
+            r.setDeleteFileId(tx.allocateFileId())
             r.setTableId(tableId)
-            r.setBeginSnapshot(tx.getNewSnapshotId())
+            r.setBeginSnapshot(fragment.embeddedSnapshotMin ?: tx.getNewSnapshotId())
+            r.setPartialMax(fragment.embeddedSnapshotMax)
             r.setDataFileId(fragment.dataFileId)
             r.setPath(fragment.path)
             r.setPathIsRelative(true)
@@ -4369,7 +4514,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
             deleteFileRecords.add(r)
         }
-
         if (deleteFileRecords.isNotEmpty()) {
             ctx.batchInsert(deleteFileRecords).execute()
         }

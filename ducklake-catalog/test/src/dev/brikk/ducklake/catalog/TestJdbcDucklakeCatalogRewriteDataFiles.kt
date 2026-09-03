@@ -161,8 +161,8 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
             .`as`("file_size reflects (merged − retired): %d − 1024 − 2048 + 1500", statsBefore.fileSizeBytes)
             .isEqualTo(statsBefore.fileSizeBytes - 1024L - 2048L + 1500L)
         assertThat(nextRowId())
-            .`as`("next_row_id is monotonic (advanced by the merged file's 20 rows)")
-            .isEqualTo(nextRowIdBefore + 20L)
+            .`as`("compaction allocates no new row ids: merged rows keep their embedded originals")
+            .isEqualTo(nextRowIdBefore)
 
         // Time travel: the pre-compaction snapshot still resolves the sources, not the merged file.
         val atReadSnapshot = catalog.getDataFiles(tableId, readSnapshot).map { it.path }

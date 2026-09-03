@@ -219,8 +219,11 @@ interface DucklakeCatalog : AutoCloseable {
      * The number of live rows at [snapshotId], computed from the catalog the way upstream's
      * `GetNetDataFileRowCount` + `GetNetInlinedRowCount` do: Σ `record_count` of the active data
      * files − Σ `delete_count` of their active delete files − inlined file deletions on them + live
-     * inlined rows. Exact for the catalog state; this is what an engine should report as the table's
-     * row count (not [DucklakeTableStats.recordCount]).
+     * inlined rows. Exact at the latest snapshot; this is what an engine should report as the table's
+     * row count (not [DucklakeTableStats.recordCount]). For TIME TRAVEL through a snapshot-tagged
+     * (consolidated) delete file it is a lower bound: `delete_count` is the file's total, part of
+     * which may postdate [snapshotId] — the same metadata-only limitation upstream has; a scan gives
+     * the exact number.
      */
     fun getLiveRowCount(tableId: Long, snapshotId: Long): Long
 
@@ -513,6 +516,26 @@ interface DucklakeCatalog : AutoCloseable {
     fun flushInlinedData(tableId: Long, fragments: List<DucklakeWriteFragment>, preservedRowIdStart: Long)
 
     /**
+     * Upstream-shaped flush (`ducklake_flush_inlined_data`, v1.5). Each [files] entry holds ALL
+     * inlined rows of one inlined table — live AND already-deleted — with per-row
+     * `_ducklake_internal_row_id` and `_ducklake_internal_snapshot_id` (each row's original insert
+     * snapshot); the entry's [FlushedInlinedFile.beginSnapshot] / [FlushedInlinedFile.partialMax] are
+     * the MIN / MAX of that column, and the data file is registered BACK-DATED to them so a
+     * time-travel read at any earlier snapshot still sees exactly the rows that were live then
+     * (filtered by the embedded column). An entry's [FlushedInlinedFile.deleteFragment] is the
+     * 3-column delete file for the rows that had been deleted while inlined, each position tagged
+     * with its original deletion snapshot ([DucklakeDeleteFragment.embeddedSnapshotMin] / `Max` set;
+     * the max need NOT equal the commit snapshot — no new deletion happens). The inlined rows with
+     * `begin_snapshot <=` the base snapshot are then physically DELETED from the inlined tables, as
+     * upstream does — their history lives on in the back-dated files.
+     *
+     * [preservedRowIdStart] as in [flushInlinedData]. No schema-version bump; recorded as
+     * `inline_flush`. Prefer this over the 2-arg form: it keeps `$snapshot_id` exact on flushed rows
+     * and matches what DuckDB itself writes.
+     */
+    fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>, preservedRowIdStart: Long)
+
+    /**
      * Rename a table within its schema. End-snapshots the current `ducklake_table` row and
      * inserts a new version with the same table_id, uuid, and path — data files and history
      * are untouched; the table's data directory keeps its original name. Recorded as
@@ -703,11 +726,15 @@ interface DucklakeCatalog : AutoCloseable {
      * `rewrite_data_files` shape (see dev-docs/DESIGN-maintenance.md § 7).
      *
      * Contract: the merged fragments must hold **exactly the live rows** of the retired sources
-     * (deletes already applied). `ducklake_table_stats` is brought in line with the new file set:
-     * gross `record_count` and `file_size_bytes` change by (Σmerged − Σretired) — the retired
-     * sources' deleted rows leave the gross count here — the per-column global bounds are rebuilt
-     * from the surviving files' per-file stats (as upstream's `RecomputeGlobalStatsAfterRewrite`
-     * does), and `next_row_id` advances monotonically. The retired source/delete files are NOT physically
+     * (deletes already applied) and carry each row's original DuckLake row id in an embedded
+     * `_ducklake_internal_row_id` column (upstream `rewrite_data_files` always writes it, since
+     * applied deletes leave gaps). Row identity is therefore PRESERVED: the merged files are
+     * registered at `row_id_start` = the smallest retired source's `row_id_start` (a fallback
+     * readers only use when the embedded column is absent) and `next_row_id` is NOT advanced — a
+     * compaction allocates no new row ids. `ducklake_table_stats` is brought in line with the new
+     * file set: gross `record_count` and `file_size_bytes` change by (Σmerged − Σretired) — the
+     * retired sources' deleted rows leave the gross count here — and the per-column global bounds
+     * are rebuilt from the surviving files' per-file stats (upstream `RecomputeGlobalStatsAfterRewrite`). The retired source/delete files are NOT physically
      * removed here; time-travel still resolves them via `[begin,end)` liveness until
      * `expire_snapshots` → `cleanup_old_files` reclaims them.
      *

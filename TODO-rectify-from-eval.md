@@ -234,7 +234,16 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (`_state.cpp:49-56`). Consider exposing author/commit_message on the write API.
 
 ### W-D3 · DRIFT · `ducklake_data_file` — flush and rewrite shape
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (catalog side). New `flushInlinedDataWithSnapshots(tableId, files: List<FlushedInlinedFile>,
+  preservedRowIdStart)`: each file is registered back-dated (`begin_snapshot` = MIN embedded insert snapshot,
+  `partial_max` = MAX), its 3-column delete file for rows deleted while inlined is attached by path, and the inlined
+  rows are physically DELETED (upstream `DeleteFlushedInlinedData`). The legacy 2-arg `flushInlinedData` keeps the
+  end-snapshot behaviour. `rewriteDataFiles` / `rewriteDataFilesPartial` register merged files at the smallest
+  retired source's `row_id_start` and no longer advance `next_row_id` (rows carry `_ducklake_internal_row_id`).
+  DuckDB oracle: `TestJdbcDucklakeCatalogUpstreamFileShapesInterop` (time travel across every snapshot, `rowid`
+  identity). **trino-ducklake follow-up:** `DucklakeFlushInlinedDataProcedure` must also write
+  `_ducklake_internal_snapshot_id` (field id 2147483539), include deleted inlined rows plus a tagged delete file,
+  and call the new method.
 - Flush: library registers the file at `begin_snapshot = new`, `partial_max = NULL` and end-snapshots inlined rows
   (`:2680-2732`); upstream sets `begin_snapshot = min embedded snapshot`, `partial_max = max`
   (`ducklake_insert.cpp:137-147`, `metadata_manager.cpp:3749-3754`) and *deletes* the inlined rows (`:5105-5124`).
@@ -268,7 +277,13 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   library-written float columns**. Write explicit `false`.
 
 ### W-D6 · DRIFT · `ducklake_delete_file` superseding shape
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (catalog side). `DucklakeDeleteFragment.embeddedSnapshotMin/Max` mark a 3-column
+  snapshot-tagged file: the superseded row is DELETEd and its file scheduled (upstream
+  `DeleteOverwrittenDeleteFiles`), the new row is back-dated to the min with `partial_max` = max, and the commit
+  aborts non-retryably if the max (the writer's guess of the commit snapshot, `read + 1`) is not the snapshot the
+  commit lands at. 2-column fragments keep the end-snapshot model. **trino-ducklake follow-up:** `DucklakeMergeSink`
+  should write the 3-column file (carry prior positions with the superseded file's embedded ids or its
+  `begin_snapshot`; tag new ones with `readSnapshot + 1`) and populate the two fields.
 - Library end-snapshots the prior active delete file and writes a plain `(file_path, pos)` union file
   (`:3908-3915`); upstream v1.5 DELETEs the prior row + schedules the file (`metadata_manager.cpp:3832-3869`) and
   writes a 3-column file with per-position `_ducklake_internal_snapshot_id`, `begin_snapshot = min`,
@@ -430,7 +445,9 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   MySQL) for a planning pass; connectors call it around table-handle creation.
 
 ### R-D2 · DRIFT · Delete-file history model differs from upstream
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED with W-D6 for snapshot-tagged writers (one row per data file, no multi-row history for
+  upstream's `table_deletions` to double-report). Plain 2-column writers still produce the legacy history; the read
+  side (R-B2) handles both.
 - Library end-snapshots the prior delete row and inserts a new one (`:3908-3915`); upstream keeps ≤1 row per data
   file (old row deleted, new back-dated with `partial_max`). `getDeletionsBetween`'s `previousDelete` (`:484-489`)
   is meaningful for library-written data only. Interop: upstream `table_deletions` computes `previous_delete` as

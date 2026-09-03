@@ -13,6 +13,8 @@
  */
 package dev.brikk.ducklake.catalog
 
+import com.fasterxml.jackson.annotation.JsonInclude
+
 /**
  * Describes a delete Parquet file written during a DELETE/UPDATE/MERGE operation.
  * Each fragment corresponds to one data file's deletions.
@@ -23,10 +25,33 @@ package dev.brikk.ducklake.catalog
  * [newDeleteCount] is the DELTA added by THIS commit only. It is informational: the catalog no
  * longer subtracts it from `ducklake_table_stats.record_count`, which is the gross row count
  * (see [DucklakeTableStats]). Retained on the wire for compatibility.
+ *
+ * ### Two delete-file shapes
+ *
+ * **Snapshot-tagged (upstream v1.5, preferred)** — [embeddedSnapshotMin] / [embeddedSnapshotMax]
+ * set: the file has a third column `_ducklake_internal_snapshot_id` giving each deleted
+ * position's deletion snapshot. Positions carried over from the superseded delete file keep
+ * their snapshot (the superseded file's own embedded ids, or its `begin_snapshot` when it was a
+ * 2-column file); this commit's new positions carry the COMMIT snapshot. The catalog then
+ * registers the row exactly as upstream does — `begin_snapshot = embeddedSnapshotMin`,
+ * `partial_max = embeddedSnapshotMax` — and DELETES the superseded row (scheduling its file for
+ * physical removal) instead of end-snapshotting it, so a data file has at most one delete-file
+ * row in its whole history and readers window it by the embedded ids. Because the new
+ * positions must carry the snapshot the commit actually lands at, the writer uses
+ * `readSnapshotId + 1` and the catalog aborts non-retryably if the commit snapshot turns out
+ * different (another writer committed first; the file must be rewritten from a fresh read).
+ *
+ * In either shape DuckDB requires the positions in the file to be sorted and strictly increasing.
+ *
+ * **Plain (2-column, legacy)** — both null: the catalog end-snapshots the superseded row and
+ * inserts the new one at the commit snapshot. Spec-valid and readable by upstream, but the
+ * per-data-file history grows one row per DELETE and upstream's `table_deletions` can
+ * double-report deletions across such rows (see TODO R-D2).
  */
 @JvmRecord
 @JacksonSerializedInternalJavaCompatibleClass
-data class DucklakeDeleteFragment(
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class DucklakeDeleteFragment @JvmOverloads constructor(
     val dataFileId: Long,
     val path: String,
     val deleteCount: Long,
@@ -39,4 +64,12 @@ data class DucklakeDeleteFragment(
      * Persisted to `ducklake_delete_file.format`; both are read by Trino and DuckDB.
      */
     val format: String = "parquet",
-)
+    /** MIN `_ducklake_internal_snapshot_id` in the file (3-column shape), else null. */
+    val embeddedSnapshotMin: Long? = null,
+    /** MAX `_ducklake_internal_snapshot_id` in the file (3-column shape) — must equal the commit snapshot. */
+    val embeddedSnapshotMax: Long? = null,
+) {
+    /** True for the upstream 3-column shape (see the class comment). */
+    val hasEmbeddedSnapshots: Boolean
+        @com.fasterxml.jackson.annotation.JsonIgnore get() = embeddedSnapshotMin != null && embeddedSnapshotMax != null
+}

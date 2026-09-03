@@ -139,3 +139,19 @@ data class PartialMergedFile(
     val beginSnapshot: Long,
     val partialMax: Long,
 )
+
+/**
+ * One output file of an upstream-shaped flush ([DucklakeCatalog.flushInlinedDataWithSnapshots]): the
+ * registration [fragment] (ALL rows of one inlined table, live and deleted, with embedded
+ * `_ducklake_internal_row_id` / `_ducklake_internal_snapshot_id`), the file's [beginSnapshot] /
+ * [partialMax] (MIN / MAX embedded insert snapshot), and — when some of those rows had been deleted
+ * while inlined — the 3-column [deleteFragment] for them, tagged with each row's original deletion
+ * snapshot. Its [DucklakeDeleteFragment.dataFileId] is ignored: the delete file is attached to the
+ * data file registered from [fragment] (upstream attaches flush delete files by path too).
+ */
+data class FlushedInlinedFile(
+    val fragment: DucklakeWriteFragment,
+    val beginSnapshot: Long,
+    val partialMax: Long,
+    val deleteFragment: DucklakeDeleteFragment? = null,
+)
