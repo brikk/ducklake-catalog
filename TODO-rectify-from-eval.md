@@ -454,7 +454,13 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
 ## C — Commit protocol, conflict detection, retry, multi-backend SQL
 
 ### C-B1 · BUG (DuckDB backends) · Snapshot PK collision not recognised; real error masked by failing `rollback()`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `isDuplicateKeyViolation` recognises DuckDB's `violates primary key constraint` /
+  `violates unique constraint` / `PRIMARY KEY or UNIQUE constraint violation`; new `isWriteWriteConflict` covers
+  DuckDB `Conflict on update!` / `write-write conflict`, PG `40001`/`40P01`, MySQL `1213`/`1205`;
+  `isMetadataPrimaryKeyConflict` = either, with no table-name gate (upstream `RetryOnError` parity). All three
+  `conn.rollback()` sites go through `rollbackQuietly`, which attaches a failing rollback as a suppressed exception
+  instead of letting it replace the original. `TestConcurrentCommitOnLocalDuckDb` (schema-id collision + dueling
+  `ducklake_table_stats` UPDATE) fails pre-fix with the opaque `RuntimeException("Failed to …")`, passes post-fix.
 - `isDuplicateKeyViolation` (`JdbcDucklakeCatalog.kt:4255-4281`) matches PG `23505`, SQLite 19, MySQL 1062 only.
   DuckDB JDBC 1.5.5 (`SQLState=null`, `errorCode=0`) emits: same-connection dup → `Constraint Error: Duplicate key
   "id: 1" violates primary key constraint.`; concurrent writers → `commit()` throws `TransactionContext Error:
@@ -473,7 +479,9 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `TestConcurrent*` are PG-only).
 
 ### C-B2 · BUG (MySQL) · Catalog-id PK collisions inside the action are non-retryable
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (with C-B1) — any duplicate-key violation inside a write transaction is a metadata
+  conflict; the bogus PK list is gone. `TestConcurrentCommitOnMySql` (schema-id and data-file-id collisions) fails
+  pre-fix, passes post-fix. First MySQL and DuckDB concurrency tests in the suite.
 - `:4198-4219`: MySQL's message is `Duplicate entry '5' for key 'ducklake_schema.PRIMARY'` — contains neither `_pkey`
   nor `ducklake_schema.schema_id`, so a concurrent `createSchema` (same `schema_id` from `next_catalog_id`) throws
   `RuntimeException("Failed to create schema")` instead of retrying. Same for `ducklake_data_file` /

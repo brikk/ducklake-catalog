@@ -739,7 +739,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 return ExpireSnapshotsResult(snapshotIds.size, scheduledCount)
             }
             catch (e: Exception) {
-                conn.rollback()
+                rollbackQuietly(conn, e)
                 throw e
             }
         }
@@ -1224,7 +1224,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 conn.commit()
             }
             catch (e: Exception) {
-                conn.rollback()
+                rollbackQuietly(conn, e)
                 throw e
             }
         }
@@ -2309,7 +2309,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     conn.commit()
                 }
                 catch (e: Exception) {
-                    conn.rollback()
+                    rollbackQuietly(conn, e)
                     if (hasTransactionConflict(e)) {
                         throw e as RuntimeException
                     }
@@ -4529,27 +4529,39 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return false
         }
 
+        /**
+         * Whether [throwable] is a concurrent-commit conflict that the optimistic retry loop should
+         * re-run: a duplicate-key violation (two writers allocated the same `ducklake_snapshot` /
+         * catalog / file id from the same base snapshot) or the backend's own write-write conflict
+         * error. Every table touched inside a write transaction is a `ducklake_*` table, so any such
+         * error inside one IS a metadata conflict; no table-name gate (DuckDB's and MySQL's messages
+         * do not name the table the way PostgreSQL's `<table>_pkey` does). Mirrors upstream
+         * `DuckLakeTransaction::RetryOnError`, which retries on "primary key" / "unique" / "conflict"
+         * / "concurrent".
+         */
         private fun isMetadataPrimaryKeyConflict(throwable: Throwable): Boolean {
-            val sqlException = findSqlException(throwable)
-            if (sqlException == null || !isDuplicateKeyViolation(sqlException)) {
-                return false
+            val sqlException = findSqlException(throwable) ?: return false
+            return isDuplicateKeyViolation(sqlException) || isWriteWriteConflict(sqlException)
+        }
+
+        /**
+         * Backend-reported concurrency conflicts that are not duplicate keys: DuckDB's optimistic
+         * transaction errors (raised on the statement or on `commit()`), PostgreSQL serialization
+         * failure / deadlock, MySQL deadlock / lock-wait timeout.
+         */
+        private fun isWriteWriteConflict(exception: SQLException): Boolean {
+            val sqlState = exception.sqlState
+            if (sqlState == "40001" || sqlState == "40P01") {
+                return true // PostgreSQL serialization_failure / deadlock_detected (also MySQL 40001)
             }
-
-            val message = sqlException.message ?: return false
-
-            val lowerMessage = message.lowercase(Locale.ENGLISH)
-            if (lowerMessage.contains("_pkey")) {
-                return true
+            if (exception.errorCode == 1213 || exception.errorCode == 1205) {
+                return true // MySQL ER_LOCK_DEADLOCK / ER_LOCK_WAIT_TIMEOUT
             }
-
-            return lowerMessage.contains("ducklake_snapshot.snapshot_id") ||
-                lowerMessage.contains("ducklake_schema.schema_id") ||
-                lowerMessage.contains("ducklake_table.table_id") ||
-                lowerMessage.contains("ducklake_view.view_id") ||
-                lowerMessage.contains("ducklake_column.column_id") ||
-                lowerMessage.contains("ducklake_partition_info.partition_id") ||
-                lowerMessage.contains("ducklake_data_file.data_file_id") ||
-                lowerMessage.contains("ducklake_delete_file.delete_file_id")
+            val message = exception.message?.lowercase(Locale.ENGLISH) ?: return false
+            return message.contains("conflict on update") || // DuckDB: TransactionContext Error: Conflict on update!
+                message.contains("write-write conflict") || // DuckDB
+                message.contains("transaction conflict") ||
+                (message.contains("failed to commit") && message.contains("conflict"))
         }
 
         private fun findSqlException(throwable: Throwable): SQLException? {
@@ -4606,12 +4618,34 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 return true
             }
 
-            val message = exception.message
-            return message != null && (
-                message.contains("duplicate key value violates unique constraint") ||
-                    message.contains("UNIQUE constraint failed") ||
-                    message.contains("Duplicate entry")
-                )
+            // DuckDB JDBC reports SQLState null / errorCode 0, so only the message identifies it:
+            //   same connection:   Constraint Error: Duplicate key "snapshot_id: 7" violates primary key constraint.
+            //   concurrent commit: TransactionContext Error: Failed to commit: PRIMARY KEY or UNIQUE
+            //                      constraint violation: duplicate key "7"
+            val message = exception.message?.lowercase(Locale.ENGLISH) ?: return false
+            return message.contains("duplicate key value violates unique constraint") || // PostgreSQL
+                message.contains("unique constraint failed") || // SQLite
+                message.contains("duplicate entry") || // MySQL
+                message.contains("violates primary key constraint") || // DuckDB
+                message.contains("violates unique constraint") || // DuckDB
+                message.contains("primary key or unique constraint violation") // DuckDB commit
+        }
+
+        /**
+         * Roll back after a failed statement WITHOUT letting a failing rollback replace the original
+         * error. DuckDB auto-aborts the transaction on a constraint or conflict error, so the
+         * subsequent `rollback()` throws "cannot rollback - no transaction is active"; if that escaped
+         * the catch block the conflict classification above would never see the real exception and
+         * the commit would surface as an opaque failure instead of being retried.
+         */
+        private fun rollbackQuietly(conn: java.sql.Connection, original: Throwable) {
+            try {
+                conn.rollback()
+            }
+            catch (e: SQLException) {
+                original.addSuppressed(e)
+                log.log(System.Logger.Level.DEBUG, "rollback after failure itself failed: {0}", e.message)
+            }
         }
 
         // DuckLake's jOOQ codegen marks most BIGINT columns as nullable (no schema-level NOT NULL
