@@ -121,16 +121,7 @@ class ReplayDriver(
      * statement is not a ducklake ATTACH or the engine is already connected).
      */
     private fun interceptAttach(sql: String): Pair<String, OracleAttachment?> {
-        DETACH_PATTERN.find(sql)?.let { d ->
-            if (engineConnected && d.groupValues[1].equals(engineAlias, ignoreCase = true)) {
-                // The lake the engine mirrors is being detached; a later ATTACH (often re-using the
-                // alias for a DIFFERENT lake) must reconnect the engine rather than mirror against
-                // the stale one.
-                engineConnected = false
-                engineAlias = null
-            }
-            return sql to null
-        }
+        if (interceptDetach(sql)) return sql to null
         val m = ATTACH_PATTERN.find(sql) ?: return sql to null
         val options = m.groupValues[3]
         val dataPath = DATA_PATH_OPTION.find(options)?.groupValues?.get(1)
@@ -160,21 +151,40 @@ class ReplayDriver(
             m.groupValues[2].ifEmpty {
                 original.substringAfterLast('/').substringBefore('.') // duckdb derives from filename
             }
-        if (engine == null) return effectiveSql to null
-        if (engineConnected) {
-            if (rewritten != engineTarget) {
-                // A SECOND, different lake attached alongside the mirrored one: the engine knows only
-                // the first, so mirrored queries against the new alias would diverge for the wrong
-                // reason. Stop mirroring for the rest of the file (oracle-only from here).
-                engineConnected = false
-                engineAlias = null
-            }
-            return effectiveSql to null
-        }
+        if (engine == null || !mirrorCanStart(rewritten)) return effectiveSql to null
         val effectiveDataPath = dataPath ?: attachDataPaths[original] ?: ""
         pendingAlias = alias
         pendingTarget = rewritten
         return effectiveSql to OracleAttachment(rewritten, effectiveDataPath, alias)
+    }
+
+    /**
+     * `DETACH <alias>` of the lake the engine mirrors: a later ATTACH (often re-using the alias for a
+     * DIFFERENT lake) must reconnect the engine rather than mirror against the stale one. Returns
+     * true when [sql] is a DETACH (mirroring state updated as needed).
+     */
+    private fun interceptDetach(sql: String): Boolean {
+        val d = DETACH_PATTERN.find(sql) ?: return false
+        if (engineConnected && d.groupValues[1].equals(engineAlias, ignoreCase = true)) {
+            engineConnected = false
+            engineAlias = null
+        }
+        return true
+    }
+
+    /**
+     * Whether a new mirror connection may be announced for [rewrittenTarget]. While already
+     * connected, a SECOND, different lake attached alongside the mirrored one stops mirroring for
+     * the rest of the file — the engine knows only the first, so mirrored queries against the new
+     * alias would diverge for the wrong reason.
+     */
+    private fun mirrorCanStart(rewrittenTarget: String): Boolean {
+        if (!engineConnected) return true
+        if (rewrittenTarget != engineTarget) {
+            engineConnected = false
+            engineAlias = null
+        }
+        return false
     }
 
     private fun findUnsupported(records: List<SltRecord>): SltUnsupported? {
