@@ -3686,7 +3686,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             fragment.nameMap?.let { nameMap ->
                 var mappingId = nameMapToId[nameMap]
                 if (mappingId == null) {
-                    mappingId = tx.allocateCatalogId()
+                    // mapping_id comes from the FILE id space, not the catalog id space: upstream
+                    // allocates it from next_file_id (ducklake_transaction_state.cpp GetNewNameMaps)
+                    // and its incremental name-map cache only reloads mapping_id >= the
+                    // next_file_id watermark it last saw (ducklake_catalog.cpp LoadNameMaps). A
+                    // catalog-space id would (a) never be reloaded by a long-lived DuckDB session,
+                    // making add_files'd files unreadable ("Unknown name map id"), and (b) collide
+                    // with a mapping DuckDB later allocates from next_file_id, merging two maps.
+                    mappingId = tx.allocateFileId()
                     nameMapToId[nameMap] = mappingId
                     val cm = DucklakeColumnMappingRecord()
                     cm.setMappingId(mappingId)

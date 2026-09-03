@@ -90,7 +90,12 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   estimate — it will need to compute net = Σ active file record_count − Σ delete_count instead.
 
 ### W-B3 · BUG · `ducklake_column_mapping.mapping_id` allocated from `next_catalog_id`; upstream uses `next_file_id`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `applyInsertFragments` allocates `mapping_id` via `tx.allocateFileId()`.
+  `TestJdbcDucklakeCatalogAddFilesNameMapInterop` pins the invariant on the snapshot row (`next_catalog_id`
+  unchanged, `next_file_id += files + maps`, `mapping_id` inside that range) and proves interop: a DuckDB session
+  that had already cached the table's name maps reads the library-`add_files`'d file through the new map; DuckDB's
+  own `ducklake_add_data_files` then REUSES the library-written map for an identical schema and allocates a
+  non-colliding id for a different one.
 - Library: `JdbcDucklakeCatalog.kt:3425` (`tx.allocateCatalogId()`).
 - Upstream: `ducklake_transaction_state.cpp:532` (`MappingIndex new_map_id(commit_snapshot.next_file_id++)`).
   `LoadNameMaps` (`ducklake_catalog.cpp:719-733`) only reloads `mapping_id >= loaded_name_map_index`, watermarked
