@@ -156,13 +156,21 @@ class TestJdbcDucklakeCatalogRowShapeParity {
             ),
         )
         fun containsNan(col: String): String? =
-            sql("SELECT contains_nan::text FROM ducklake_table_column_stats WHERE table_id = $tableId AND column_id = ${cols.getValue(col).columnId}") { rs -> rs.next(); rs.getString(1) }
+            sql(
+                "SELECT contains_nan::text FROM ducklake_table_column_stats " +
+                    "WHERE table_id = $tableId AND column_id = ${cols.getValue(col).columnId}",
+            ) { rs -> rs.next(); rs.getString(1) }
         assertThat(containsNan("x")).`as`("float: explicit false, so DuckDB builds global stats").isEqualTo("false")
         assertThat(containsNan("s")).`as`("non-float: SQL NULL").isNull()
         // Second insert keeps it false (UPDATE path), and analyze rebuild keeps it too.
         catalog.commitInsert(
             tableId,
-            listOf(DucklakeWriteFragment("f/b.parquet", 100L, 0L, 1L, listOf(DucklakeFileColumnStats(cols.getValue("x").columnId, 8L, 1L, 0L, "3", "3", false)))),
+            listOf(
+                DucklakeWriteFragment(
+                    "f/b.parquet", 100L, 0L, 1L,
+                    listOf(DucklakeFileColumnStats(cols.getValue("x").columnId, 8L, 1L, 0L, "3", "3", false)),
+                ),
+            ),
         )
         assertThat(containsNan("x")).isEqualTo("false")
         catalog.analyzeTable(tableId)
