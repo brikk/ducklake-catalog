@@ -69,10 +69,16 @@ class TestJdbcDucklakeCatalogChangesMadeFormat {
                     WriteChange.AlteredTable(42),
                     WriteChange.InsertedIntoTable(100, setOf<Long>()),
                     WriteChange.DeletedFromTable(100, setOf<Long>()),
+                    WriteChange.FlushedInlinedData(7),
+                    WriteChange.RewriteDelete(8, setOf(1L, 2L)),
+                    WriteChange.MergeAdjacent(9, setOf(3L)),
                 ),
             ),
         )
-            .isEqualTo("dropped_schema:3,dropped_table:12,altered_table:42,inserted_into_table:100,deleted_from_table:100")
+            .isEqualTo(
+                "dropped_schema:3,dropped_table:12,altered_table:42,inserted_into_table:100,deleted_from_table:100," +
+                    "inline_flush:7,rewrite_delete:8,merge_adjacent:9",
+            )
     }
 
     // ==================== CreatedTable: "schema"."name" ====================

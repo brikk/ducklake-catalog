@@ -55,7 +55,16 @@ object LogicalConflictCheck {
                 is WriteChange.InsertedIntoTable ->
                     checkInsertedIntoTable(ctx, snapshotId, change, operationDescription)
                 is WriteChange.DeletedFromTable ->
-                    checkDeletedFromTable(ctx, snapshotId, change, operationDescription)
+                    checkDataFilesActive(
+                        ctx, snapshotId, change.tableId, change.referencedDataFileIds, "deleted from", operationDescription,
+                    )
+                is WriteChange.RewriteDelete ->
+                    checkDataFilesActive(ctx, snapshotId, change.tableId, change.sourceDataFileIds, "compacted", operationDescription)
+                // merge_adjacent DELETES its source rows inside the transaction (upstream's shape), so
+                // an active-row check here would always fail; rewriteDataFilesPartial validates the
+                // sources itself up front (assertRewriteSourcesStillPresent), re-run on every attempt.
+                is WriteChange.MergeAdjacent ->
+                    checkTableActive(ctx, snapshotId, change.tableId, "compacted", operationDescription)
                 is WriteChange.AlteredTable ->
                     checkTableActive(ctx, snapshotId, change.tableId, "altered", operationDescription)
                 is WriteChange.FlushedInlinedData ->
@@ -111,22 +120,24 @@ object LogicalConflictCheck {
         }
     }
 
-    private fun checkDeletedFromTable(
+    /** The table is active and every data file in [referenced] is still active at [snapshotId]. */
+    private fun checkDataFilesActive(
         ctx: DSLContext,
         snapshotId: Long,
-        change: WriteChange.DeletedFromTable,
+        tableId: Long,
+        referenced: Set<Long>,
+        verb: String,
         operationDescription: String,
     ) {
-        checkTableActive(ctx, snapshotId, change.tableId, "deleted from", operationDescription)
+        checkTableActive(ctx, snapshotId, tableId, verb, operationDescription)
 
-        val referenced = change.referencedDataFileIds
         if (referenced.isEmpty()) {
             return
         }
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         val active: Set<Long> = ctx.select(file.DATA_FILE_ID)
             .from(file)
-            .where(file.TABLE_ID.eq(change.tableId))
+            .where(file.TABLE_ID.eq(tableId))
             .and(file.DATA_FILE_ID.`in`(referenced))
             .and(activeAt(file, snapshotId))
             .fetchSet(file.DATA_FILE_ID)
@@ -134,11 +145,10 @@ object LogicalConflictCheck {
         if (missing.isNotEmpty()) {
             throw LogicalConflictException(
                 "Failed to $operationDescription: concurrent commit end-snapshotted" +
-                    " data_file_id(s) $missing on table_id=${change.tableId}" +
-                    " (likely DROP TABLE or compaction). The in-flight DELETE fragments" +
+                    " data_file_id(s) $missing on table_id=$tableId" +
+                    " (likely DROP TABLE or compaction). The in-flight fragments" +
                     " reference these now-removed data files; re-running with the same" +
-                    " delete-target payload would fail identically, so this conflict" +
-                    " is not retried.",
+                    " payload would fail identically, so this conflict is not retried.",
             )
         }
     }

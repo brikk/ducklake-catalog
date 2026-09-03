@@ -202,7 +202,12 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (`ducklake_catalog.cpp:348-360`) → stale comments until the next DDL. Bump it.
 
 ### W-D2 · DRIFT · `changes_made` vocabulary and conflict-matrix staleness
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (except the pg_ducklake `inlined_data_insert` tolerance and author/commit_message, moved
+  to C-D2 leftovers). Rename table/view now also records `created_table` / `created_view` for the new name (name
+  collisions detectable both ways); `flush` emits `inline_flush`; rewrites emit `rewrite_delete` /
+  `merge_adjacent`; matrix re-ported from v1.5 (`TestConflictMatrix` covers every row, incl. the documented
+  stricter flush row). `LogicalConflictCheck` handles the compaction kinds (sources-active for rewrite_delete;
+  table-active for merge_adjacent, which deletes its source rows in-transaction and validates them itself).
 - Rename table emits `altered_table:<id>` (`:2786`); upstream emits `created_table:"s"."new"` and no drop
   (`ducklake_transaction.cpp:832-838`, `_state.cpp:331-341`). Same for rename view (`:2270` vs `created_view`).
   Consequence: an upstream concurrent `CREATE TABLE s.new` is **not detected as a name collision by either side** →
@@ -368,7 +373,9 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
 - Fix direction: use `getAllColumnsWithParentage` / `loadColumnTypes` for the type map in both places.
 
 ### R-B4 · BUG · Newer-delete detection keyed on `begin_snapshot >` misses upstream v1.5 consolidated delete files
-- [ ] **Status:** PARTIAL — `assertNoNewerDeleteOnRewriteSources` and the new `assertNoDeleteNewerThanRead` (C-B3)
+- [x] **Status:** RESOLVED. `checkDeleteFileOverlap` now tests `begin_snapshot` OR `partial_max` in the intervening
+  window (the read-snapshot guards already did, C-B3), and the matrix conflicts compaction with any
+  `deleted_from_table` on the table (new `RewriteDelete` / `MergeAdjacent` change kinds).
   now also test `partial_max > readSnapshotId`, which upstream sets on every consolidated regular delete. Still open:
   `checkDeleteFileOverlap` (retry-path matrix) uses `begin_snapshot` only, and a table-level
   compaction-vs-`tables_deleted_from` conflict as upstream does is not implemented.
@@ -574,7 +581,9 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   what `analyzeTable` may write at all).
 
 ### C-D2 · DRIFT · ConflictMatrix vs upstream v1.5 (`ducklake_transaction_state.cpp:203-262`) — beyond W-D2
-- [ ] **Status:** open
+- [ ] **Status:** PARTIAL — matrix rows re-ported (see W-D2). Still open: `InterveningChanges` throws on an unknown
+  change kind / bare `inlined_data_insert` (pg_ducklake) instead of degrading to a conservative conflict; author /
+  commit_message / commit_extra_info are not written; ConflictMatrix only runs on retry attempts (documented).
 - `ConflictMatrix.kt:147-156` insert lacks `× tablesDeletedInlined` (upstream :207).
 - `:163-180` delete lacks `× tablesInsertedInlined` (upstream :223).
 - `:199-205` flush is stricter than upstream (:258-262) — also conflicts on `alteredTables` and

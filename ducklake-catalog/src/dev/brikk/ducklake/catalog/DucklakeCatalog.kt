@@ -509,7 +509,9 @@ interface DucklakeCatalog : AutoCloseable {
      * Rename a table within its schema. End-snapshots the current `ducklake_table` row and
      * inserts a new version with the same table_id, uuid, and path — data files and history
      * are untouched; the table's data directory keeps its original name. Recorded as
-     * `altered_table` (upstream's vocabulary for renames). Creates a new snapshot atomically.
+     * `created_table:"schema"."new_name"` (upstream's vocabulary for renames, which makes a
+     * concurrent CREATE of the same name a detectable collision) plus `altered_table`. Creates a new
+     * snapshot atomically.
      * Fails when the target name is already taken, and rejects a `targetSchemaName` other
      * than the table's own — table data paths are schema-relative, so a cross-schema move
      * would leave the data unreachable.

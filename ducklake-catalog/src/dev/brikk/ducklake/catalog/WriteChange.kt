@@ -88,12 +88,35 @@ sealed interface WriteChange {
     /**
      * `flush_inlined_data`: inlined catalog rows materialized into a data file and the
      * inlined rows end-snapshotted. Upstream's `ParseChangeType` accepts both
-     * `flushed_inlined` and `inline_flush`; we emit the former (see InterveningChanges).
+     * `flushed_inlined` and `inline_flush`; v1.5 emits the latter, so do we.
      */
     @JvmRecord
     data class FlushedInlinedData(val tableId: Long) : WriteChange {
         override fun toChangesMadeEntry(): String =
-            "flushed_inlined:$tableId"
+            "inline_flush:$tableId"
+    }
+
+    /**
+     * Compaction that rewrites data files to APPLY their deletes (`rewriteDataFiles`): upstream's
+     * `rewrite_delete`. [sourceDataFileIds] are the retired sources, kept so [LogicalConflictCheck]
+     * can verify they are still active at commit (a concurrent drop/compaction end-snapshotting one
+     * means the merged file was built from a stale read). Not serialized.
+     */
+    @JvmRecord
+    data class RewriteDelete(val tableId: Long, val sourceDataFileIds: Set<Long>) : WriteChange {
+        override fun toChangesMadeEntry(): String =
+            "rewrite_delete:$tableId"
+    }
+
+    /**
+     * Compaction that merges adjacent files, sources deleted from the catalog outright
+     * (`rewriteDataFilesPartial`): upstream's `merge_adjacent`. See [RewriteDelete] for
+     * [sourceDataFileIds].
+     */
+    @JvmRecord
+    data class MergeAdjacent(val tableId: Long, val sourceDataFileIds: Set<Long>) : WriteChange {
+        override fun toChangesMadeEntry(): String =
+            "merge_adjacent:$tableId"
     }
 
     /**

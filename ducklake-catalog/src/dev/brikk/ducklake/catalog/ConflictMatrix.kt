@@ -18,11 +18,11 @@ package dev.brikk.ducklake.catalog
  * [WriteChange] list and the [InterveningChanges] committed by
  * other transactions in the snapshot range we're racing against.
  *
- * Direct port of upstream
- * `DuckLakeTransaction::CheckForConflicts(TransactionChangeInformation,
- * SnapshotChangeInformation, ...)` at
- * `temp/pg_ducklake/third_party/ducklake/src/storage/ducklake_transaction.cpp:1184-1314`.
- * Keep this file in lock-step with upstream — the matrix entries are the spec.
+ * Port of upstream `DuckLakeTransactionState::CheckForConflicts` (ducklake v1.5,
+ * `src/storage/ducklake_transaction_state.cpp`, the loops following the created-table name
+ * check). Keep this file in lock-step with upstream — the matrix entries are the spec. The one
+ * deliberate deviation is documented on [checkFlushedInlinedData] (stricter, because this
+ * library's flush end-snapshots ALL live inlined rows rather than exactly the ones it read).
  *
  * Complements [LogicalConflictCheck] (which is state-based, per-call args):
  * this check catches dueling-name commits (two concurrent
@@ -32,9 +32,8 @@ package dev.brikk.ducklake.catalog
  *
  * Conflicts thrown here are non-retryable — the in-flight payload's
  * stale references would feed every retry, so re-running burns the retry
- * budget on a guaranteed-fail. Upstream achieves the same via the
- * `can_retry = false` flag at `ducklake_transaction.cpp:2463`; we use
- * [LogicalConflictException.retryable] returning `false`.
+ * budget on a guaranteed-fail. Upstream achieves the same via its
+ * `can_retry = false` flag; we use [LogicalConflictException.retryable] returning `false`.
  */
 object ConflictMatrix {
     /**
@@ -47,23 +46,36 @@ object ConflictMatrix {
      */
     fun check(myChanges: List<WriteChange>, other: InterveningChanges) {
         for (change in myChanges) {
-            when (change) {
-                is WriteChange.DroppedTable -> checkDroppedTable(change, other)
-                is WriteChange.DroppedView -> checkDroppedView(change, other)
-                is WriteChange.DroppedSchema -> checkDroppedSchema(change, other)
-                is WriteChange.CreatedSchema -> checkCreatedSchema(change, other)
-                is WriteChange.CreatedTable -> checkCreatedTable(change, other)
-                is WriteChange.CreatedView -> checkCreatedView(change, other)
-                is WriteChange.InsertedIntoTable -> checkInsertedIntoTable(change, other)
-                is WriteChange.DeletedFromTable -> checkDeletedFromTable(change, other)
-                is WriteChange.AlteredTable -> checkAlteredTable(change, other)
-                is WriteChange.AlteredView -> checkAlteredView(change, other)
-                is WriteChange.FlushedInlinedData -> checkFlushedInlinedData(change, other)
-            }
+            checkOne(change, other)
         }
     }
 
-    // ducklake_transaction.cpp:1188-1190
+    private fun checkOne(change: WriteChange, other: InterveningChanges) {
+        when (change) {
+            is WriteChange.DroppedTable -> checkDroppedTable(change, other)
+            is WriteChange.DroppedView -> checkDroppedView(change, other)
+            is WriteChange.DroppedSchema -> checkDroppedSchema(change, other)
+            is WriteChange.CreatedSchema -> checkCreatedSchema(change, other)
+            is WriteChange.CreatedTable -> checkCreatedTable(change, other)
+            is WriteChange.CreatedView -> checkCreatedView(change, other)
+            is WriteChange.AlteredTable -> checkAlteredTable(change, other)
+            is WriteChange.AlteredView -> checkAlteredView(change, other)
+            else -> checkDataChange(change, other)
+        }
+    }
+
+    private fun checkDataChange(change: WriteChange, other: InterveningChanges) {
+        when (change) {
+            is WriteChange.InsertedIntoTable -> checkInsertedIntoTable(change, other)
+            is WriteChange.DeletedFromTable -> checkDeletedFromTable(change, other)
+            is WriteChange.FlushedInlinedData -> checkFlushedInlinedData(change, other)
+            is WriteChange.RewriteDelete -> checkCompaction(change.tableId, other)
+            is WriteChange.MergeAdjacent -> checkCompaction(change.tableId, other)
+            else -> throw IllegalStateException("Unhandled change kind in ConflictMatrix: $change")
+        }
+    }
+
+    // upstream: `for (table_id : changes.dropped_tables)`
     private fun checkDroppedTable(c: WriteChange.DroppedTable, other: InterveningChanges) {
         conflictIfMember(
             c.tableId, other.droppedTables,
@@ -71,7 +83,7 @@ object ConflictMatrix {
         )
     }
 
-    // ducklake_transaction.cpp:1191-1194
+    // upstream: `for (view_id : changes.dropped_views)`
     private fun checkDroppedView(c: WriteChange.DroppedView, other: InterveningChanges) {
         conflictIfMember(
             c.viewId, other.droppedViews,
@@ -79,7 +91,7 @@ object ConflictMatrix {
         )
     }
 
-    // ducklake_transaction.cpp:1202-1210
+    // upstream: `for (schema_id : changes.dropped_schemas)` + created-entry-in-schema check
     private fun checkDroppedSchema(c: WriteChange.DroppedSchema, other: InterveningChanges) {
         conflictIfMember(
             c.schemaId, other.droppedSchemas,
@@ -97,7 +109,7 @@ object ConflictMatrix {
         }
     }
 
-    // ducklake_transaction.cpp:1212-1215
+    // upstream: `for (schema : changes.created_schemas)`
     private fun checkCreatedSchema(c: WriteChange.CreatedSchema, other: InterveningChanges) {
         if (c.schemaName in other.createdSchemas) {
             throw conflict(
@@ -107,7 +119,7 @@ object ConflictMatrix {
         }
     }
 
-    // ducklake_transaction.cpp:1218-1243 (the created_table loop)
+    // upstream: the created_tables name-collision loop
     private fun checkCreatedTable(c: WriteChange.CreatedTable, other: InterveningChanges) {
         // Schema this table is being created in must not have been dropped.
         if (c.schemaId in other.droppedSchemas) {
@@ -143,43 +155,40 @@ object ConflictMatrix {
         }
     }
 
-    // ducklake_transaction.cpp:1245-1248
+    // upstream: `for (table_id : changes.tables_inserted_into)` — v1.5 also conflicts an insert
+    // with a concurrent DELETE (file or inlined) on the same table.
     private fun checkInsertedIntoTable(c: WriteChange.InsertedIntoTable, other: InterveningChanges) {
-        conflictIfMember(
-            c.tableId, other.droppedTables,
-            "insert into table", "dropped it",
-        )
-        conflictIfMember(
-            c.tableId, other.alteredTables,
-            "insert into table", "altered it",
-        )
+        conflictIfMember(c.tableId, other.droppedTables, "insert into table", "dropped it")
+        conflictIfMember(c.tableId, other.alteredTables, "insert into table", "altered it")
+        conflictIfMember(c.tableId, other.tablesDeletedFrom, "insert into table", "deleted from it")
+        conflictIfMember(c.tableId, other.tablesDeletedInlined, "insert into table", "deleted inlined data from it")
     }
 
-    // ducklake_transaction.cpp:1253-1257
-    // The delete-vs-delete file-overlap check (upstream :1259-1283) is
-    // intentionally omitted: state-based LogicalConflictCheck.checkDeletedFromTable
-    // already catches the case where any referenced data_file_id is no longer
-    // active at the current snapshot, which subsumes both DROP and concurrent-delete.
+    // upstream: `for (table_id : changes.tables_deleted_from)` — v1.5 also conflicts a delete with
+    // a concurrent INSERT (file or inlined) on the same table. The delete-vs-delete FILE overlap
+    // check (upstream's GetFilesDeletedOrDroppedAfterSnapshot block) lives in
+    // JdbcDucklakeCatalog.checkDeleteFileOverlap, which needs catalog access.
     private fun checkDeletedFromTable(c: WriteChange.DeletedFromTable, other: InterveningChanges) {
-        conflictIfMember(
-            c.tableId, other.droppedTables,
-            "delete from table", "dropped it",
-        )
-        conflictIfMember(
-            c.tableId, other.alteredTables,
-            "delete from table", "altered it",
-        )
-        conflictIfMember(
-            c.tableId, other.tablesMergeAdjacent,
-            "delete from table", "compacted it",
-        )
-        conflictIfMember(
-            c.tableId, other.tablesRewriteDelete,
-            "delete from table", "compacted it",
-        )
+        conflictIfMember(c.tableId, other.droppedTables, "delete from table", "dropped it")
+        conflictIfMember(c.tableId, other.alteredTables, "delete from table", "altered it")
+        conflictIfMember(c.tableId, other.tablesMergeAdjacent, "delete from table", "compacted it")
+        conflictIfMember(c.tableId, other.tablesRewriteDelete, "delete from table", "compacted it")
+        conflictIfMember(c.tableId, other.insertedTables, "delete from table", "inserted into it")
+        conflictIfMember(c.tableId, other.tablesInsertedInlined, "delete from table", "inserted into it")
     }
 
-    // ducklake_transaction.cpp:1307-1310
+    // upstream: `for (table_id : changes.tables_merge_adjacent)` and `tables_rewrite_delete` — the
+    // two compaction kinds share one row: conflicts with drop, with any DELETE on the table (a
+    // delete file added to a source after the compaction read it would be lost), and with another
+    // compaction. NOT with inserts or alters — files carry field ids and a new file is unaffected.
+    private fun checkCompaction(tableId: Long, other: InterveningChanges) {
+        conflictIfMember(tableId, other.droppedTables, "compact table", "dropped it")
+        conflictIfMember(tableId, other.tablesDeletedFrom, "compact table", "deleted from it")
+        conflictIfMember(tableId, other.tablesMergeAdjacent, "compact table", "compacted it")
+        conflictIfMember(tableId, other.tablesRewriteDelete, "compact table", "compacted it")
+    }
+
+    // upstream: `for (table_id : changes.altered_tables)`
     private fun checkAlteredTable(c: WriteChange.AlteredTable, other: InterveningChanges) {
         conflictIfMember(
             c.tableId, other.droppedTables,
@@ -191,11 +200,12 @@ object ConflictMatrix {
         )
     }
 
-    // A flush reads inlined rows, writes them to a data file, and clears the inlined rows —
-    // all against the base snapshot. Any intervening commit that touched this table's inlined
-    // data or schema invalidates that read-then-write: a concurrent flush or inlined-insert/
-    // delete would duplicate, resurrect, or drop rows, and a drop/alter changes the target. So
-    // conflict on all of them (mirrors checkDeletedFromTable, plus the inlined-specific kinds).
+    // upstream: `for (table_id : changes.tables_flushed_inlined)` = dropped, deleted_inlined,
+    // flushed_inlined. DELIBERATELY STRICTER here: upstream's flush deletes exactly the inlined
+    // rows it materialised, whereas this library's flush end-snapshots EVERY live inlined row at
+    // commit — so a concurrent inlined INSERT would have its rows end-snapshotted without ever
+    // being written to the data file (lost), and a concurrent ALTER changes the schema the
+    // materialised file was written against. Conflict on those too.
     private fun checkFlushedInlinedData(c: WriteChange.FlushedInlinedData, other: InterveningChanges) {
         conflictIfMember(c.tableId, other.droppedTables, "flush inlined data", "dropped it")
         conflictIfMember(c.tableId, other.alteredTables, "flush inlined data", "altered it")
@@ -204,7 +214,7 @@ object ConflictMatrix {
         conflictIfMember(c.tableId, other.tablesDeletedInlined, "flush inlined data", "inlined-deleted from it")
     }
 
-    // ducklake_transaction.cpp:1311-1313
+    // upstream: `for (view_id : changes.altered_views)`
     private fun checkAlteredView(c: WriteChange.AlteredView, other: InterveningChanges) {
         conflictIfMember(
             c.viewId, other.alteredViews,

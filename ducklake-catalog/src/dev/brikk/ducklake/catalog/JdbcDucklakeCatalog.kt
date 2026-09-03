@@ -2508,9 +2508,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 sourceView.sql,
                 sourceView.columnAliasesForReinsert("rename"),
             )
-            // Upstream's ParseChangeType does not recognize `renamed_view`; a rename is
-            // semantically a schema/name change, so emit `altered_view` to stay
-            // spec-conformant with DuckDB's ducklake_snapshots() parser.
+            // Upstream records a RENAMED view as `created_view:"schema"."new_name"` so a concurrent
+            // CREATE of the same name is detected as a collision; `altered_view` keeps the
+            // alter-vs-alter dueling check on the view id.
+            tx.recordChange(WriteChange.CreatedView(targetSchemaId, targetSchemaName, targetViewName))
             tx.recordChange(WriteChange.AlteredView(sourceView.viewId))
             tx.incrementSchemaVersion()
         }
@@ -3084,6 +3085,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .execute()
 
             tx.incrementSchemaVersion(tableId)
+            // Upstream records a RENAMED table as `created_table:"schema"."new_name"` (no drop, no
+            // alter — ducklake_transaction.cpp GetTransactionTableChanges, LocalChangeType::RENAMED).
+            // That is what lets a concurrent `CREATE TABLE schema.new_name` on either side be
+            // detected as a name collision by the created-tables matrix check. altered_table is kept
+            // as well: the library's lineage of the table changed, so a concurrent INSERT that
+            // resolved the table by its OLD name is made to re-plan.
+            tx.recordChange(WriteChange.CreatedTable(targetSchemaId, targetSchemaName, newTableName))
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3991,11 +3999,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             endSnapshotRewriteSources(tx, tableId, sourceDataFileIds)
             netRewriteStats(tx, tableId, retired)
 
-            // Recorded as delete + insert: reuses the full conflict machinery (LogicalConflictCheck
-            // verifies the sources are still active at commit → stale-read aborts non-retryably;
-            // ConflictMatrix aborts on concurrent drop/alter). No new snapshot-change vocabulary.
-            tx.recordChange(WriteChange.DeletedFromTable(tableId, sourceDataFileIds))
-            tx.recordChange(WriteChange.InsertedIntoTable(tableId, referencedColumnIds(fragments)))
+            // Upstream's `rewrite_delete` compaction kind: LogicalConflictCheck verifies the sources
+            // are still active at commit (stale-read aborts non-retryably); ConflictMatrix aborts on a
+            // concurrent drop / delete / compaction of the table, exactly as upstream does.
+            tx.recordChange(WriteChange.RewriteDelete(tableId, sourceDataFileIds))
         }
     }
 
@@ -4035,8 +4042,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
             scheduleAndDeleteRewriteSources(tx, sourceDataFileIds)
             netRewriteStats(tx, tableId, retired)
-            val columnIds: Set<Long> = mergedFiles.flatMap { it.fragment.columnStats }.mapTo(HashSet()) { it.columnId }
-            tx.recordChange(WriteChange.InsertedIntoTable(tableId, columnIds))
+            // Upstream's `merge_adjacent` compaction kind (see rewriteDataFiles for the conflict surface).
+            tx.recordChange(WriteChange.MergeAdjacent(tableId, sourceDataFileIds))
         }
     }
 
@@ -4487,11 +4494,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // Any delete file inserted in the intervening snapshot range that
             // targets one of my data_file_ids is a conflict. Use begin_snapshot
             // (when the row was inserted) to find intervening deletes.
+            // begin_snapshot alone misses upstream's consolidated delete files, which keep the OLD
+            // begin and record the newest folded deletion in partial_max — test both.
             val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
+            val inWindow = { f: org.jooq.Field<Long?> -> f.gt(fromSnapshotExclusive).and(f.le(toSnapshotInclusive)) }
             val contendedFileIds: Set<Long> = ctx.select(delfile.DATA_FILE_ID)
                 .from(delfile)
-                .where(delfile.BEGIN_SNAPSHOT.gt(fromSnapshotExclusive))
-                .and(delfile.BEGIN_SNAPSHOT.le(toSnapshotInclusive))
+                .where(inWindow(delfile.BEGIN_SNAPSHOT).or(inWindow(delfile.PARTIAL_MAX)))
                 .and(delfile.DATA_FILE_ID.`in`(myFileIds))
                 .fetchSet(delfile.DATA_FILE_ID)
             if (contendedFileIds.isNotEmpty()) {
