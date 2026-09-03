@@ -209,7 +209,7 @@ class TestJdbcDucklakeCatalogViewTags {
         assertThat(listed["poisoned_view"]!!.malformedColumnAliases).isNotNull()
         // Renaming would re-insert the row and silently launder the payload — refused.
         assertThatThrownBy { catalog.renameView("test_schema", "poisoned_view", "test_schema", "laundered") }
-            .rootCause()
+            .isInstanceOf(DucklakeCatalogCorruptionException::class.java)
             .hasMessageContaining("non-conformant writer")
         // Dropping is allowed (it is how an operator gets rid of it).
         catalog.dropView("test_schema", "poisoned_view")

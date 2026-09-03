@@ -237,7 +237,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val maxId: Long? = dsl.select(DSL.max(snap.SNAPSHOT_ID))
                 .from(snap)
                 .fetchOne(0, Long::class.java)
-            maxId ?: throw IllegalStateException("No snapshots found in ducklake_snapshot table")
+            maxId ?: throw DucklakeCatalogNotInitializedException(
+                    "ducklake_snapshot has no rows: the DuckLake catalog at \"$catalogDatabaseUrl\" was never initialized",
+                    null,
+                )
         }
 
     override fun getSnapshot(snapshotId: Long): DucklakeSnapshot? = guardInitialized {
@@ -2106,7 +2109,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             snapshotId,
         )
         if (matches.size > 1) {
-            throw IllegalStateException(
+            throw DucklakeCatalogCorruptionException(
                 "Catalog corruption: ${matches.size} active ducklake_view rows for $schemaName.$viewName at snapshot $snapshotId",
             )
         }
@@ -2167,7 +2170,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 current = DucklakeView(
                     viewId,
                     r.get(view.VIEW_UUID)?.toString()
-                        ?: throw IllegalStateException("ducklake_view.view_uuid is NULL for view_id=$viewId"),
+                        ?: throw DucklakeCatalogCorruptionException("ducklake_view.view_uuid is NULL for view_id=$viewId"),
                     orZero(r.get(view.SCHEMA_ID)),
                     r.get(view.VIEW_NAME)!!,
                     r.get(view.SQL)!!,
@@ -2278,7 +2281,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                             .where(snap.SNAPSHOT_ID.eq(DSL.select(DSL.max(snap.SNAPSHOT_ID)).from(snap))),
                     )
                     if (snapshotRow == null) {
-                        throw IllegalStateException("No snapshots found")
+                        throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
                     }
                     val currentSnapshotId: Long = snapshotRow.snapshotId
                     baseSnapshotId = currentSnapshotId
@@ -2355,19 +2358,20 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 }
                 catch (e: Exception) {
                     rollbackQuietly(conn, e)
-                    if (hasTransactionConflict(e)) {
-                        throw e as RuntimeException
-                    }
+                    // Typed catalog exceptions (conflicts, not-found, already-exists, invalid
+                    // operation, guards) propagate as themselves so engines can map them; only
+                    // genuinely unexpected failures are wrapped.
+                    findDucklakeException(e)?.let { throw it }
                     if (isMetadataPrimaryKeyConflict(e)) {
                         val currentSnapshot = readLatestSnapshotId(txDsl)
                         throw transactionConflictException(txDsl, baseSnapshotId, currentSnapshot, operationDescription, e)
                     }
-                    throw RuntimeException("Failed to $operationDescription", e)
+                    throw DucklakeException("Failed to $operationDescription", e)
                 }
             }
         }
         catch (e: SQLException) {
-            throw RuntimeException("Failed to $operationDescription", e)
+            throw DucklakeException("Failed to $operationDescription", e)
         }
     }
 
@@ -2493,7 +2497,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val targetSchemaId = tx.resolveSchemaId(targetSchemaName)
 
             if (hasActiveTable(tx, targetSchemaId, targetViewName) || hasActiveView(tx, targetSchemaId, targetViewName)) {
-                throw RuntimeException("Relation already exists: $targetSchemaName.$targetViewName")
+                throw DucklakeEntityAlreadyExistsException("relation", "$targetSchemaName.$targetViewName")
             }
 
             // Tags are keyed by view_id, which is preserved — nothing to do for them.
@@ -2558,7 +2562,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .and(activeAt(view, tx.getCurrentSnapshotId()))
             .fetchOne()
         if (row == null) {
-            throw RuntimeException("View not found: schema_id=$schemaId, view_name=$viewName")
+            throw DucklakeEntityNotFoundException("view", "schema_id=$schemaId, view_name=$viewName")
         }
         val viewId = orZero(row.get(view.VIEW_ID))
         val rawAliases = row.get(view.COLUMN_ALIASES)
@@ -2633,7 +2637,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .and(view.END_SNAPSHOT.isNull)
             .execute()
         if (updatedRows == 0) {
-            throw RuntimeException("View not found: $viewId")
+            throw DucklakeEntityNotFoundException("view", viewId.toString())
         }
     }
 
@@ -2650,7 +2654,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ) {
         /** Aliases to carry into a re-inserted row; refuses to launder a malformed payload. */
         fun columnAliasesForReinsert(operation: String): List<String> =
-            columnAliases ?: throw IllegalStateException(
+            columnAliases ?: throw DucklakeCatalogCorruptionException(
                 "Cannot $operation view $viewName: its ducklake_view.column_aliases is not a spec quoted list " +
                     "(written by a non-conformant writer; drop and recreate it instead): $rawColumnAliases",
             )
@@ -2760,7 +2764,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 var keyIndex: Long = 0
                 for (field in partitionSpec) {
                     val columnId = topLevelColumnIds[field.columnName]
-                        ?: throw RuntimeException("Partition column not found: ${field.columnName}")
+                        ?: throw DucklakeEntityNotFoundException("partition column", field.columnName)
                     ctx.insertInto(partcol)
                         .set(partcol.PARTITION_ID, partitionId)
                         .set(partcol.TABLE_ID, tableId)
@@ -3043,14 +3047,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 ctx.selectFrom(tab)
                     .where(tab.TABLE_ID.eq(tableId))
                     .and(activeAt(tab, tx.getCurrentSnapshotId())),
-            ) ?: throw RuntimeException("Table not found: $tableId")
+            ) ?: throw DucklakeEntityNotFoundException("table", tableId.toString())
 
             val targetSchemaId = tx.resolveSchemaId(targetSchemaName)
             if (targetSchemaId != existing.get(tab.SCHEMA_ID)) {
                 // Table data paths are SCHEMA-relative (resolved as schemaPath + tablePath), so
                 // re-pointing schema_id would leave the data files unreachable under the new
                 // schema's path. Upstream has no cross-schema rename either.
-                throw RuntimeException(
+                throw DucklakeInvalidOperationException(
                     "Renaming a table across schemas is not supported: table data paths are schema-relative")
             }
             val clash = metadata.fetchOne(
@@ -3062,7 +3066,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .and(activeAt(tab, tx.getCurrentSnapshotId())),
             )
             if (clash != null) {
-                throw RuntimeException("Table already exists: $targetSchemaName.$newTableName")
+                throw DucklakeEntityAlreadyExistsException("table", "$targetSchemaName.$newTableName")
             }
 
             // End-snapshot the current version; re-insert under the same table_id/uuid/path —
@@ -3110,7 +3114,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 ctx.selectFrom(sch)
                     .where(sch.SCHEMA_ID.eq(schemaId))
                     .and(activeAt(sch, tx.getCurrentSnapshotId())),
-            ) ?: throw RuntimeException("Schema not found: $schemaName")
+            ) ?: throw DucklakeEntityNotFoundException("schema", schemaName)
 
             val clash = metadata.fetchOne(
                 ctx,
@@ -3120,7 +3124,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .and(activeAt(sch, tx.getCurrentSnapshotId())),
             )
             if (clash != null) {
-                throw RuntimeException("Schema already exists: $newName")
+                throw DucklakeEntityAlreadyExistsException("schema", newName)
             }
 
             // ducklake_schema has a PRIMARY KEY on schema_id (upstream DDL), so a rename
@@ -3338,7 +3342,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val ctx = tx.dsl()
             val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())
             if (columns.none { it.columnId == columnId }) {
-                throw RuntimeException("Column not found: $columnId")
+                throw DucklakeEntityNotFoundException("column", columnId.toString())
             }
             // End-snapshot the column and EVERY transitive descendant. Nested types nest
             // arbitrarily (struct<struct<...>>, list<struct<...>>, map<k, struct<...>>); a
@@ -3397,7 +3401,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (topLevelOnly) {
             query = query.and(col.PARENT_COLUMN.isNull)
         }
-        val existing: DucklakeColumnRecord = query.fetchOne() ?: throw RuntimeException("Column not found: $columnId")
+        val existing: DucklakeColumnRecord = query.fetchOne() ?: throw DucklakeEntityNotFoundException("column", columnId.toString())
 
         ctx.update(col)
             .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
@@ -3507,12 +3511,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val parentId = resolveColumnIdByPath(columns, parentPath)
             val parent = columns.first { it.columnId == parentId }
             if (!parent.columnType.equals("struct", ignoreCase = true)) {
-                throw IllegalArgumentException(
+                throw DucklakeInvalidOperationException(
                     "Cannot add a field to non-struct column ${parentPath.joinToString(".")} (type=${parent.columnType})",
                 )
             }
             if (columns.any { it.parentColumn == parentId && it.columnName == field.name }) {
-                throw IllegalArgumentException("Field ${(parentPath + field.name).joinToString(".")} already exists")
+                throw DucklakeEntityAlreadyExistsException("field", (parentPath + field.name).joinToString("."))
             }
             // Children carry their own column_order within the parent; append at max+1 (0 if first).
             val maxChildOrder: Long? = tx.dsl().select(DSL.max(col.COLUMN_ORDER))
@@ -3564,13 +3568,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      */
     private fun resolveColumnIdByPath(columns: List<DucklakeColumn>, path: List<String>): Long {
         if (path.isEmpty()) {
-            throw IllegalArgumentException("Empty field path")
+            throw DucklakeInvalidOperationException("Empty field path")
         }
         var parentId: Long? = null
         var currentId: Long? = null
         for (name in path) {
             val match = columns.firstOrNull { it.columnName == name && it.parentColumn == parentId }
-                ?: throw IllegalArgumentException("Field not found: ${path.joinToString(".")} (no '$name')")
+                ?: throw DucklakeEntityNotFoundException("field", "${path.joinToString(".")} (no '$name')")
             currentId = match.columnId
             parentId = match.columnId
         }
@@ -4337,7 +4341,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             "list" -> {
                 val children = childrenByParent.getOrDefault(column.columnId, emptyList())
                 if (children.size != 1) {
-                    throw IllegalStateException("List column must have exactly one child column: ${column.columnName}")
+                    throw DucklakeCatalogCorruptionException("List column must have exactly one child column: ${column.columnName}")
                 }
                 "list<" + resolveColumnType(children[0], childrenByParent) + ">"
             }
@@ -4351,7 +4355,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             "map" -> {
                 val children = childrenByParent.getOrDefault(column.columnId, emptyList())
                 if (children.size != 2) {
-                    throw IllegalStateException("Map column must have exactly two child columns: ${column.columnName}")
+                    throw DucklakeCatalogCorruptionException("Map column must have exactly two child columns: ${column.columnName}")
                 }
                 "map<" + resolveColumnType(children[0], childrenByParent) + "," + resolveColumnType(children[1], childrenByParent) + ">"
             }
@@ -4519,18 +4523,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val maxId: Long? = ctx.select(DSL.max(snap.SNAPSHOT_ID))
                 .from(snap)
                 .fetchOne(0, Long::class.java)
-            return maxId ?: throw IllegalStateException("No snapshots found")
+            return maxId ?: throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
         }
 
-        private fun hasTransactionConflict(throwable: Throwable): Boolean {
+        /** The first [DucklakeException] in the cause chain (typed conflicts, not-found, ...), if any. */
+        private fun findDucklakeException(throwable: Throwable): DucklakeException? {
             var current: Throwable? = throwable
             while (current != null) {
-                if (current is TransactionConflictException) {
-                    return true
+                if (current is DucklakeException) {
+                    return current
                 }
                 current = current.cause
             }
-            return false
+            return null
         }
 
         /**

@@ -92,7 +92,7 @@ class DucklakeWriteTransaction(
             stmt.setLong(3, currentSnapshotId)
             stmt.executeQuery().use { rs ->
                 if (!rs.next()) {
-                    throw RuntimeException("Schema not found: $schemaName")
+                    throw DucklakeEntityNotFoundException("schema", schemaName)
                 }
                 return rs.getLong("schema_id")
             }
@@ -114,7 +114,7 @@ class DucklakeWriteTransaction(
             stmt.setLong(4, currentSnapshotId)
             stmt.executeQuery().use { rs ->
                 if (!rs.next()) {
-                    throw RuntimeException("Table not found: $tableName")
+                    throw DucklakeEntityNotFoundException("table", tableName)
                 }
                 return rs.getLong("table_id")
             }

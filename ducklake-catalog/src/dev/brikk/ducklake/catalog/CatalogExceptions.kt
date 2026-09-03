@@ -147,3 +147,40 @@ object DucklakeSpecVersions {
     @JvmField
     val WRITABLE: Set<String> = setOf("0.4", "1.0")
 }
+
+/**
+ * A catalog object the operation needs does not exist (or is not active at the transaction's
+ * snapshot): schema, table, view, column, nested field, partition column. Engines map this to their
+ * NOT_FOUND class. Also what a retried write sees when a concurrent commit dropped its target
+ * between attempts — the object genuinely no longer exists.
+ *
+ * @property entityKind `schema` / `table` / `view` / `column` / `field` / `partition column`.
+ * @property entityName the name or id the caller used.
+ */
+open class DucklakeEntityNotFoundException(
+    val entityKind: String,
+    val entityName: String,
+) : DucklakeException("${entityKind.replaceFirstChar { it.uppercase() }} not found: $entityName")
+
+/**
+ * A catalog object with this name already exists (and is active) where the operation would create
+ * one: schema, table, view, field. Engines map this to their ALREADY_EXISTS class.
+ */
+open class DucklakeEntityAlreadyExistsException(
+    val entityKind: String,
+    val entityName: String,
+) : DucklakeException("${entityKind.replaceFirstChar { it.uppercase() }} already exists: $entityName")
+
+/**
+ * The requested operation is not valid for its target (e.g. a cross-schema table rename, adding a
+ * field to a non-struct column, an empty field path). A caller bug or unsupported request, not a
+ * catalog fault; engines map this to their INVALID_ARGUMENTS / NOT_SUPPORTED class.
+ */
+open class DucklakeInvalidOperationException(message: String) : DucklakeException(message)
+
+/**
+ * The catalog's metadata is internally inconsistent (e.g. two active `ducklake_view` rows for one
+ * name, a `list` column without exactly one child, a NULL where the spec requires a value). Not
+ * retryable and not the caller's fault; surfaces the corruption instead of guessing.
+ */
+open class DucklakeCatalogCorruptionException(message: String) : DucklakeException(message)

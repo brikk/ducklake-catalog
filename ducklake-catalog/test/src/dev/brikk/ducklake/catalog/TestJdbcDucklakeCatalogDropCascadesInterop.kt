@@ -165,7 +165,7 @@ class TestJdbcDucklakeCatalogDropCascadesInterop {
         val snapshot = catalog.currentSnapshotId
         val table = catalog.getTable("test_schema", "simple_table", snapshot)!!
         assertThatThrownBy { catalog.dropColumn(table.tableId, Long.MAX_VALUE) }
-            .rootCause()
+            .isInstanceOf(DucklakeEntityNotFoundException::class.java)
             .hasMessageContaining("Column not found")
         assertThat(catalog.currentSnapshotId).isEqualTo(snapshot)
     }
@@ -176,7 +176,6 @@ class TestJdbcDucklakeCatalogDropCascadesInterop {
         catalog.createView("emptyish", "v", "SELECT 1 AS one", "duckdb", listOf("one"), emptyMap())
 
         assertThatThrownBy { catalog.dropSchema("emptyish") }
-            .rootCause()
             .isInstanceOf(DucklakeSchemaNotEmptyException::class.java)
             .hasMessageContaining("not empty")
             .hasMessageContaining("views")
@@ -188,7 +187,6 @@ class TestJdbcDucklakeCatalogDropCascadesInterop {
             c.createStatement().use { st -> st.execute("CREATE MACRO lake.emptyish.plus_one(x) AS x + 1") }
         }
         assertThatThrownBy { catalog.dropSchema("emptyish") }
-            .rootCause()
             .isInstanceOf(DucklakeSchemaNotEmptyException::class.java)
             .hasMessageContaining("not empty")
             .hasMessageContaining("macros")

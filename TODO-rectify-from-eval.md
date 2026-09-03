@@ -647,7 +647,16 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
 ## Q — Code quality, API hygiene, tests, resources
 
 ### Q-1 · BUG (API) · Most failure paths are untyped `RuntimeException`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. New `DucklakeEntityNotFoundException(kind, name)`, `DucklakeEntityAlreadyExistsException`,
+  `DucklakeInvalidOperationException`, `DucklakeCatalogCorruptionException` (all `DucklakeException`); every business
+  throw in `JdbcDucklakeCatalog` / `DucklakeWriteTransaction` uses one. The write boundary rethrows ANY
+  `DucklakeException` found in the cause chain unwrapped (previously only `TransactionConflictException`) and wraps
+  genuinely unexpected failures in `DucklakeException("Failed to …")` instead of `RuntimeException`. All 18
+  `TooGenericExceptionThrown` baseline entries for main code are gone. **trino-ducklake follow-up:** extend
+  `translateCatalogExceptions` to map NotFound → `NOT_FOUND`, AlreadyExists → `ALREADY_EXISTS`, InvalidOperation →
+  `NOT_SUPPORTED`/`INVALID_ARGUMENTS`, SchemaNotEmpty → `SCHEMA_NOT_EMPTY`, Encrypted/Version guards →
+  `NOT_SUPPORTED`. `guardInitialized` is still applied to reads only (writes surface the same
+  `DucklakeCatalogNotInitializedException` via the empty-snapshot check).
 - 25 `throw RuntimeException/IllegalStateException/IllegalArgumentException` sites: `DucklakeWriteTransaction.kt:95,
   117` ("Schema/Table not found"), `JdbcDucklakeCatalog.kt:2253, 2304, 2348, 2389, 2461, 2744, 2751, 2763, 2804,
   2814, 3058, 3107, 3250, 3255, 3307, 3313, 3998, 4012`, `:222, 2047, 4184`. Everything thrown inside the action is

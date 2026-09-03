@@ -25,20 +25,6 @@
     <ID>TooGenericExceptionCaught:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$e: Exception</ID>
     <ID>TooGenericExceptionCaught:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$e: RuntimeException</ID>
     <ID>TooGenericExceptionThrown:ConcurrentWriterHarness.kt:ConcurrentWriterHarness$throw RuntimeException(e)</ID>
-    <ID>TooGenericExceptionThrown:DucklakeWriteTransaction.kt:DucklakeWriteTransaction$throw RuntimeException("Schema not found: $schemaName")</ID>
-    <ID>TooGenericExceptionThrown:DucklakeWriteTransaction.kt:DucklakeWriteTransaction$throw RuntimeException("Table not found: $tableName")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException( "Renaming a table across schemas is not supported: table data paths are schema-relative")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Cannot drop schema $schemaName: schema is not empty")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Column not found: $columnId")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Failed to $operationDescription", e)</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Partition column not found: ${field.columnName}")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Relation already exists: $targetSchemaName.$targetViewName")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Schema already exists: $newName")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Schema not found: $schemaName")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Table already exists: $targetSchemaName.$newTableName")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("Table not found: $tableId")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("View not found: $viewId")</ID>
-    <ID>TooGenericExceptionThrown:JdbcDucklakeCatalog.kt:JdbcDucklakeCatalog$throw RuntimeException("View not found: schema_id=$schemaId, view_name=$viewName")</ID>
     <ID>TooGenericExceptionThrown:JdbcDucklakeCatalogTestDataGenerator.kt:JdbcDucklakeCatalogTestDataGenerator$throw RuntimeException("Failed to delete $path", e)</ID>
     <ID>TooGenericExceptionThrown:TestingDucklakeLocalDuckDbCatalogFixture.kt:TestingDucklakeLocalDuckDbCatalogFixture$throw RuntimeException("Failed to create local-DuckDB catalog root dir", ex)</ID>
     <ID>TooGenericExceptionThrown:WriteTransactionRetry.kt:WriteTransactionRetry$throw RuntimeException( "Interrupted while waiting to retry $operationDescription", ie, )</ID>
