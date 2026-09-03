@@ -704,42 +704,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .where(DUCKLAKE_SNAPSHOT_CHANGES.SNAPSHOT_ID.`in`(snapshotIds)))
 
                 val deadTableIds: List<Long> = findDeadTableIds(ctx)
-                val tableDataPathCache = HashMap<Long, String?>()
-                var scheduledCount = 0
-
-                // Dead data files: end-snapshotted with no surviving snapshot in [begin,end), OR
-                // belonging to a fully-expired dropped table (its files may have end_snapshot=NULL).
-                val deadData = findDeadDataFiles(ctx, deadTableIds)
-                for (f in deadData) {
-                    if (scheduleFile(ctx, f, tableDataPathCache)) {
-                        scheduledCount++
-                    }
-                }
-                val deadDataIds = deadData.map { it.fileId }
-                if (deadDataIds.isNotEmpty()) {
-                    metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_COLUMN_STATS)
-                        .where(DUCKLAKE_FILE_COLUMN_STATS.DATA_FILE_ID.`in`(deadDataIds)))
-                    metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_VARIANT_STATS)
-                        .where(DUCKLAKE_FILE_VARIANT_STATS.DATA_FILE_ID.`in`(deadDataIds)))
-                    metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_PARTITION_VALUE)
-                        .where(DUCKLAKE_FILE_PARTITION_VALUE.DATA_FILE_ID.`in`(deadDataIds)))
-                    metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_DATA_FILE)
-                        .where(DUCKLAKE_DATA_FILE.DATA_FILE_ID.`in`(deadDataIds)))
-                }
-
-                // Dead delete files: same survivor test, or orphaned by a just-removed data file,
-                // or belonging to a dead table.
-                val deadDelete = findDeadDeleteFiles(ctx, deadTableIds, deadDataIds)
-                for (f in deadDelete) {
-                    if (scheduleFile(ctx, f, tableDataPathCache)) {
-                        scheduledCount++
-                    }
-                }
-                val deadDeleteIds = deadDelete.map { it.fileId }
-                if (deadDeleteIds.isNotEmpty()) {
-                    metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_DELETE_FILE)
-                        .where(DUCKLAKE_DELETE_FILE.DELETE_FILE_ID.`in`(deadDeleteIds)))
-                }
+                // Physical per-table inlined tables to DROP once the metadata transaction has
+                // committed — DDL must not run inside it (see dropDeadInlinedTables).
+                val deadInlinedTables: List<String> = deadInlinedTableNames(ctx, deadTableIds)
+                val scheduledCount = scheduleAndDeleteDeadFiles(ctx, deadTableIds)
 
                 // GC the metadata rows of fully-expired DROPPED tables (every row dead — see
                 // findDeadTableIds). Reuses the already-validated deadTableIds, so it can't touch a
@@ -753,6 +721,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 deleteDeadSchemaViewMacroMetadata(ctx)
 
                 conn.commit()
+                // Each DROP autocommits on its own; with autoCommit still false it would open an
+                // implicit transaction that is rolled back when the connection returns to the pool.
+                conn.autoCommit = true
+                dropDeadInlinedTables(ctx, deadInlinedTables)
                 return ExpireSnapshotsResult(snapshotIds.size, scheduledCount)
             }
             catch (e: Exception) {
@@ -765,6 +737,50 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /** A dead data/delete file row carrying just what scheduling needs. */
     private data class DeadFile(val fileId: Long, val tableId: Long, val path: String, val pathIsRelative: Boolean)
 
+    /**
+     * Schedules every dead data / delete file for physical deletion and removes its catalog rows
+     * (+ per-file stats / partition values). Returns the number of files scheduled.
+     */
+    private fun scheduleAndDeleteDeadFiles(ctx: DSLContext, deadTableIds: List<Long>): Int {
+        val tableDataPathCache = HashMap<Long, String?>()
+        var scheduledCount = 0
+
+        // Dead data files: end-snapshotted with no surviving snapshot in [begin,end), OR
+        // belonging to a fully-expired dropped table (its files may have end_snapshot=NULL).
+        val deadData = findDeadDataFiles(ctx, deadTableIds)
+        for (f in deadData) {
+            if (scheduleFile(ctx, f, tableDataPathCache)) {
+                scheduledCount++
+            }
+        }
+        val deadDataIds = deadData.map { it.fileId }
+        if (deadDataIds.isNotEmpty()) {
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_COLUMN_STATS)
+                .where(DUCKLAKE_FILE_COLUMN_STATS.DATA_FILE_ID.`in`(deadDataIds)))
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_VARIANT_STATS)
+                .where(DUCKLAKE_FILE_VARIANT_STATS.DATA_FILE_ID.`in`(deadDataIds)))
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_PARTITION_VALUE)
+                .where(DUCKLAKE_FILE_PARTITION_VALUE.DATA_FILE_ID.`in`(deadDataIds)))
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_DATA_FILE)
+                .where(DUCKLAKE_DATA_FILE.DATA_FILE_ID.`in`(deadDataIds)))
+        }
+
+        // Dead delete files: same survivor test, or orphaned by a just-removed data file,
+        // or belonging to a dead table.
+        val deadDelete = findDeadDeleteFiles(ctx, deadTableIds, deadDataIds)
+        for (f in deadDelete) {
+            if (scheduleFile(ctx, f, tableDataPathCache)) {
+                scheduledCount++
+            }
+        }
+        val deadDeleteIds = deadDelete.map { it.fileId }
+        if (deadDeleteIds.isNotEmpty()) {
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_DELETE_FILE)
+                .where(DUCKLAKE_DELETE_FILE.DELETE_FILE_ID.`in`(deadDeleteIds)))
+        }
+        return scheduledCount
+    }
+
     /** Deletes every `table_id`-keyed metadata row for fully-expired dropped tables. */
     private fun deleteDeadTableMetadata(ctx: DSLContext, deadTableIds: List<Long>) {
         metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_TABLE_STATS).where(DUCKLAKE_TABLE_STATS.TABLE_ID.`in`(deadTableIds)))
@@ -776,9 +792,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SORT_EXPRESSION).where(DUCKLAKE_SORT_EXPRESSION.TABLE_ID.`in`(deadTableIds)))
         metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SORT_INFO).where(DUCKLAKE_SORT_INFO.TABLE_ID.`in`(deadTableIds)))
         metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SCHEMA_VERSIONS).where(DUCKLAKE_SCHEMA_VERSIONS.TABLE_ID.`in`(deadTableIds)))
-        // Drop the dynamic per-(table,schema-version) inlined-data tables before forgetting they
-        // exist, then delete the directory rows.
-        dropDeadInlinedDataTables(ctx, deadTableIds)
+        // The dynamic per-(table,schema-version) inlined-data tables were captured by
+        // deadInlinedTableNames before this point and are DROPped after commit; here only the
+        // directory rows go.
         metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_INLINED_DATA_TABLES).where(DUCKLAKE_INLINED_DATA_TABLES.TABLE_ID.`in`(deadTableIds)))
         metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_COLUMN_MAPPING).where(DUCKLAKE_COLUMN_MAPPING.TABLE_ID.`in`(deadTableIds)))
         // The ducklake_table rows last (others reference table_id).
@@ -786,23 +802,56 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /**
-     * DROP the dynamic `ducklake_inlined_data_<tableId>_<schemaVersion>` tables of fully-expired
-     * dropped tables. A missing/never-materialized table is skipped (DROP TABLE IF EXISTS, and any
-     * DataAccessException is swallowed) — the same tolerance [endSnapshotLiveInlinedRows] uses.
+     * Names of the dynamic per-table tables owned by fully-expired dropped tables: every
+     * `ducklake_inlined_data_<tableId>_<schemaVersion>` registered in `ducklake_inlined_data_tables`
+     * plus the lazily-created `ducklake_inlined_delete_<tableId>` (upstream drops both,
+     * `ducklake_metadata_manager.cpp` DeleteInlinedDataTables / inlined delete table cleanup).
+     * Must be read INSIDE the expire transaction, before the directory rows are deleted.
      */
-    private fun dropDeadInlinedDataTables(ctx: DSLContext, deadTableIds: List<Long>) {
+    private fun deadInlinedTableNames(ctx: DSLContext, deadTableIds: List<Long>): List<String> {
+        if (deadTableIds.isEmpty()) {
+            return emptyList()
+        }
         val inlinedTables = DUCKLAKE_INLINED_DATA_TABLES.`as`("inlined")
-        val tablePairs: List<Pair<Long, Long>> = ctx.select(inlinedTables.TABLE_ID, inlinedTables.SCHEMA_VERSION)
+        val names = ArrayList<String>()
+        ctx.select(inlinedTables.TABLE_ID, inlinedTables.SCHEMA_VERSION)
             .from(inlinedTables)
             .where(inlinedTables.TABLE_ID.`in`(deadTableIds))
             .fetch()
-            .mapNotNull { r -> val tid = r.value1(); val sv = r.value2(); if (tid != null && sv != null) tid to sv else null }
-        for ((tid, sv) in tablePairs) {
+            .forEach { r ->
+                val tid = r.value1()
+                val sv = r.value2()
+                if (tid != null && sv != null) {
+                    names.add(InlinedDataTable.of(tid, sv).name)
+                }
+            }
+        for (tid in deadTableIds) {
+            names.add("ducklake_inlined_delete_$tid")
+        }
+        return names
+    }
+
+    /**
+     * DROP the dynamic inlined tables of fully-expired dropped tables, AFTER the metadata
+     * transaction committed. DDL is deliberately kept out of that transaction: MySQL commits
+     * implicitly on any DDL statement, so a `DROP TABLE` in the middle of the expire would have made
+     * the already-executed `ducklake_snapshot` / `ducklake_data_file` deletes permanent even if a
+     * later statement failed and the transaction "rolled back". Running the drops afterwards keeps
+     * the metadata change atomic on every backend; a drop that fails leaves an unreferenced physical
+     * table behind (logged), never inconsistent metadata. `IF EXISTS` because most tables never
+     * materialised their inlined-delete table.
+     */
+    private fun dropDeadInlinedTables(ctx: DSLContext, tableNames: List<String>) {
+        for (name in tableNames) {
             try {
-                ctx.dropTableIfExists(InlinedDataTable.of(tid, sv).table).execute()
+                ctx.dropTableIfExists(DSL.table(DSL.name(name))).execute()
             }
             catch (e: DataAccessException) {
-                rethrowUnlessMissingTable(e, InlinedDataTable.of(tid, sv).name, "drop of dead inlined-data table")
+                log.log(
+                    System.Logger.Level.WARNING,
+                    "expire_snapshots: metadata for {0} was removed but the physical table could not be dropped: {1}",
+                    name, e.message,
+                )
             }
         }
     }

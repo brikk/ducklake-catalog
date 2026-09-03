@@ -419,10 +419,8 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   document the contract on `DucklakeCatalog.readInlinedData`.
 
 ### R-D5 · DRIFT · Expire GC gaps
-- [ ] **Status:** open
-- `deleteDeadTableMetadata` (`:733-750`), `deleteDeadSchemaViewMacroMetadata` (`:798-833`): does not delete dead
-  `ducklake_tag` rows (upstream mm.cpp:5043-5052) and does not drop `ducklake_inlined_delete_<tableId>` for dead
-  tables (mm.cpp:5013-5015). Metadata leak only.
+- [ ] **Status:** PARTIAL — `ducklake_inlined_delete_<tableId>` is now dropped for dead tables (C-B5). Still open:
+  dead `ducklake_tag` rows (upstream mm.cpp:5043-5052) are not deleted. Metadata leak only.
 
 ### R-D6 · DRIFT · `getColumnStats` NULL min/max handling
 - [ ] **Status:** open
@@ -531,7 +529,11 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   (`:1604, 1926`) are safe.
 
 ### C-B5 · BUG (MySQL) · DDL inside `expireSnapshots` breaks atomicity
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `deadInlinedTableNames` captures the physical table names inside the transaction;
+  `dropDeadInlinedTables` runs after `commit()` (connection switched to autocommit — otherwise PG would roll the
+  drops back on pool return). Also drops `ducklake_inlined_delete_<t>` for dead tables (closes that half of R-D5).
+  Test: `TestJdbcDucklakeCatalogExpireSnapshotsDropsInlinedTables` (first `expireSnapshots` test) — verified it
+  fails without the autocommit switch.
 - `dropDeadInlinedDataTables :757-772` issues `DROP TABLE IF EXISTS` inside the `expireSnapshots` transaction
   (`:656-726`). MySQL DDL implicitly commits; a later failure can't roll back the already-deleted
   `ducklake_snapshot` / `ducklake_data_file` rows. PG/DuckDB DDL is transactional.
