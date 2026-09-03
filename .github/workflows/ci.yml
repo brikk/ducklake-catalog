@@ -1,0 +1,98 @@
+# Verification for pull requests and pushes to main: `./gradlew check` across every module
+# (compile, detekt, checkAbi, and the full test suites — the catalog's Testcontainers-based
+# PostgreSQL / MySQL tests and DuckDB-oracle interop tests need Docker, which ubuntu-latest
+# provides). A nightly job replays the WHOLE upstream DuckLake sqllogictest corpus through the
+# DuckDB oracle (the PR job runs only the starter set) so a DuckDB / ducklake bump that changes
+# corpus behaviour is noticed even when no code changed.
+#
+# The submodule at ducklake-test-corpus-replay/ducklake is the corpus; the reference-only
+# submodules under references/ have `update = none` and are NOT fetched (see .gitmodules).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * *' # nightly full-corpus replay (UTC)
+  workflow_dispatch:
+    inputs:
+      full_corpus:
+        description: Replay the full DuckLake corpus (not just the starter set)
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (with the corpus submodule)
+        uses: actions/checkout@v7
+        with:
+          submodules: true # `update = none` keeps the references/* submodules out of this
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build, lint and test every module
+        run: ./gradlew check --no-configuration-cache --stacktrace --continue
+
+      - name: Full-corpus replay (manual opt-in)
+        if: github.event_name == 'workflow_dispatch' && inputs.full_corpus
+        run: ./gradlew :ducklake-test-corpus-replay:test --rerun -Dducklake.corpus.dirs=all --no-configuration-cache --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_id }}
+          path: |
+            **/build/reports/tests/test/
+            **/build/reports/detekt/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  nightly-full-corpus:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with the corpus submodule)
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Replay the full DuckLake corpus through the DuckDB oracle
+        run: ./gradlew :ducklake-test-corpus-replay:test -Dducklake.corpus.dirs=all --no-configuration-cache --stacktrace
+
+      - name: Upload replay report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-replay-${{ github.run_id }}
+          path: ducklake-test-corpus-replay/build/reports/tests/test/
+          if-no-files-found: ignore
+          retention-days: 30

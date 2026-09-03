@@ -119,6 +119,13 @@ Running `./gradlew` from a JDK 21 (or older) shell fails at configuration time w
 The catalog module's jOOQ bindings under `ducklake-catalog/generated/` are checked into git;
 only regeneration needs Docker. See [`ducklake-catalog/README.md`](ducklake-catalog/README.md).
 
+## CI
+
+`.github/workflows/ci.yml` runs `./gradlew check` (compile, detekt, `checkAbi`, all tests including
+the Testcontainers PostgreSQL/MySQL and DuckDB-oracle interop tests) on every pull request and push
+to `main`, and replays the **full** upstream DuckLake sqllogictest corpus nightly (the PR job runs
+the starter set). Trigger the workflow manually with `full_corpus` to replay everything on demand.
+
 ## Releasing
 
 - **Snapshot** — every push to `main` (version `*-SNAPSHOT`) publishes via

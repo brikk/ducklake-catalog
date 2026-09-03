@@ -829,7 +829,7 @@ Default starter set (`TestIdentityControl.kt:71`) covers 58/471 files.
   `statement maybe`.
 
 ### S-D3 · DRIFT · Harness is not run in CI
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — `.github/workflows/ci.yml`: `check` on PR/push; nightly full-corpus replay; manual `full_corpus` dispatch.
 - `.github/workflows/` has only publish workflows; none run `test`/`check`; `publish-snapshot.yml:33-34` says the
   submodule isn't fetched and tests don't run. `TestIdentityControl` also `assumeTrue`s away when the extension can't
   be installed or the submodule is missing (`TestIdentityControl.kt:50-62, 67`). Add a `ci.yml` running
@@ -859,6 +859,6 @@ Default starter set (`TestIdentityControl.kt:71`) covers 58/471 files.
   launch and the toolchain resolver handles the rest.
 
 ### X-3 · NIT · No PR/CI verification workflow
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — see S-D3 (`ci.yml`).
 - See S-D3. `checkAbi` (`ducklake-catalog/build.gradle.kts`) and detekt are wired into `check` but nothing runs
   `check` in GitHub Actions.
