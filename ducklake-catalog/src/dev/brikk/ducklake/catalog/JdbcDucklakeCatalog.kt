@@ -1466,8 +1466,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 setTableId(tableId)
                 setColumnId(columnId)
                 setContainsNull(containsNull.getOrDefault(columnId, false))
-                // Asymmetric with contains_null: TRUE when set, SQL NULL otherwise (upstream convention).
-                setContainsNan(if (containsNan.getOrDefault(columnId, false)) java.lang.Boolean.TRUE else null)
+                setContainsNan(globalContainsNan(columnTypes[columnId], containsNan.getOrDefault(columnId, false)))
                 setMinValue(bounds[columnId]?.min)
                 setMaxValue(bounds[columnId]?.max)
             }
@@ -2335,15 +2334,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     // 4. Create new snapshot row (with final allocated IDs)
                     insertSnapshotRow(txDsl, tx, operationDescription)
 
-                    // 5. Insert schema_versions row if schema version changed
+                    // 5. ducklake_schema_versions: one row per table created/altered in this commit
+                    // (upstream InsertNewSchema). View/schema DDL and DROP TABLE bump schema_version
+                    // on the snapshot row only.
                     if (tx.getSchemaVersion() != schemaVersion) {
-                        val schemaVersionTableId: Long? =
-                            if (tx.getSchemaVersionTableId() >= 0) tx.getSchemaVersionTableId() else null
-                        txDsl.insertInto(schver)
-                            .set(schver.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
-                            .set(schver.SCHEMA_VERSION, tx.getSchemaVersion())
-                            .set(schver.TABLE_ID, schemaVersionTableId)
-                            .execute()
+                        for (schemaVersionTableId in tx.getSchemaVersionTableIds()) {
+                            txDsl.insertInto(schver)
+                                .set(schver.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
+                                .set(schver.SCHEMA_VERSION, tx.getSchemaVersion())
+                                .set(schver.TABLE_ID, schemaVersionTableId)
+                                .execute()
+                        }
                     }
 
                     // 6. Insert snapshot changes (comma-separated per spec, one row per snapshot)
@@ -2667,13 +2668,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         executeWriteTransaction("create schema $schemaName") { tx ->
             val schemaId = tx.allocateCatalogId()
             tx.recordChange(WriteChange.CreatedSchema(schemaName))
+            val schemaUuid = UUID.fromString(newCatalogUuid())
 
             tx.dsl().insertInto(sch)
                 .set(sch.SCHEMA_ID, schemaId)
-                .set(sch.SCHEMA_UUID, UUID.fromString(newCatalogUuid()))
+                .set(sch.SCHEMA_UUID, schemaUuid)
                 .set(sch.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
                 .set(sch.SCHEMA_NAME, schemaName)
-                .set(sch.PATH, "$schemaName/")
+                .set(sch.PATH, pathFromName(schemaUuid, schemaName))
                 .set(sch.PATH_IS_RELATIVE, true)
                 .execute()
 
@@ -2720,17 +2722,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val tab = DUCKLAKE_TABLE.`as`("tab")
         val partinfo = DUCKLAKE_PARTITION_INFO.`as`("partinfo")
         val partcol = DUCKLAKE_PARTITION_COLUMN.`as`("partcol")
-        val tablePath: String = location?.path ?: "$tableName/"
         val pathIsRelative: Boolean = location?.isRelative ?: true
         executeWriteTransaction("create table $schemaName.$tableName") { tx ->
             val schemaId = tx.resolveSchemaId(schemaName)
             val tableId = tx.allocateCatalogId()
             val ctx = tx.dsl()
+            val tableUuid = UUID.fromString(newCatalogUuid())
+            val tablePath: String = location?.path ?: pathFromName(tableUuid, tableName)
 
             // 1. Insert table row
             ctx.insertInto(tab)
                 .set(tab.TABLE_ID, tableId)
-                .set(tab.TABLE_UUID, UUID.fromString(newCatalogUuid()))
+                .set(tab.TABLE_UUID, tableUuid)
                 .set(tab.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
                 .set(tab.SCHEMA_ID, schemaId)
                 .set(tab.TABLE_NAME, tableName)
@@ -2842,6 +2845,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .set(col.NULLS_ALLOWED, column.nullable)
             .set(col.PARENT_COLUMN, if (parentColumnId.isPresent) parentColumnId.asLong else null)
             .set(col.DEFAULT_VALUE_TYPE, "literal")
+            // Upstream writes 'duckdb' on every column row it creates; the 'NULL' sentinel is a
+            // literal in any dialect, so this is purely for row-shape parity.
+            .set(col.DEFAULT_VALUE_DIALECT, "duckdb")
             .execute()
 
         // Insert children with their own column_order (0-based within parent)
@@ -2917,6 +2923,25 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .where(partinfo.TABLE_ID.eq(tableId))
                     .and(partinfo.END_SNAPSHOT.isNull),
             )
+            // Upstream DropTables also retires the table's tags, column tags and sort spec.
+            val tag = DUCKLAKE_TAG.`as`("tag")
+            metadata.execute(
+                ctx,
+                ctx.update(tag).set(tag.END_SNAPSHOT, newSnapshotId)
+                    .where(tag.OBJECT_ID.eq(tableId)).and(tag.END_SNAPSHOT.isNull),
+            )
+            val coltag = DUCKLAKE_COLUMN_TAG.`as`("coltag")
+            metadata.execute(
+                ctx,
+                ctx.update(coltag).set(coltag.END_SNAPSHOT, newSnapshotId)
+                    .where(coltag.TABLE_ID.eq(tableId)).and(coltag.END_SNAPSHOT.isNull),
+            )
+            val sortinfo = DUCKLAKE_SORT_INFO.`as`("sortinfo")
+            metadata.execute(
+                ctx,
+                ctx.update(sortinfo).set(sortinfo.END_SNAPSHOT, newSnapshotId)
+                    .where(sortinfo.TABLE_ID.eq(tableId)).and(sortinfo.END_SNAPSHOT.isNull),
+            )
 
             // Table-scoped settings rows are unversioned, so remove them outright (table ids
             // are never reused; a leftover row would be junk, not a time-travel artifact).
@@ -2928,7 +2953,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .and(meta.SCOPE_ID.eq(tableId)),
             )
 
-            tx.incrementSchemaVersion(tableId)
+            tx.incrementSchemaVersion() // dropped: no ducklake_schema_versions row (upstream writes them for new/altered only)
             tx.recordChange(WriteChange.DroppedTable(tableId))
         }
     }
@@ -3263,6 +3288,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .set(tag.VALUE, comment)
                     .execute()
             }
+            // Any ALTER bumps schema_version upstream; DuckDB caches the catalog per schema_version,
+            // so without the bump it would show the stale comment until the next DDL.
+            tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3299,6 +3327,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .set(ctag.VALUE, comment)
                     .execute()
             }
+            tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3853,6 +3882,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 if (agg.containsNan) {
                     upd = upd.set(tabcolst.CONTAINS_NAN, true)
                 }
+                else if (DucklakeStatTypes.isFloatType(columnType)) {
+                    // Float column with no NaN so far: make sure the row says an explicit FALSE
+                    // rather than NULL (an older row may carry NULL) — see globalContainsNan.
+                    upd = upd.set(tabcolst.CONTAINS_NAN, DSL.coalesce(tabcolst.CONTAINS_NAN, DSL.inline(false)))
+                }
                 upd.where(tabcolst.TABLE_ID.eq(tableId))
                     .and(tabcolst.COLUMN_ID.eq(columnId))
                     .execute()
@@ -3862,9 +3896,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 r.setTableId(tableId)
                 r.setColumnId(columnId)
                 r.setContainsNull(agg.containsNull)
-                // Asymmetric with contains_null: mirror the original INSERT which wrote
-                // SQL NULL for contains_nan when false (and TRUE when true).
-                r.setContainsNan(if (agg.containsNan) java.lang.Boolean.TRUE else null)
+                r.setContainsNan(globalContainsNan(columnTypes[columnId], agg.containsNan))
                 r.setMinValue(agg.minValue)
                 r.setMaxValue(agg.maxValue)
                 insertRecords.add(r)
@@ -4525,6 +4557,30 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .fetchOne(0, Long::class.java)
             return maxId ?: throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
         }
+
+        /**
+         * Default storage directory for a new schema/table: `<name>/` when the name is path-safe
+         * (`[A-Za-z0-9_-]`), otherwise `<uuid>/` — upstream `DuckLakeCatalog::GeneratePathFromName`.
+         * A name with spaces, dots, slashes or non-ASCII would otherwise become a hazardous or
+         * non-portable directory name.
+         */
+        private fun pathFromName(uuid: UUID, name: String): String {
+            val safe = name.isNotEmpty() && name.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '_' || it == '-' }
+            return (if (safe) name else uuid.toString()) + "/"
+        }
+
+        /**
+         * `ducklake_table_column_stats.contains_nan` per upstream: for FLOAT/DOUBLE columns an
+         * explicit boolean (`false` when no file has NaN — DuckDB only builds float global stats
+         * when `has_contains_nan && !contains_nan`, so NULL would leave it with no stats at all,
+         * `ducklake_stats.cpp`); for every other type SQL NULL (NaN is not representable).
+         */
+        private fun globalContainsNan(columnType: String?, containsNan: Boolean): Boolean? =
+            when {
+                containsNan -> java.lang.Boolean.TRUE
+                DucklakeStatTypes.isFloatType(columnType) -> java.lang.Boolean.FALSE
+                else -> null
+            }
 
         /** The first [DucklakeException] in the cause chain (typed conflicts, not-found, ...), if any. */
         private fun findDucklakeException(throwable: Throwable): DucklakeException? {

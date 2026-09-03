@@ -192,7 +192,10 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (3) same fix applies to the read-side pruning comparator (see P-1).
 
 ### W-D1 · DRIFT · Snapshot / `schema_version` bookkeeping
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `ducklake_schema_versions` gets one row per created/altered table (`DucklakeWriteTransaction`
+  tracks a set of table ids), none for view/schema DDL or DROP TABLE — upstream `InsertNewSchema`.
+  `setTableComment` / `setColumnComment` bump `schema_version`; `TestJdbcDucklakeCatalogRowShapeParity` proves a
+  cached DuckDB session sees the new comment.
 - `ducklake_schema_versions` rows with `table_id = NULL` for view/schema DDL (`JdbcDucklakeCatalog.kt:2101-2110`,
   `DucklakeWriteTransaction.kt:161-163`), and rows for *dropped* tables (`:2625`). Upstream writes per-table rows
   only for new/altered tables (`ducklake_transaction_state.cpp:1572-1586`); its V0.3→0.4 migration deletes NULL-table
@@ -254,7 +257,8 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (`ducklake_stats.cpp:325`). Either compute NaN presence in the extractor or write NULL (unknown).
 
 ### W-D5 · DRIFT · `ducklake_table_column_stats.contains_nan` NULL vs explicit `false`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — `globalContainsNan`: explicit `false` for float columns (insert, update, analyze
+  paths), SQL NULL for other types. Test in `TestJdbcDucklakeCatalogRowShapeParity`.
 - Library writes SQL NULL for float columns without NaN (`:3586`, `:1320`); upstream writes explicit `false`
   (`ducklake_transaction.cpp:1166-1169`, `metadata_manager.cpp:4441-4446`). DuckDB only builds float global stats
   when `has_contains_nan && !contains_nan` (`ducklake_stats.cpp:325`) → **DuckDB gets no global stats for
@@ -270,7 +274,11 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   Low priority; document the divergence.
 
 ### W-D7 · DRIFT · Catalog table columns
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (except the `files_scheduled_for_deletion` relative-path nit and the unsupported-feature
+  documentation, left as-is): `default_value_dialect = 'duckdb'` on new columns; `dropTable` end-snapshots
+  `ducklake_tag` / `ducklake_column_tag` / `ducklake_sort_info` (upstream `DropTables`); schema/table default paths
+  fall back to `<uuid>/` for names outside `[A-Za-z0-9_-]` (upstream `GeneratePathFromName`). Test in
+  `TestJdbcDucklakeCatalogRowShapeParity`.
 - `default_value_dialect` left NULL (`:2528-2539`); upstream writes `'duckdb'` (`:2397, 2426`). Write it.
 - `dropTable` omits end-snapshotting `ducklake_tag`, `ducklake_column_tag`, `ducklake_sort_info` (`:2556-2627` vs
   `:2278-2290`); `dropView` omits `ducklake_tag` (`:2229-2237` vs `:2292-2298`). Orphan rows are inert but bloat.

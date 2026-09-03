@@ -41,7 +41,8 @@ class DucklakeWriteTransaction(
     private var nextFileId: Long,
 ) {
     private val newSnapshotId: Long = currentSnapshotId + 1
-    private var schemaVersionTableId: Long = -1
+    private val initialSchemaVersion: Long = schemaVersion
+    private val schemaVersionTableIds: MutableSet<Long> = linkedSetOf()
     private val changes: MutableList<WriteChange> = mutableListOf()
 
     /**
@@ -180,24 +181,32 @@ class DucklakeWriteTransaction(
      *
      * @param tableId the table being modified (used in ducklake_schema_versions)
      */
+    /**
+     * Bumps the schema version for DDL that changes a table's columns / identity — CREATE TABLE and
+     * every ALTER (add/drop/rename/retype column or field, rename, comment). The table is recorded
+     * for `ducklake_schema_versions`: upstream writes one row per NEW or ALTERED table
+     * (`InsertNewSchema`), which is what `getSnapshotIdForSchemaVersion` resolves per table.
+     * Can be called for several tables in one transaction (e.g. renameSchema).
+     */
     fun incrementSchemaVersion(tableId: Long) {
-        schemaVersion++
-        schemaVersionTableId = tableId
+        schemaVersionTableIds.add(tableId)
+        incrementSchemaVersion()
     }
 
     /**
-     * Increments the schema version for a non-table-scoped DDL operation
-     * (create/drop view, create/drop schema). Leaves `table_id` as
-     * SQL NULL in `ducklake_schema_versions`. Upstream
-     * `DuckLakeTransaction::SchemaChangesMade()` flips on new/dropped
-     * views and schemas the same way it flips on table DDL, so a DuckDB
-     * reader that caches by `schema_version` must see the bump.
+     * Bumps the schema version for DDL that does not alter a table's own definition: create/drop
+     * view or schema, DROP TABLE. Upstream `SchemaChangesMade()` flips for these too (a DuckDB
+     * reader caches the catalog by `schema_version`), but it writes NO `ducklake_schema_versions`
+     * row for them — that table is per-table history of new/altered tables only.
      */
     fun incrementSchemaVersion() {
-        schemaVersion++
+        if (schemaVersion == initialSchemaVersion) {
+            schemaVersion++
+        }
     }
 
-    fun getSchemaVersionTableId(): Long = schemaVersionTableId
+    /** Tables whose definition this transaction created or altered (for `ducklake_schema_versions`). */
+    fun getSchemaVersionTableIds(): Set<Long> = schemaVersionTableIds
 
     /**
      * Returns the JDBC connection for preparing mutation statements.
