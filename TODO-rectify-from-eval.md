@@ -139,7 +139,11 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   "schema is not empty" error.
 
 ### W-B6 · BUG · `renameColumn` / `setColumnType` / `setFieldType` discard `initial_default` / `default_value`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. All three go through `replaceColumnVersion`, which copies the full active
+  `DucklakeColumnRecord` (defaults, dialect, parent, order, nullability) and applies only the one mutation. Also
+  closes W-N1's `renameColumn`-on-nested-id nit (parent_column now preserved). Test:
+  `TestJdbcDucklakeCatalogColumnDefaultsPreservedInterop` — DuckDB `ADD COLUMN c INTEGER DEFAULT 42`, library
+  rename + retype, DuckDB still reads 42 for pre-ADD rows and fills 42 on INSERT; pre-fix `initial_default` → NULL.
 - Library: `JdbcDucklakeCatalog.kt:3076-3086`, `:3125-3135`, `:3215-3226` — re-inserted row hard-codes
   `initial_default = NULL`, `default_value = 'NULL'`.
 - Upstream: `ducklake_transaction_state.cpp:1173-1177` carries `GetColumnInfo(field)` incl. defaults;
@@ -276,8 +280,8 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (`ducklake_table_entry.cpp:1447-1462`). Add a validator (reject unknown type names / casing) at the write boundary.
 
 ### W-N1 · NIT · Misc
-- [ ] `renameColumn` end-snapshot filters `PARENT_COLUMN IS NULL` (`:3070`) and re-inserts without `parent_column`;
-  passing a nested column id inserts a duplicate root row. Reject nested ids or handle them.
+- [x] `renameColumn` end-snapshot filters `PARENT_COLUMN IS NULL` (`:3070`) and re-inserts without `parent_column`;
+  passing a nested column id inserts a duplicate root row. — resolved by W-B6's `replaceColumnVersion`.
 - [ ] Name-map `column_id` numbering starts at 1 (`:3613`) vs upstream 0 (`_state.cpp:494`). Harmless; align.
 - [ ] `partition_id` / `partition_values` consistency not validated (upstream asserts `:3783-3785`).
 - [ ] `snapshot_changes` row skipped when no changes (`:2113`); upstream always writes one. Unreachable today.

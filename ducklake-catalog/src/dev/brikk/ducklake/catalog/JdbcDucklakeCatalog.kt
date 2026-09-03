@@ -3330,99 +3330,69 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun renameColumn(tableId: Long, columnId: Long, newName: String) {
-        val col = DUCKLAKE_COLUMN.`as`("col")
         executeWriteTransaction("rename column in table $tableId") { tx ->
-            val ctx = tx.dsl()
-
-            // Read the current column metadata
-            val existing: Record? = ctx.select(col.COLUMN_ORDER, col.COLUMN_TYPE, col.NULLS_ALLOWED)
-                .from(col)
-                .where(col.TABLE_ID.eq(tableId))
-                .and(col.COLUMN_ID.eq(columnId))
-                .and(activeAt(col, tx.getCurrentSnapshotId()))
-                .fetchOne()
-            if (existing == null) {
-                throw RuntimeException("Column not found: $columnId")
+            replaceColumnVersion(tx, tableId, columnId, topLevelOnly = false) { next ->
+                next.setColumnName(newName)
             }
-            val columnOrder = orZero(existing.get(col.COLUMN_ORDER))
-            val columnType = existing.get(col.COLUMN_TYPE)
-            val nullsAllowed = existing.get(col.NULLS_ALLOWED) == true
-
-            // End-snapshot the current version
-            ctx.update(col)
-                .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
-                .where(col.TABLE_ID.eq(tableId))
-                .and(col.COLUMN_ID.eq(columnId))
-                .and(col.END_SNAPSHOT.isNull)
-                .and(col.PARENT_COLUMN.isNull)
-                .execute()
-
-            // Insert new version with same column_id but new name. Default-value columns
-            // preserve the "no default" sentinel (`'NULL'` string literal) and leave
-            // `default_value_dialect` SQL NULL; same policy as insertColumnTree.
-            ctx.insertInto(col)
-                .set(col.COLUMN_ID, columnId)
-                .set(col.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
-                .set(col.TABLE_ID, tableId)
-                .set(col.COLUMN_ORDER, columnOrder)
-                .set(col.COLUMN_NAME, newName)
-                .set(col.COLUMN_TYPE, columnType)
-                .set(col.DEFAULT_VALUE, "NULL")
-                .set(col.NULLS_ALLOWED, nullsAllowed)
-                .set(col.DEFAULT_VALUE_TYPE, "literal")
-                .execute()
-
             tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
 
-    override fun setColumnType(tableId: Long, columnId: Long, newColumnType: String) {
+    /**
+     * Versioned-row replacement for one `ducklake_column` row: end-snapshots the row active at the
+     * transaction's base snapshot and inserts a copy that begins at the new snapshot with [mutate]
+     * applied. EVERY other column is carried over verbatim — in particular `initial_default`,
+     * `default_value`, `default_value_type`, `default_value_dialect` and `parent_column`. Upstream
+     * does the same (`DuckLakeTableEntry` alter paths re-emit the full column info); dropping the
+     * defaults would change what readers substitute for the column in files written before an
+     * `ADD COLUMN ... DEFAULT x` (`initial_default`) and what DuckDB fills on INSERT (`default_value`).
+     *
+     * @param topLevelOnly when true, only a root column (`parent_column IS NULL`) matches — nested
+     *   fields are addressed by path via [setFieldType] / [dropField].
+     */
+    private fun replaceColumnVersion(
+        tx: DucklakeWriteTransaction,
+        tableId: Long,
+        columnId: Long,
+        topLevelOnly: Boolean,
+        mutate: (DucklakeColumnRecord) -> Unit,
+    ): DucklakeColumnRecord {
         val col = DUCKLAKE_COLUMN.`as`("col")
+        val ctx = tx.dsl()
+        var query = ctx.selectFrom(col)
+            .where(col.TABLE_ID.eq(tableId))
+            .and(col.COLUMN_ID.eq(columnId))
+            .and(activeAt(col, tx.getCurrentSnapshotId()))
+        if (topLevelOnly) {
+            query = query.and(col.PARENT_COLUMN.isNull)
+        }
+        val existing: DucklakeColumnRecord = query.fetchOne() ?: throw RuntimeException("Column not found: $columnId")
+
+        ctx.update(col)
+            .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
+            .where(col.TABLE_ID.eq(tableId))
+            .and(col.COLUMN_ID.eq(columnId))
+            .and(col.END_SNAPSHOT.isNull)
+            .execute()
+
+        val next = DucklakeColumnRecord()
+        next.from(existing)
+        next.setBeginSnapshot(tx.getNewSnapshotId())
+        next.setEndSnapshot(null)
+        mutate(next)
+        ctx.insertInto(col).set(next).execute()
+        return existing
+    }
+
+    override fun setColumnType(tableId: Long, columnId: Long, newColumnType: String) {
         executeWriteTransaction("set column type in table $tableId") { tx ->
-            val ctx = tx.dsl()
-
-            // Read the current TOP-LEVEL column metadata (nested-field type changes unsupported).
-            val existing: Record? = ctx.select(col.COLUMN_ORDER, col.COLUMN_NAME, col.NULLS_ALLOWED, col.COLUMN_TYPE)
-                .from(col)
-                .where(col.TABLE_ID.eq(tableId))
-                .and(col.COLUMN_ID.eq(columnId))
-                .and(col.PARENT_COLUMN.isNull)
-                .and(activeAt(col, tx.getCurrentSnapshotId()))
-                .fetchOne()
-            if (existing == null) {
-                throw RuntimeException("Column not found: $columnId")
+            // TOP-LEVEL column only (nested fields go through setFieldType). Same column_id / name /
+            // order / nullability / defaults / parent, new type.
+            val previous = replaceColumnVersion(tx, tableId, columnId, topLevelOnly = true) { next ->
+                next.setColumnType(newColumnType)
             }
-            val columnOrder = orZero(existing.get(col.COLUMN_ORDER))
-            val columnName = existing.get(col.COLUMN_NAME)
-            val nullsAllowed = existing.get(col.NULLS_ALLOWED) == true
-            val oldColumnType = existing.get(col.COLUMN_TYPE)
-
-            // End-snapshot the current version.
-            ctx.update(col)
-                .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
-                .where(col.TABLE_ID.eq(tableId))
-                .and(col.COLUMN_ID.eq(columnId))
-                .and(col.END_SNAPSHOT.isNull)
-                .and(col.PARENT_COLUMN.isNull)
-                .execute()
-
-            // Insert the new version: same column_id / name / order / nullability, new type. Default
-            // preserved as the "no default" sentinel, same policy as renameColumn / insertColumnTree.
-            ctx.insertInto(col)
-                .set(col.COLUMN_ID, columnId)
-                .set(col.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
-                .set(col.TABLE_ID, tableId)
-                .set(col.COLUMN_ORDER, columnOrder)
-                .set(col.COLUMN_NAME, columnName)
-                .set(col.COLUMN_TYPE, newColumnType)
-                .set(col.DEFAULT_VALUE, "NULL")
-                .set(col.NULLS_ALLOWED, nullsAllowed)
-                .set(col.DEFAULT_VALUE_TYPE, "literal")
-                .execute()
-
-            invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, oldColumnType, newColumnType)
-
+            invalidateStatBoundsIfComparisonClassChanged(tx.dsl(), tableId, columnId, previous.columnType, newColumnType)
             tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
@@ -3476,44 +3446,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun setFieldType(tableId: Long, fieldPath: List<String>, newColumnType: String) {
-        val col = DUCKLAKE_COLUMN.`as`("col")
         executeWriteTransaction("set field type ${fieldPath.joinToString(".")} in table $tableId") { tx ->
             val ctx = tx.dsl()
             // Resolve the target CHILD column_id by walking parent_column down the path (same helper
-            // as dropField). The child row carries its own parent_column, which we must preserve.
+            // as dropField); the replacement keeps parent_column and defaults intact.
             val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())
             val columnId = resolveColumnIdByPath(columns, fieldPath)
-            val existing = columns.first { it.columnId == columnId }
-            val columnOrder = existing.columnOrder
-            val columnName = existing.columnName
-            val nullsAllowed = existing.nullsAllowed
-            val parentColumn = existing.parentColumn
-
-            // End-snapshot the current version.
-            ctx.update(col)
-                .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
-                .where(col.TABLE_ID.eq(tableId))
-                .and(col.COLUMN_ID.eq(columnId))
-                .and(col.END_SNAPSHOT.isNull)
-                .execute()
-
-            // Insert the new version: same column_id / name / order / parent_column / nullability,
-            // new type. Default preserved as the "no default" sentinel — same policy as setColumnType.
-            ctx.insertInto(col)
-                .set(col.COLUMN_ID, columnId)
-                .set(col.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
-                .set(col.TABLE_ID, tableId)
-                .set(col.COLUMN_ORDER, columnOrder)
-                .set(col.COLUMN_NAME, columnName)
-                .set(col.COLUMN_TYPE, newColumnType)
-                .set(col.DEFAULT_VALUE, "NULL")
-                .set(col.NULLS_ALLOWED, nullsAllowed)
-                .set(col.DEFAULT_VALUE_TYPE, "literal")
-                .set(col.PARENT_COLUMN, parentColumn)
-                .execute()
-
-            invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, existing.columnType, newColumnType)
-
+            val previous = replaceColumnVersion(tx, tableId, columnId, topLevelOnly = false) { next ->
+                next.setColumnType(newColumnType)
+            }
+            invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, previous.columnType, newColumnType)
             tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
