@@ -71,7 +71,7 @@ class TestConcurrentCreateTableInDroppedSchema {
     @Throws(Exception::class)
     fun createTableRacingDropSchemaConflicts() {
         val columns = listOf(
-            TableColumnSpec.leaf("id", "integer", false))
+            TableColumnSpec.leaf("id", "int32", false))
 
         // Winner drops the schema; loser tries to create a table inside it.
         // The lineage check fences the loser's first attempt; on retry, its

@@ -115,7 +115,7 @@ class TestJdbcDucklakeCatalogOnLocalDuckDbSmoke {
         // Mix of types — exercise integer + varchar + boolean + date paths through
         // the column-spec → ducklake_column insert codepath.
         val cols = listOf(
-            TableColumnSpec.leaf("id", "INTEGER", false),
+            TableColumnSpec.leaf("id", "int32", false),
             TableColumnSpec.leaf("name", "VARCHAR", true),
             TableColumnSpec.leaf("active", "BOOLEAN", true),
             TableColumnSpec.leaf("event_date", "DATE", true),

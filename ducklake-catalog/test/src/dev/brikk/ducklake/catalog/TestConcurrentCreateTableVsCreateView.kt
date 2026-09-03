@@ -70,7 +70,7 @@ class TestConcurrentCreateTableVsCreateView {
             catalog,
             Runnable {
                 catalog.createTable("test_schema", "shared_name",
-                    listOf(TableColumnSpec.leaf("id", "integer", false)),
+                    listOf(TableColumnSpec.leaf("id", "int32", false)),
                     null,
                     null)
             },

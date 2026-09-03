@@ -80,7 +80,7 @@ class TestConcurrentDropDueling {
     fun duelingDropTableLoserFails() {
         catalog.createTable(
             "test_schema", "drop_dueling_table",
-            listOf(TableColumnSpec.leaf("id", "integer", false)),
+            listOf(TableColumnSpec.leaf("id", "int32", false)),
             null,
             null,
         )

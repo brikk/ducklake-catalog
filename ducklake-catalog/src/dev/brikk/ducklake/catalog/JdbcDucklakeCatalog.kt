@@ -2846,6 +2846,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         columnOrder: Long,
         parentColumnId: OptionalLong,
     ): Long {
+        if (!parentColumnId.isPresent) {
+            // Validate the whole subtree once at the root: a type DuckDB cannot parse makes the
+            // catalog unloadable for every DuckDB reader (DucklakeTypeNames).
+            DucklakeTypeNames.validate(column)
+        }
         val columnId = tx.allocateCatalogId()
 
         // `default_value = 'NULL'` (the four-char string, not SQL NULL) is upstream's "no
@@ -2862,7 +2867,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .set(col.TABLE_ID, tableId)
             .set(col.COLUMN_ORDER, columnOrder)
             .set(col.COLUMN_NAME, column.name)
-            .set(col.COLUMN_TYPE, column.ducklakeType)
+            .set(col.COLUMN_TYPE, DucklakeTypeNames.canonical(column.ducklakeType))
             .set(col.DEFAULT_VALUE, "NULL")
             .set(col.NULLS_ALLOWED, column.nullable)
             .set(col.PARENT_COLUMN, if (parentColumnId.isPresent) parentColumnId.asLong else null)
@@ -3474,10 +3479,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         executeWriteTransaction("set column type in table $tableId") { tx ->
             // TOP-LEVEL column only (nested fields go through setFieldType). Same column_id / name /
             // order / nullability / defaults / parent, new type.
+            val canonicalType = DucklakeTypeNames.canonical(newColumnType)
             val previous = replaceColumnVersion(tx, tableId, columnId, topLevelOnly = true) { next ->
-                next.setColumnType(newColumnType)
+                next.setColumnType(canonicalType)
             }
-            invalidateStatBoundsIfComparisonClassChanged(tx.dsl(), tableId, columnId, previous.columnType, newColumnType)
+            invalidateStatBoundsIfComparisonClassChanged(tx.dsl(), tableId, columnId, previous.columnType, canonicalType)
             tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
@@ -3538,10 +3544,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // as dropField); the replacement keeps parent_column and defaults intact.
             val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())
             val columnId = resolveColumnIdByPath(columns, fieldPath)
+            val canonicalType = DucklakeTypeNames.canonical(newColumnType)
             val previous = replaceColumnVersion(tx, tableId, columnId, topLevelOnly = false) { next ->
-                next.setColumnType(newColumnType)
+                next.setColumnType(canonicalType)
             }
-            invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, previous.columnType, newColumnType)
+            invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, previous.columnType, canonicalType)
             tx.incrementSchemaVersion(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
@@ -3569,6 +3576,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (columns.any { it.parentColumn == parentId && it.columnName == field.name }) {
                 throw DucklakeEntityAlreadyExistsException("field", (parentPath + field.name).joinToString("."))
             }
+            DucklakeTypeNames.validate(field, (parentPath + field.name).joinToString("."))
             // Children carry their own column_order within the parent; append at max+1 (0 if first).
             val maxChildOrder: Long? = tx.dsl().select(DSL.max(col.COLUMN_ORDER))
                 .from(col)

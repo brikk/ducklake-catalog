@@ -68,7 +68,7 @@ class TestConcurrentCreateTableSameName {
     @Throws(Exception::class)
     fun duelingCreateTableConflicts() {
         val columns = listOf(
-            TableColumnSpec.leaf("id", "integer", false))
+            TableColumnSpec.leaf("id", "int32", false))
 
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(
             catalog,

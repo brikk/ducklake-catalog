@@ -37,7 +37,7 @@ class TestConcurrentAlteredTableVsAlteredTable {
     @Throws(Exception::class)
     fun concurrentAddColumnsConflict() {
         val winnerColumn = TableColumnSpec.leaf("winner_col", "varchar", true)
-        val loserColumn = TableColumnSpec.leaf("loser_col", "integer", true)
+        val loserColumn = TableColumnSpec.leaf("loser_col", "int32", true)
 
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(
                 catalog,

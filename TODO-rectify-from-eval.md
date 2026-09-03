@@ -304,7 +304,7 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   `getSpecVersion()`.
 
 ### W-D9 · DRIFT · Type strings not validated on DDL
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `DucklakeTypeNames.canonical/validate` at every column-writing boundary (createTable, addColumn, addField, setColumnType, setFieldType): upstream's base-name list (CI-matched, stored lowercase), lowercase `decimal(w,s)` with bounds, list/map/struct child-count shape. A DuckDB-dialect name like `integer` is rejected with a hint — such a row makes the catalog unloadable for DuckDB. `TestDucklakeTypeNames`.
 - `TableColumnSpec.ducklakeType` is passed through verbatim (`:2534`); only `struct/list/map` recognised
   (`:3249`, `:3994-4016`). Upstream vocabulary (`common/ducklake_types.cpp:17-48, 98-147`): lowercase names,
   `decimal(w,s)` case-sensitive prefix, list child named `element`, map children `key`/`value` in order

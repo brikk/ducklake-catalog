@@ -451,6 +451,11 @@ interface DucklakeCatalog : AutoCloseable {
      * Create a new empty table with columns and optional partition spec.
      * Creates a new snapshot atomically.
      *
+     * Column types must use the DuckLake vocabulary ([DucklakeTypeNames]: `int32`, `varchar`,
+     * `decimal(w,s)`, `struct`/`list`/`map` with children, ...). They are validated and stored in
+     * canonical lowercase form; a name DuckDB cannot parse is rejected with
+     * [DucklakeInvalidOperationException] because it would make the catalog unloadable for DuckDB.
+     *
      * `location`, when present, lands in `ducklake_table.path`
      * (and `path_is_relative`) instead of the default
      * `<tableName>/` relative path. The catalog stores it verbatim;
