@@ -441,7 +441,7 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `partial_max`, DELETE + schedule the superseded row). Pairs with W-D6.
 
 ### R-D3 · DRIFT · `getSnapshotAtOrBefore` orders by `snapshot_id DESC`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — `ORDER BY snapshot_time DESC, snapshot_id DESC` (upstream `AT (TIMESTAMP => …)`).
 - `:241-245`; upstream orders by `snapshot_time DESC` (mm.cpp:4116-4126) — differs under non-monotonic clocks.
   No `>=`/ASC lower-bound variant (upstream `SnapshotBound::LOWER_BOUND`).
 
@@ -577,7 +577,12 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
 - Fix direction: collect the drops and run them after `conn.commit()` (all backends, for uniformity).
 
 ### C-D1 · DRIFT · Isolation level never set; `analyzeTable` is a lost-update race
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (as far as intended). `applyInsertFragments` updates `record_count` / `file_size_bytes`
+  relatively (`col = col + n`); `next_row_id` stays read-modify-write by design (the allocated `row_id_start`s derive
+  from the read value and the snapshot PK retry re-reads). `analyzeTable` is advisory and now recomputes from the
+  catalog itself, so a concurrent insert can at worst leave gross `record_count` one commit stale until the next
+  insert/analyze — never below live. Isolation level is left at the backend default (documented on
+  `DucklakeCatalogConfig`).
 - `:2033` only sets `autoCommit=false`. PG READ COMMITTED fine. MySQL REPEATABLE READ: `ensureSnapshotLineageUnchanged
   :2140` and `LogicalConflictCheck` read the tx's consistent snapshot and can never observe an intervening commit;
   retry is triggered only by the snapshot PK collision (works, wastes an attempt).
@@ -606,7 +611,7 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   error. Consider: unknown kind → conservative "conflicts with everything on that table / all tables" instead of throw.
 
 ### C-D3 · DRIFT · `schema_version` / `ducklake_schema_versions` bookkeeping — beyond W-D1
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED with W-D1 (per-table set; renameSchema records every re-pointed table).
 - `DucklakeWriteTransaction.kt:148-151` keeps a single `schemaVersionTableId` (last writer wins); `:2101-2110` writes
   one row. Upstream `InsertNewSchema` (mm.cpp:5127-5137) writes one row per *altered existing* table and none for
   brand-new tables. `renameSchema :2795-2930` alters N tables but records `table_id=NULL`; `createTable :2491` records
@@ -645,7 +650,9 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   Quack write-path test (insert + delete + drop). If no: document read-only and make writes throw a clear error.
 
 ### C-D6 · DRIFT · Backend assumptions to document
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — `DucklakeCatalogConfig` KDoc documents the PostgreSQL / MySQL / DuckDB-file / Quack
+  assumptions (search_path, REPEATABLE READ, single-writer-process, unverified Quack writes, no bootstrap); the
+  misleading "DEFAULT dialect" comment is fixed. MySQL smoke coverage was extended by C-B2's concurrency tests.
 - Local-file DuckDB catalog: one process holds the file lock; effectively single-writer-process (no concurrent DuckDB
   CLI / second cluster). Document in `DucklakeCatalogConfig` KDoc.
 - `{METADATA_CATALOG}` prefixing replaced by `withRenderSchema(false)` + `USE <catalog>.main` (`:161-167`); relies on
@@ -698,7 +705,7 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   only); `:105-106` `@Suppress("SENSELESS_COMPARISON") if (config == null)` unreachable.
 
 ### Q-3 · NIT · `_idioms/kit-notes.json` under `src/`
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — moved to `dev-docs/agent-kit/`.
 - 7.4 KB agent-tooling changelog at `ducklake-catalog/src/dev/brikk/ducklake/catalog/_idioms/kit-notes.json` (+ twin
   under `test/src/…/_idioms/`). Not in the current jar (build-logic sets resources to `resources/`), but stale
   `build/libs/ducklake-catalog-0.0.1*.jar` do contain it. Move out of `src/` or delete.
@@ -735,7 +742,8 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `information_schema` / `ducklake_table_info`. Would have caught W-B1, W-B3, W-B4, W-B5, W-D5 outright.
 
 ### Q-6 · NIT · HikariCP / resources
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — pool named `ducklake-catalog-<urlhash>`, `leakDetectionThreshold` 2 min; the
+  rollback-masking half was fixed in C-B1.
 - `:146-150`: no `poolName` (multiple catalogs → `HikariPool-1/2…`), no `leakDetectionThreshold`, no
   `maxLifetime`/`keepaliveTime`; `autoCommit` left at default `true` for the shared `dsl`. `catch → rollback → throw`
   at `:2122-2131`, `:1194-1197`, `:722-725` lets a failing `rollback()` replace the original exception (C-B1).

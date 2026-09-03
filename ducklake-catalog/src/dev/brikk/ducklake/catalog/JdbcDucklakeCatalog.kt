@@ -147,12 +147,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         hikariConfig.maximumPoolSize = config.maxCatalogConnections
         hikariConfig.minimumIdle = 1
         hikariConfig.connectionTimeout = 30000
+        // Name the pool after the catalog so several catalogs in one JVM are distinguishable in
+        // logs/metrics (default would be HikariPool-1, -2, ...). Leak detection at 2 minutes: every
+        // catalog operation holds a connection for milliseconds to seconds; anything longer is a bug.
+        hikariConfig.poolName = "ducklake-catalog-" + Integer.toHexString(catalogDatabaseUrl.hashCode())
+        hikariConfig.leakDetectionThreshold = LEAK_DETECTION_THRESHOLD_MS
 
         this.hikariDataSource = HikariDataSource(hikariConfig)
         this.dataSource = hikariDataSource
 
-        // Infer dialect from the JDBC URL. JDBCUtils.dialect() returns SQLDialect.DEFAULT for
-        // backends jOOQ OSS doesn't recognize, which keeps query rendering portable.
+        // Infer the jOOQ dialect from the JDBC URL: POSTGRES, MYSQL and DUCKDB are all first-class
+        // in jOOQ OSS (3.19+), so rendering is dialect-correct on every supported backend; an
+        // unrecognised URL falls back to SQLDialect.DEFAULT (portable SQL).
         this.dialect = JDBCUtils.dialect(dialectInferenceUrl)
         this.jooqSettings = Settings()
             // The generated DuckLake tables use lowercase unquoted identifiers. Quoting is
@@ -253,15 +259,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun getSnapshotAtOrBefore(timestamp: Instant): DucklakeSnapshot? = guardInitialized {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
-        // Push the predicate + ordering + limit into SQL so the database returns the single
-        // matching row instead of materializing the whole snapshot table and filtering in Java.
-        // !snapshotTime.isAfter(timestamp) is exactly snapshot_time <= timestamp; ordering stays
-        // by snapshot_id DESC (independent of snapshot_time monotonicity), so this is identical
-        // to the prior scan-and-findFirst. SNAPSHOT_TIME is an OffsetDateTime column; compare at
-        // UTC, which preserves the instant the Java filter used (snapshotTime() == toInstant()).
+        // Upstream (`AT (TIMESTAMP => ...)`): `WHERE snapshot_time <= ts ORDER BY snapshot_time DESC
+        // LIMIT 1` — the LATEST-TIMED snapshot at or before the instant, which differs from the
+        // highest-id one only when writers' clocks were not monotonic. snapshot_id DESC breaks ties
+        // deterministically. SNAPSHOT_TIME is an OffsetDateTime column; compare at UTC.
         dsl.selectFrom(snap)
             .where(snap.SNAPSHOT_TIME.le(timestamp.atOffset(ZoneOffset.UTC)))
-            .orderBy(snap.SNAPSHOT_ID.desc())
+            .orderBy(snap.SNAPSHOT_TIME.desc(), snap.SNAPSHOT_ID.desc())
             .limit(1)
             .fetchOne()
             ?.let { toDucklakeSnapshot(it) }
@@ -3841,11 +3845,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // already allocated when the data was inlined.
         val isFlush = flushRowIdStart != null
         if (existingStats != null) {
+            // Relative (`col = col + n`) rather than read-modify-write with the values loaded above:
+            // the snapshot PK forces a retry on a concurrent commit anyway, but relative updates
+            // also make the row correct under REPEATABLE READ (MySQL) and against an analyzeTable
+            // running in parallel. next_row_id is the exception — the allocated row_id_start values
+            // above were derived from the read value, so it MUST stay consistent with them.
             var upd = ctx.update(tabstats)
-                .set(tabstats.FILE_SIZE_BYTES, orZero(existingStats.fileSizeBytes) + totalFileSize)
+                .set(tabstats.FILE_SIZE_BYTES, DSL.coalesce(tabstats.FILE_SIZE_BYTES, DSL.inline(0L)).plus(totalFileSize))
             if (!isFlush) {
                 upd = upd
-                    .set(tabstats.RECORD_COUNT, orZero(existingStats.recordCount) + totalRecords)
+                    .set(tabstats.RECORD_COUNT, DSL.coalesce(tabstats.RECORD_COUNT, DSL.inline(0L)).plus(totalRecords))
                     .set(tabstats.NEXT_ROW_ID, orZero(existingStats.nextRowId) + totalRecords)
             }
             upd.where(tabstats.TABLE_ID.eq(tableId)).execute()
@@ -4475,6 +4484,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // (`ducklake_max_retry_count` / `retry_wait_ms` / `retry_backoff` in
         // src/storage/ducklake_transaction.cpp), so behavior under contention matches
         // what callers familiar with upstream expect.
+        private const val LEAK_DETECTION_THRESHOLD_MS: Long = 120_000
         private const val MAX_RETRY_COUNT = 10
         private const val INITIAL_RETRY_WAIT_MS: Long = 100
         private const val RETRY_BACKOFF_MULTIPLIER: Double = 1.5
