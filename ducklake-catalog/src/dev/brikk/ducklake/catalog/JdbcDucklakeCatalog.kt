@@ -214,6 +214,23 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
+    /**
+     * Rethrows [e] unless it is the backend's "table does not exist" error. The per-table inlined
+     * data / inlined delete tables (`ducklake_inlined_data_<t>_<sv>`, `ducklake_inlined_delete_<t>`)
+     * are created lazily by DuckDB and dropped on flush / expire, so their absence is the common
+     * case and callers treat it as "no rows". ANY OTHER failure — connection loss, timeout,
+     * permission, a mis-rendered identifier — must propagate: swallowing it would silently drop rows
+     * from query results (upstream throws for inlined-data query errors,
+     * `ducklake_metadata_manager.cpp` ReadInlinedData).
+     */
+    private fun rethrowUnlessMissingTable(e: DataAccessException, tableName: String, what: String) {
+        val sqlException = findSqlException(e)
+        if (sqlException == null || !isMissingCatalogSchema(sqlException)) {
+            throw e
+        }
+        log.log(System.Logger.Level.DEBUG, "{0}: {1} does not exist ({2})", what, tableName, sqlException.message)
+    }
+
     override val currentSnapshotId: Long
         get() = guardInitialized {
             val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
@@ -785,7 +802,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 ctx.dropTableIfExists(InlinedDataTable.of(tid, sv).table).execute()
             }
             catch (e: DataAccessException) {
-                log.log(System.Logger.Level.DEBUG, "Skipping drop of dead inlined-data table for $tid/$sv", e)
+                rethrowUnlessMissingTable(e, InlinedDataTable.of(tid, sv).name, "drop of dead inlined-data table")
             }
         }
     }
@@ -1291,11 +1308,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 dsl.fetchCount(DSL.selectOne().from(inlined.table).where(inlined.beginSnapshot.le(snapshotId))).toLong()
             }
             catch (e: DataAccessException) {
-                log.log(
-                    System.Logger.Level.DEBUG,
-                    "Could not count inlined data rows from {0} (table may not exist): {1}",
-                    inlined.name, e.message,
-                )
+                rethrowUnlessMissingTable(e, inlined.name, "count gross inlined rows")
                 0L
             }
         }
@@ -1625,11 +1638,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                         )
                     }
                     catch (e: DataAccessException) {
-                        log.log(
-                            System.Logger.Level.DEBUG,
-                            "Inlined data table {0} not available for table {1}: {2}",
-                            inlinedTable.name, tableId, e.message,
-                        )
+                        rethrowUnlessMissingTable(e, inlinedTable.name, "probe inlined data table")
                         return@mapNotNull null
                     }
                     DucklakeInlinedDataInfo(
@@ -1642,12 +1651,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .toList()
         }
         catch (e: DataAccessException) {
-            // ducklake_inlined_data_tables may not exist in catalogs that never used inlining
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not query inlined data tables (table may not exist): {0}",
-                e.message,
-            )
+            // ducklake_inlined_data_tables may not exist in pre-0.3 catalogs that never used inlining
+            rethrowUnlessMissingTable(e, "ducklake_inlined_data_tables", "list inlined data tables")
             return emptyList()
         }
     }
@@ -1662,11 +1667,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             )
         }
         catch (e: DataAccessException) {
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not probe inlined data rows from {0} (table may not exist): {1}",
-                inlined.name, e.message,
-            )
+            rethrowUnlessMissingTable(e, inlined.name, "probe inlined rows")
             false
         }
     }
@@ -1681,11 +1682,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             ).toLong()
         }
         catch (e: DataAccessException) {
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not count inlined data rows from {0} (table may not exist): {1}",
-                inlined.name, e.message,
-            )
+            rethrowUnlessMissingTable(e, inlined.name, "count inlined rows")
             0L
         }
     }
@@ -1709,11 +1706,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             )
         }
         catch (e: DataAccessException) {
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not probe inlined deletions from {0} (table may not exist): {1}",
-                inlinedDeleteName, e.message,
-            )
+            rethrowUnlessMissingTable(e, inlinedDeleteName, "probe inlined deletions")
             false
         }
     }
@@ -1748,11 +1741,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             grouped
         }
         catch (e: DataAccessException) {
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not read inlined deletions from {0} (table may not exist): {1}",
-                inlinedDeleteName, e.message,
-            )
+            rethrowUnlessMissingTable(e, inlinedDeleteName, "read inlined deletions")
             emptyMap()
         }
     }
@@ -1782,7 +1771,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     DSL.inline(null as Any?).`as`("c$index")
                 }
                 else {
-                    DSL.field(DSL.name(sourceColumn.columnName)).`as`("c$index")
+                    DSL.field(DSL.quotedName(sourceColumn.columnName)).`as`("c$index")
                 },
             )
         }
@@ -1807,8 +1796,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 }
         }
         catch (e: DataAccessException) {
-            log.log(System.Logger.Level.DEBUG,
-                "Could not read inlined changes from {0} (table may not exist): {1}", inlined.name, e.message)
+            rethrowUnlessMissingTable(e, inlined.name, "read inlined changes")
             emptyList()
         }
     }
@@ -1832,8 +1820,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 }
         }
         catch (e: DataAccessException) {
-            log.log(System.Logger.Level.DEBUG,
-                "Could not read inlined file-deletes from {0} (table may not exist): {1}", inlinedDeleteName, e.message)
+            rethrowUnlessMissingTable(e, inlinedDeleteName, "read inlined file-deletes")
             emptyList()
         }
     }
@@ -1876,7 +1863,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     DSL.inline(null as Any?).`as`(alias)
                 }
                 else {
-                    DSL.field(DSL.name(sourceColumn.columnName)).`as`(alias)
+                    DSL.field(DSL.quotedName(sourceColumn.columnName)).`as`(alias)
                 },
             )
         }
@@ -1901,12 +1888,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         catch (e: DataAccessException) {
             // The inlined data table may not exist if the table was created but never had data inserted,
-            // or if the inlined data was flushed to Parquet files. Return empty in these cases.
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not read inlined data from {0} (table may not exist): {1}",
-                inlined.name, e.message,
-            )
+            // or if the inlined data was flushed to Parquet files. Only THAT case is "no rows".
+            rethrowUnlessMissingTable(e, inlined.name, "read inlined data")
             emptyList()
         }
     }
@@ -1928,11 +1911,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .map { it.get(inlined.beginSnapshot) }
         }
         catch (e: DataAccessException) {
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not read inlined begin_snapshots from {0} (table may not exist): {1}",
-                inlined.name, e.message,
-            )
+            rethrowUnlessMissingTable(e, inlined.name, "read inlined begin_snapshots")
             emptyList()
         }
     }
@@ -1955,11 +1934,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .map { it.get(rowId) }
         }
         catch (e: DataAccessException) {
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not read inlined row_ids from {0} (table may not exist): {1}",
-                inlined.name, e.message,
-            )
+            rethrowUnlessMissingTable(e, inlined.name, "read inlined row_ids")
             emptyList()
         }
     }
@@ -2981,8 +2956,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 )
             }
             catch (e: DataAccessException) {
-                log.log(System.Logger.Level.DEBUG,
-                    "Skipping inlined-data table for table $tableId schema version $schemaVersion during $operation", e)
+                rethrowUnlessMissingTable(e, inlined.name, "end-snapshot inlined rows during $operation")
             }
         }
     }
@@ -4586,16 +4560,23 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val undefinedTableState = sqlState == "42P01" || // PostgreSQL undefined_table
                 sqlState == "42S02"                          // MySQL / SQL-standard base table not found
             val undefinedTableCode = exception.errorCode == 1146 // MySQL ER_NO_SUCH_TABLE
-            val message = exception.message?.lowercase(Locale.ROOT)
-            val messageSaysMissing = message != null &&
-                message.contains("ducklake_") &&
+            if (undefinedTableState || undefinedTableCode) {
+                return true
+            }
+            if (!sqlState.isNullOrEmpty() && sqlState != "HY000") {
+                // The driver classified the error and it is NOT "undefined table" (e.g. PostgreSQL
+                // 42703 undefined_column, whose HINT can mention a ducklake_* table). Trust it.
+                return false
+            }
+            // DuckDB JDBC reports no SQLState; only the message identifies the error.
+            val message = exception.message?.lowercase(Locale.ROOT) ?: return false
+            return message.contains("ducklake_") &&
                 (
-                    message.contains("does not exist") ||       // PostgreSQL / DuckDB
-                        message.contains("doesn't exist") ||    // MySQL
+                    message.contains("does not exist") ||       // DuckDB / PostgreSQL wording
+                        message.contains("doesn't exist") ||    // MySQL wording
                         message.contains("no such table") ||    // SQLite
                         message.contains("not found")           // DuckDB Catalog Error variants
                     )
-            return undefinedTableState || undefinedTableCode || messageSaysMissing
         }
 
         private fun isDuplicateKeyViolation(exception: SQLException): Boolean {

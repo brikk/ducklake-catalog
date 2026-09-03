@@ -365,7 +365,11 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   (`ducklake_transaction_state.cpp:263-266`). See also C-B3.
 
 ### R-B5 · BUG · Inlined reads swallow every `DataAccessException` as "table absent"
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. All 14 inlined-table catch sites go through `rethrowUnlessMissingTable`, which rethrows
+  anything that is not the backend's undefined-table error (PG `42P01`, MySQL `42S02`/`1146`, DuckDB message);
+  `isMissingCatalogSchema` now trusts a non-null SQLState (so PG `42703 undefined_column` can no longer be
+  mistaken for a missing table via its HINT text). Test: `TestJdbcDucklakeCatalogInlinedReadsInterop` — a physical
+  column renamed under the reader now throws instead of returning an empty result.
 - Library: `getInlinedDataInfos` (`:1523-1537`), `readInlinedData` (`:1805-1814`), `readInlinedBeginSnapshots` /
   `readInlinedRowIds` (`:1833-1840`, `:1860-1867`), `getInlinedDeletes` (`:1653-1660`), `getInlinedChangesBetween`
   (`:1712-1716`), `hasInlinedRows`/`countInlinedRows`/`hasInlinedDeletes` (`:1567-1574`, `:1586-1593`,
@@ -513,7 +517,10 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   API change with trino-ducklake / doris-ducklake.
 
 ### C-B4 · BUG (silent data loss on read) · User column names rendered unquoted in dynamic inlined-data SELECTs
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `readInlinedData` / `getInlinedChangesBetween` project user columns via
+  `DSL.quotedName(...)` (all other `DSL.name` uses are fixed lowercase identifiers). Test: DuckDB-inlined table with
+  columns `"My Col"`, `"select"`, `"Order"` — pre-fix the library returned 0 rows (swallowed 42703), post-fix 2/3
+  rows with correct time travel and change feed.
 - `Settings.withRenderQuotedNames(EXPLICIT_DEFAULT_UNQUOTED)` (`:160`) + `DSL.name(sourceColumn.columnName)` at
   `:1688` and `:1782`. Verified render: `select My Col, select, begin_snapshot from ducklake_inlined_data_1_2 …`.
   DuckDB creates the inlined table with quoted identifiers, so mixed-case (PG folds → column not found), spaces, or
