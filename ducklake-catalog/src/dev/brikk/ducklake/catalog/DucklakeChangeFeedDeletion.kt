@@ -27,14 +27,31 @@ package dev.brikk.ducklake.catalog
  * ```
  *
  * Two shapes:
- *  - **incremental** ([fullFileDelete] = false): a new delete file with `begin_snapshot =
- *    snapshotId` was written. [currentDelete*] point at it; [previousDelete*] point at the
- *    delete file that was active just before (null when this is the file's first deletion).
+ *  - **incremental** ([fullFileDelete] = false): a delete file with `begin_snapshot = snapshotId`
+ *    exists. [currentDelete*] point at it; [previousDelete*] point at the delete file that was
+ *    active just before (null when this is the file's first deletion).
  *  - **full-file** ([fullFileDelete] = true): the whole data file was retired at [snapshotId]
  *    (`end_snapshot = snapshotId` — a TRUNCATE/DROP, a DELETE that removed the last live rows, or
  *    compaction). Every position NOT already in [previousDelete*] is deleted; [currentDelete*] are
  *    null. (Compaction moves rows rather than deleting them; per the DuckLake spec, compaction can
  *    therefore limit what the change feed reports — such files still surface here as deletions.)
+ *
+ * **Multi-snapshot delete files.** `begin_snapshot` is only a LOWER bound on the deletion snapshots
+ * a delete file holds. Upstream writes 3-column files `(file_path, pos,
+ * _ducklake_internal_snapshot_id)` — from delete consolidation and from `flush_inlined_data`, the
+ * latter with `partial_max` left NULL — whose rows span several snapshots. Consumers MUST therefore
+ * inspect the current delete file's schema, not [currentDeletePartialMax] (advisory only; see
+ * [DucklakeDataFile.deleteFilePartialMax]):
+ *  - column present → group positions by their embedded snapshot id, keep the groups inside the
+ *    feed window `[start, end]`, and ignore [previousDelete*] (the embedded ids already window the
+ *    folded-in earlier deletions);
+ *  - column absent (2-column file) → every position was recorded at [snapshotId]; report
+ *    `current − previous` at [snapshotId].
+ * Because a multi-snapshot file can begin BEFORE the feed window yet hold in-window deletions,
+ * [DucklakeCatalog.getDeletionsBetween] also emits incremental events with `snapshotId < start`
+ * for every delete file with `begin_snapshot <= end` that was not retired before the window. For
+ * those, [previousDelete*] is the current file itself, so a 2-column file yields `current − previous
+ * = ∅` (nothing in-window) without any special-casing, while a 3-column file is windowed per row.
  *
  * The row identifier of a deleted position `pos` is `rowIdStart + pos` — the same DuckLake `rowid`
  * vocabulary the connector's `$row_id` virtual column uses.

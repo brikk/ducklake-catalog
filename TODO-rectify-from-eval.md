@@ -299,7 +299,16 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   connectors must always apply `_ducklake_internal_snapshot_id <= S` when the column is present. Update KDoc.
 
 ### R-B2 · BUG · Change feed misses deletions in flush-written / consolidated delete files
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED (catalog side). `incrementalDeletions` now offers every delete file with
+  `begin_snapshot <= end` that the catalog cannot prove irrelevant (`end_snapshot <= start` or recorded
+  `partial_max < start`), mirroring upstream `GetTableDeletions`. Files that began before the window get
+  `previous == current` so a 2-column file self-cancels to ∅ while a 3-column file is windowed per row. Contract
+  spelled out on `DucklakeChangeFeedDeletion` / `getDeletionsBetween`. Tests in
+  `TestJdbcDucklakeCatalogDeleteFileSnapshotFilterContract` (`changeFeedOffers…`, `changeFeedPrunes…`).
+  **trino-ducklake follow-up:** `DucklakePageSourceProvider.isConsolidatedDelete` must detect the 3-column file by
+  reading its schema (or always try `readPositionsWithSnapshots` and fall back), not by `currentDeletePartialMax`;
+  otherwise flush-written files (partial_max NULL) are still diffed as 2-column and their later-snapshot
+  deletions mis-attributed to `begin_snapshot`.
 - Library: `deleteFileOverlapsWindow` (`JdbcDucklakeCatalog.kt:516-523`) uses `[begin, partial_max]` only when
   `partialMax != null && > begin`, else `begin in window`. A flush-written file with begin=s2, embedded {s2,s4},
   `partial_max NULL` is dropped for window [s4,s4].

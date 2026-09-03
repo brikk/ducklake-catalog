@@ -489,38 +489,56 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ): DucklakeDeleteFileRecord? =
         deletesByDataFileId[dataFileId]?.lastOrNull { orZero(it.beginSnapshot) < before }
 
-    /** Incremental arm: delete files newly written within [window] (new deletions = current minus
-     * the predecessor delete file).
+    /** Incremental arm: delete files that may hold deletions recorded within [window].
      *
-     * A delete file is in-window if `begin_snapshot in window` (ordinary case: begin == the deletion
-     * snapshot) OR it is a CONSOLIDATED partial file whose `[begin_snapshot, partial_max]` range
-     * overlaps the window (`begin_snapshot <= end AND partial_max >= start`). A consolidated file can
-     * begin BEFORE the window yet fold in-window deletions (each row carries its own deletion
-     * snapshot); the change-feed page source then windows those per row. Mirrors the insert-side
-     * `partial_max` widening in [getDataFilesAddedBetween]. */
+     * A delete file's `begin_snapshot` is only a LOWER bound on the deletion snapshots it holds:
+     * upstream writes 3-column files `(file_path, pos, _ducklake_internal_snapshot_id)` whose rows
+     * span several snapshots — delete consolidation AND `flush_inlined_data`, the latter leaving
+     * `partial_max` NULL — so neither `begin_snapshot in window` nor a `partial_max` gate is a safe
+     * filter (see [DucklakeDataFile.deleteFilePartialMax]). Like upstream `GetTableDeletions`
+     * (`begin_snapshot <= end`), every file that began at or before the window end is a candidate;
+     * the caller then attributes each position to its true deletion snapshot from the embedded
+     * column, or — for a 2-column file — takes `current − previous`. Two prunings ARE sound at the
+     * catalog level: a file retired before the window (`end_snapshot <= start`; all its deletions
+     * predate its retirement) and a recorded `partial_max < start` (upstream's MAX embedded id).
+     *
+     * For a file that began BEFORE the window, [DucklakeChangeFeedDeletion.previousDelete*] is the
+     * file ITSELF: a 2-column file then contributes `current − previous = ∅` (all of its deletions
+     * predate the window — the same self-cancellation upstream's `previous_delete` lateral yields),
+     * while a 3-column file is windowed per row regardless of `previous`. Files that begin inside
+     * the window keep the per-file predecessor (largest `begin < begin_snapshot`). */
     private fun incrementalDeletions(
         window: LongRange,
         deletesByDataFileId: Map<Long, List<DucklakeDeleteFileRecord>>,
         dataFilesById: Map<Long, DucklakeDataFileRecord>,
     ): List<DucklakeChangeFeedDeletion> =
         deletesByDataFileId.values.flatten()
-            .filter { deleteFileOverlapsWindow(it, window) }
+            .filter { deleteFileMayHoldDeletionsInWindow(it, window) }
             .mapNotNull { current ->
                 val dataFile = dataFilesById[orZero(current.dataFileId)] ?: return@mapNotNull null
                 val begin = orZero(current.beginSnapshot)
-                buildDeletion(begin, dataFile, fullFileDelete = false, current = current,
-                    previous = previousDelete(deletesByDataFileId, orZero(current.dataFileId), begin))
+                val previous =
+                    if (begin < window.first) current
+                    else previousDelete(deletesByDataFileId, orZero(current.dataFileId), begin)
+                buildDeletion(begin, dataFile, fullFileDelete = false, current = current, previous = previous)
             }
 
-    /** Window overlap for a delete file: ordinary files by `begin_snapshot`; consolidated ("partial")
-     * files by their `[begin_snapshot, partial_max]` deletion-snapshot span. */
-    private fun deleteFileOverlapsWindow(delete: DucklakeDeleteFileRecord, window: LongRange): Boolean {
+    /** Whether a delete file can hold a deletion whose snapshot falls in [window] — see
+     * [incrementalDeletions] for why `begin_snapshot` alone cannot decide this. */
+    private fun deleteFileMayHoldDeletionsInWindow(delete: DucklakeDeleteFileRecord, window: LongRange): Boolean {
         val begin = orZero(delete.beginSnapshot)
-        val partialMax = delete.partialMax
-        if (partialMax != null && partialMax > begin) {
-            return begin <= window.last && partialMax >= window.first
+        if (begin > window.last) {
+            return false
         }
-        return begin in window
+        val end = delete.endSnapshot
+        if (end != null && end <= window.first) {
+            return false // retired before the window: every embedded deletion snapshot < end <= start
+        }
+        val partialMax = delete.partialMax
+        if (partialMax != null && partialMax < window.first) {
+            return false // upstream-recorded MAX embedded snapshot predates the window
+        }
+        return true
     }
 
     /** Full-file arm: data files retired within [window] (TRUNCATE / DROP / a DELETE that removed

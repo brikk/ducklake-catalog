@@ -112,6 +112,12 @@ interface DucklakeCatalog {
      * difference between the delete state at that snapshot and the state just before it (see that
      * class for the two shapes: incremental delete file vs. full-file retire). The caller reads the
      * actual deleted positions from the current/previous delete files and subtracts.
+     *
+     * Candidate delete files are every file with `begin_snapshot <= endSnapshot` that was not retired
+     * before the window (mirrors upstream `GetTableDeletions`), so incremental events may carry a
+     * `snapshotId` BEFORE [startSnapshot]: multi-snapshot (3-column) delete files hold deletions newer
+     * than their `begin_snapshot`. The caller windows those per embedded
+     * `_ducklake_internal_snapshot_id`; see [DucklakeChangeFeedDeletion] for the full contract.
      */
     fun getDeletionsBetween(tableId: Long, startSnapshot: Long, endSnapshot: Long): List<DucklakeChangeFeedDeletion>
 

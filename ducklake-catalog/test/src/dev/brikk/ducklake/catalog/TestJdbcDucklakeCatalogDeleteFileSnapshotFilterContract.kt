@@ -85,6 +85,22 @@ class TestJdbcDucklakeCatalogDeleteFileSnapshotFilterContract {
     private fun resolve(tableDataPath: Path, file: DucklakeDataFile): Path =
         if (file.deleteFilePathIsRelative == true) tableDataPath.resolve(file.deleteFilePath!!) else Path.of(file.deleteFilePath!!)
 
+    /** Distinct `_ducklake_internal_snapshot_id` values in [file]'s delete file, ascending. */
+    private fun embeddedDeleteSnapshots(table: DucklakeTable, file: DucklakeDataFile, snapshot: Long): List<Long> {
+        // Table paths are schema-relative (`<schema path>/<table path>/`).
+        val schema = catalog.getSchema("test_schema", snapshot)!!
+        val tableDir = isolated.dataDir.toAbsolutePath().resolve(schema.path).resolve(table.path)
+        val deleteFile = resolve(tableDir, file)
+        return DriverManager.getConnection("jdbc:duckdb:").use { c ->
+            c.createStatement().use { st ->
+                st.executeQuery(
+                    "SELECT DISTINCT _ducklake_internal_snapshot_id FROM read_parquet('" +
+                        deleteFile.toString().replace("'", "''") + "') ORDER BY 1",
+                ).use { rs -> generateSequence { if (rs.next()) rs.getLong(1) else null }.toList() }
+            }
+        }
+    }
+
     @Test
     fun flushWrittenDeleteFileSpansSnapshotsWithNullPartialMax() {
         withDuckDb { c ->
@@ -106,18 +122,7 @@ class TestJdbcDucklakeCatalogDeleteFileSnapshotFilterContract {
         assertThat(file.deleteFileFormat?.lowercase()).isEqualTo("parquet")
 
         // The spec fact: multi-snapshot embedded ids, partial_max NULL, begin = MIN(embedded).
-        // Table paths are schema-relative (`<schema path>/<table path>/`).
-        val schema = catalog.getSchema("test_schema", snapshot)!!
-        val tableDir = isolated.dataDir.toAbsolutePath().resolve(schema.path).resolve(table.path)
-        val deleteFile = resolve(tableDir, file)
-        val embedded: List<Long> = DriverManager.getConnection("jdbc:duckdb:").use { c ->
-            c.createStatement().use { st ->
-                st.executeQuery(
-                    "SELECT DISTINCT _ducklake_internal_snapshot_id FROM read_parquet('" +
-                        deleteFile.toString().replace("'", "''") + "') ORDER BY 1",
-                ).use { rs -> generateSequence { if (rs.next()) rs.getLong(1) else null }.toList() }
-            }
-        }
+        val embedded = embeddedDeleteSnapshots(table, file, snapshot)
         assertThat(embedded).`as`("one deletion snapshot per DELETE statement").hasSize(2)
         assertThat(file.deleteFilePartialMax)
             .`as`("upstream leaves partial_max NULL on flush-written delete files — so it cannot be the filter gate")
@@ -141,6 +146,80 @@ class TestJdbcDucklakeCatalogDeleteFileSnapshotFilterContract {
                 }
                 st.executeQuery("SELECT count(*) FROM lake.test_schema.inl AT (VERSION => $later)").use { rs ->
                     rs.next(); assertThat(rs.getLong(1)).isEqualTo(2)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun changeFeedOffersMultiSnapshotDeleteFileForEveryWindowItMayTouch() {
+        withDuckDb { c ->
+            c.createStatement().use { st ->
+                st.execute("CREATE TABLE lake.test_schema.feed (id INTEGER, v VARCHAR)")
+                st.execute("INSERT INTO lake.test_schema.feed VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
+                st.execute("DELETE FROM lake.test_schema.feed WHERE id = 1")
+                st.execute("DELETE FROM lake.test_schema.feed WHERE id = 2")
+                st.execute("CALL ducklake_flush_inlined_data('lake', schema_name => 'test_schema', table_name => 'feed')")
+            }
+        }
+        val snapshot = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "feed", snapshot)!!
+        val file = catalog.getDataFiles(table.tableId, snapshot).single()
+        val embedded = embeddedDeleteSnapshots(table, file, snapshot)
+        assertThat(embedded).hasSize(2)
+        val sA = embedded[0]
+        val sB = embedded[1]
+
+        // Window at the LATER deletion: the single delete file began at sA (< start) yet holds
+        // sB's deletion — it must be offered, with previous == itself (2-column self-cancel /
+        // 3-column per-row windowing).
+        val atLater = catalog.getDeletionsBetween(table.tableId, sB, sB).filter { !it.fullFileDelete }
+        assertThat(atLater).hasSize(1)
+        with(atLater.single()) {
+            assertThat(snapshotId).`as`("reported at the file's begin_snapshot, which is BEFORE the window").isEqualTo(sA)
+            assertThat(currentDeletePath).isEqualTo(file.deleteFilePath)
+            assertThat(previousDeletePath).`as`("began before the window -> previous is the file itself").isEqualTo(currentDeletePath)
+            assertThat(currentDeletePartialMax).isNull()
+        }
+        // Window at the EARLIER deletion: begin in window, no predecessor.
+        val atEarlier = catalog.getDeletionsBetween(table.tableId, sA, sA).filter { !it.fullFileDelete }
+        assertThat(atEarlier).hasSize(1)
+        assertThat(atEarlier.single().snapshotId).isEqualTo(sA)
+        assertThat(atEarlier.single().previousDeletePath).isNull()
+        // A window entirely before the first deletion sees nothing.
+        assertThat(catalog.getDeletionsBetween(table.tableId, sA - 1, sA - 1).filter { !it.fullFileDelete }).isEmpty()
+    }
+
+    @Test
+    fun changeFeedPrunesOnlyWhatTheCatalogCanProve() {
+        val snapshot = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "simple_table", snapshot)!!
+        val dataFile = catalog.getDataFiles(table.tableId, snapshot).first()
+        val ids = listOf(888801L, 888802L, 888803L)
+        DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { c ->
+            c.createStatement().use { st ->
+                fun row(id: Long, end: String, partialMax: String) =
+                    "($id, ${table.tableId}, 1, $end, ${dataFile.dataFileId}, 'd-$id.parquet', true, 'parquet', 1, 10, 4, NULL, $partialMax)"
+                st.executeUpdate(
+                    "INSERT INTO ducklake_delete_file (delete_file_id, table_id, begin_snapshot, end_snapshot, " +
+                        "data_file_id, path, path_is_relative, format, delete_count, file_size_bytes, footer_size, " +
+                        "encryption_key, partial_max) VALUES " +
+                        row(ids[0], "2", "NULL") + ", " + // retired before the window -> pruned
+                        row(ids[1], "NULL", "2") + ", " + // recorded max before the window -> pruned
+                        row(ids[2], "NULL", "NULL"), // unknown span -> offered
+                )
+            }
+        }
+        try {
+            val offered = catalog.getDeletionsBetween(table.tableId, 10, 10)
+                .filter { !it.fullFileDelete && it.currentDeletePath?.startsWith("d-8888") == true }
+            assertThat(offered.map { it.currentDeletePath }).containsExactly("d-${ids[2]}.parquet")
+            assertThat(offered.single().previousDeletePath).isEqualTo("d-${ids[2]}.parquet")
+        }
+        finally {
+            DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { c ->
+                c.createStatement().use { st ->
+                    st.executeUpdate("DELETE FROM ducklake_delete_file WHERE delete_file_id IN (${ids.joinToString()})")
                 }
             }
         }
