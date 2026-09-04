@@ -254,10 +254,19 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (`_state.cpp:793-929`); library only nets sizes.
 
 ### W-D4 · DRIFT · `ducklake_file_column_stats`
-- [ ] **Status:** PARTIAL — NUL-containing stat values are stored as NULL (upstream `StatsToString`). Still open:
-  nullable `value_count` / `null_count` / `column_size_bytes` on `DucklakeFileColumnStats` (wire-format change),
-  `extra_stats` / variant stats (unsupported feature), and the Trino extractor's hard-coded `containsNan = false`
-  (trino-ducklake follow-up).
+- [x] **Status:** RESOLVED (catalog side). `DucklakeFileColumnStats.valueCount/nullCount/containsNan` are nullable
+  (wire: absent when unknown); the row stores NULL exactly as upstream `FromColumnStats` (counts together or not at
+  all; `column_size_bytes` always written). Table-level `contains_null`/`contains_nan` follow upstream `MergeStats`
+  tri-state semantics on insert (INSERT and incremental UPDATE paths), analyze rebuild and `getColumnStats`
+  (`totalValueCount/totalNullCount` nullable): any active file lacking the statistic makes it unknown, and a later
+  known file never upgrades an unknown flag. Also fixed on the way: a NaN float file's declared (NaN-excluding) max
+  leaked into the table-level max — such a file now contributes no bounds and is skipped by the merge, as upstream.
+  Tests: `TestJdbcDucklakeCatalogUnknownFileStats` (both merge orders, analyze, getColumnStats, DuckDB reads the
+  table's metadata), `TestJacksonWireFormat`. `extra_stats` / variant stats remain unsupported (documented).
+  **trino-ducklake follow-up:** `DucklakeMetadata.kt:472-483` must handle nullable `totalValueCount/totalNullCount`
+  (skip the nulls-fraction estimate when unknown); `DucklakeStatsExtractor.kt:70` should pass `containsNan = null`
+  instead of a hard-coded `false` unless it actually inspects the values (the library now stores NULL = unknown,
+  which makes DuckDB and this library fail open on max-side pruning instead of asserting "no NaN").
 - Library always writes non-NULL `value_count` / `null_count` / `column_size_bytes`; upstream writes NULL when
   unknown (`ducklake_transaction.cpp:1198-1212`). Allow nullable in `DucklakeWriteFragment` stats.
 - Upstream `StatsToString` (`common/ducklake_util.cpp:92-99`) writes NULL for values containing `\0`; library stores

@@ -20,8 +20,10 @@ import com.fasterxml.jackson.annotation.JsonInclude
 @JsonInclude(JsonInclude.Include.NON_NULL)
 data class DucklakeColumnStats(
     val columnId: Long,
-    val totalValueCount: Long,
-    val totalNullCount: Long,
+    /** Sum of the active files' non-NULL value counts, or `null` when any active file lacks counts (upstream `MergeStats`). */
+    val totalValueCount: Long?,
+    /** Sum of the active files' NULL counts, or `null` when any active file lacks counts. */
+    val totalNullCount: Long?,
     val totalSizeBytes: Long,
     val minValue: String?,
     val maxValue: String?,

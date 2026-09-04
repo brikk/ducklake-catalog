@@ -1289,6 +1289,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val columnTypes: Map<Long, String> = loadColumnTypes(dsl, tableId)
 
         val countAccumulators: MutableMap<Long, LongArray> = mutableMapOf() // [valueCount, nullCount, sizeBytes]
+        val unknownCounts: MutableSet<Long> = mutableSetOf() // columns with a file lacking counts (upstream MergeStats)
         val bounds: MutableMap<Long, DucklakeStatTypes.BoundsAccumulator> = mutableMapOf()
 
         val colstats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
@@ -1313,8 +1314,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         ) { r ->
             val columnId = orZero(r.get(colstats.COLUMN_ID))
             val counts = countAccumulators.getOrPut(columnId) { LongArray(3) }
-            counts[0] += orZero(r.get(colstats.VALUE_COUNT))
-            counts[1] += orZero(r.get(colstats.NULL_COUNT))
+            val valueCount = r.get(colstats.VALUE_COUNT)
+            val nullCount = r.get(colstats.NULL_COUNT)
+            if (valueCount == null || nullCount == null) {
+                unknownCounts.add(columnId)
+            }
+            counts[0] += orZero(valueCount)
+            counts[1] += orZero(nullCount)
             counts[2] += orZero(r.get(colstats.COLUMN_SIZE_BYTES))
 
             // Upstream MergeStats semantics: a file lacking a bound makes the global bound unknown.
@@ -1328,8 +1334,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             result.add(
                 DucklakeColumnStats(
                     columnId,
-                    counts[0],
-                    counts[1],
+                    if (columnId in unknownCounts) null else counts[0],
+                    if (columnId in unknownCounts) null else counts[1],
                     counts[2],
                     bounds[columnId]?.min,
                     bounds[columnId]?.max,
@@ -1510,8 +1516,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val columnTypes: Map<Long, String> = loadColumnTypes(ctx, tableId)
 
         val seenColumns: MutableSet<Long> = linkedSetOf()
-        val containsNull: MutableMap<Long, Boolean> = mutableMapOf()
-        val containsNan: MutableMap<Long, Boolean> = mutableMapOf()
+        val containsNull: MutableMap<Long, TriStateFlag> = mutableMapOf()
+        val containsNan: MutableMap<Long, TriStateFlag> = mutableMapOf()
         val bounds: MutableMap<Long, DucklakeStatTypes.BoundsAccumulator> = mutableMapOf()
         // Multi-table JOIN — routed through `metadata` for Quack compatibility.
         metadata.fetch(
@@ -1532,12 +1538,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         ) { r ->
             val columnId = orZero(r.get(colstats.COLUMN_ID))
             seenColumns.add(columnId)
-            if (orZero(r.get(colstats.NULL_COUNT)) > 0) {
-                containsNull[columnId] = true
-            }
-            if (r.get(colstats.CONTAINS_NAN) == true) {
-                containsNan[columnId] = true
-            }
+            // Upstream MergeStats: a file without the statistic makes the table-level flag unknown.
+            containsNull.getOrPut(columnId) { TriStateFlag() }.merge(r.get(colstats.NULL_COUNT)?.let { it > 0 })
+            containsNan.getOrPut(columnId) { TriStateFlag() }.merge(r.get(colstats.CONTAINS_NAN))
             // Upstream MergeStats semantics: a file lacking a bound makes the global bound unknown.
             bounds.getOrPut(columnId) { DucklakeStatTypes.BoundsAccumulator(columnTypes[columnId]) }
                 .merge(r.get(colstats.MIN_VALUE), r.get(colstats.MAX_VALUE))
@@ -1548,8 +1551,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             ctx.newRecord(tabcolst).apply {
                 setTableId(tableId)
                 setColumnId(columnId)
-                setContainsNull(containsNull.getOrDefault(columnId, false))
-                setContainsNan(globalContainsNan(columnTypes[columnId], containsNan.getOrDefault(columnId, false)))
+                setContainsNull(containsNull.getValue(columnId).value)
+                setContainsNan(globalContainsNan(columnTypes[columnId], containsNan.getValue(columnId).value))
                 setMinValue(bounds[columnId]?.min)
                 setMaxValue(bounds[columnId]?.max)
             }
@@ -3978,23 +3981,24 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 r.setTableId(tableId)
                 r.setColumnId(columnStats.columnId)
                 r.setColumnSizeBytes(columnStats.columnSizeBytes)
-                r.setValueCount(columnStats.valueCount)
-                r.setNullCount(columnStats.nullCount)
+                // Upstream FromColumnStats: the two counts are stored together or not at all.
+                r.setValueCount(if (columnStats.hasCounts) columnStats.valueCount else null)
+                r.setNullCount(if (columnStats.hasCounts) columnStats.nullCount else null)
 
                 // contains_nan is a float-only concept. Mirror upstream DuckLake exactly
                 // (ducklake_transaction_state.cpp: has_contains_nan == is_float):
-                //  - FLOAT/DOUBLE column: write the explicit boolean (TRUE or FALSE). Writing
-                //    explicit FALSE — not SQL NULL — is what lets a reader keep max-side range
-                //    pruning (a NULL/unknown contains_nan forces the NaN guard to fail open).
+                //  - FLOAT/DOUBLE column: write the writer's boolean — TRUE, FALSE, or NULL when
+                //    it did not inspect the values. An explicit FALSE — not NULL — is what lets a
+                //    reader keep max-side range pruning (unknown makes the NaN guard fail open).
                 //  - non-float column: contains_nan is not applicable → SQL NULL.
                 val isFloat = DucklakeStatTypes.isFloatType(columnTypes[columnStats.columnId])
-                r.setContainsNan(if (isFloat) java.lang.Boolean.valueOf(columnStats.containsNan) else null)
+                r.setContainsNan(if (isFloat) columnStats.containsNan else null)
 
                 // Float min/max EXCLUDE NaN, and NaN sorts above every value. When a float file
                 // contains NaN its recorded max is not a true upper bound, so — like upstream —
                 // we do not persist min/max at all for that file/column (leave them SQL NULL);
                 // the bound is genuinely unknown rather than a misleading finite value.
-                if (isFloat && columnStats.containsNan) {
+                if (isFloat && columnStats.containsNan == true) {
                     r.setMinValue(null)
                     r.setMaxValue(null)
                 }
@@ -4106,20 +4110,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 }
                 val mergedMin = merged.min
                 val mergedMax = merged.max
-                var upd = ctx.update(tabcolst)
+                val upd = ctx.update(tabcolst)
                     .set(tabcolst.MIN_VALUE, DSL.`val`(mergedMin, tabcolst.MIN_VALUE.dataType))
                     .set(tabcolst.MAX_VALUE, DSL.`val`(mergedMax, tabcolst.MAX_VALUE.dataType))
-                if (agg.containsNull) {
-                    upd = upd.set(tabcolst.CONTAINS_NULL, true)
-                }
-                if (agg.containsNan) {
-                    upd = upd.set(tabcolst.CONTAINS_NAN, true)
-                }
-                else if (DucklakeStatTypes.isFloatType(columnType)) {
-                    // Float column with no NaN so far: make sure the row says an explicit FALSE
-                    // rather than NULL (an older row may carry NULL) — see globalContainsNan.
-                    upd = upd.set(tabcolst.CONTAINS_NAN, DSL.coalesce(tabcolst.CONTAINS_NAN, DSL.inline(false)))
-                }
+                    .set(tabcolst.CONTAINS_NULL, mergedFlag(tabcolst.CONTAINS_NULL, agg.containsNull))
+                    .set(tabcolst.CONTAINS_NAN, mergedFlag(tabcolst.CONTAINS_NAN, agg.containsNan))
                 upd.where(tabcolst.TABLE_ID.eq(tableId))
                     .and(tabcolst.COLUMN_ID.eq(columnId))
                     .execute()
@@ -4637,9 +4632,33 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     // Existing table-level column-stat bounds loaded for the incremental merge.
     private data class ExistingColumnStat(val minValue: String?, val maxValue: String?)
 
-    private class AggregatedColumnStats(columnType: String?) {
-        var containsNull: Boolean = false
-        var containsNan: Boolean = false
+    /**
+     * Upstream `MergeStats` for a boolean statistic: any file that does not carry it makes the
+     * merged value unknown (`null`), otherwise it is the OR of the files' values.
+     */
+    private class TriStateFlag {
+        private var unknown = false
+        private var set = false
+
+        fun merge(fileValue: Boolean?) {
+            when (fileValue) {
+                null -> unknown = true
+                true -> set = true
+                false -> Unit
+            }
+        }
+
+        /** `null` = unknown. */
+        val value: Boolean? get() = if (unknown) null else set
+    }
+
+    private class AggregatedColumnStats(private val columnType: String?) {
+        private val nullFlag = TriStateFlag()
+        private val nanFlag = TriStateFlag()
+        /** Table-level `contains_null` for this commit's files; `null` when a file lacks a null count. */
+        val containsNull: Boolean? get() = nullFlag.value
+        /** Table-level `contains_nan` for this commit's files; `null` when a file lacks the flag. */
+        val containsNan: Boolean? get() = nanFlag.value
         private val bounds = DucklakeStatTypes.BoundsAccumulator(columnType)
         val minValue: String? get() = bounds.min
         val maxValue: String? get() = bounds.max
@@ -4648,18 +4667,21 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             private set
 
         fun merge(stats: DucklakeFileColumnStats) {
-            if (stats.nullCount > 0) {
-                containsNull = true
-            }
-            if (stats.containsNan) {
-                containsNan = true
-            }
+            nullFlag.merge(if (stats.hasCounts) stats.nullCount!! > 0 else null)
+            nanFlag.merge(stats.containsNan)
+            // A float file containing NaN has NO bounds (its NaN-excluding max is not an upper
+            // bound) — exactly what the per-file row stores and what upstream feeds MergeStats
+            // (ducklake_transaction_state.cpp `!(is_float && contains_nan)`); such a file is then
+            // skipped by the merge rather than poisoning the table-level bounds.
+            val nanFile = DucklakeStatTypes.isFloatType(columnType) && stats.containsNan == true
+            val fileMin = if (nanFile) null else stats.minValue
+            val fileMax = if (nanFile) null else stats.maxValue
             // Type-aware and NULL-poisoning (upstream MergeStats): numeric/temporal/boolean compare
-            // as values, and a file lacking a bound makes the aggregate's bound unknown.
-            if (stats.minValue != null || stats.maxValue != null) {
+            // as values, and a file lacking ONE bound makes that aggregate bound unknown.
+            if (fileMin != null || fileMax != null) {
                 anyBound = true
             }
-            bounds.merge(stats.minValue, stats.maxValue)
+            bounds.merge(fileMin, fileMax)
         }
     }
 
@@ -4881,11 +4903,22 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
          * when `has_contains_nan && !contains_nan`, so NULL would leave it with no stats at all,
          * `ducklake_stats.cpp`); for every other type SQL NULL (NaN is not representable).
          */
-        private fun globalContainsNan(columnType: String?, containsNan: Boolean): Boolean? =
+        private fun globalContainsNan(columnType: String?, containsNan: Boolean?): Boolean? =
             when {
-                containsNan -> java.lang.Boolean.TRUE
-                DucklakeStatTypes.isFloatType(columnType) -> java.lang.Boolean.FALSE
-                else -> null
+                !DucklakeStatTypes.isFloatType(columnType) -> null
+                else -> containsNan // TRUE / FALSE / NULL (some file did not report it)
+            }
+
+        /**
+         * Incremental upstream `MergeStats` for a stored boolean flag: `null` from the commit makes
+         * it unknown; TRUE from the commit makes it TRUE unless it is already unknown (NULL stays
+         * NULL — the files that made it unknown are still active); FALSE leaves it as it is.
+         */
+        private fun mergedFlag(stored: Field<Boolean?>, fromCommit: Boolean?): Field<Boolean?> =
+            when (fromCommit) {
+                null -> DSL.inline(null, stored.dataType)
+                true -> DSL.`when`(stored.isNull, DSL.inline(null, stored.dataType)).otherwise(DSL.inline(true))
+                false -> stored
             }
 
         /** The first [DucklakeException] in the cause chain (typed conflicts, not-found, ...), if any. */

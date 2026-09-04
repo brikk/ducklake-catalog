@@ -107,6 +107,18 @@ class TestJacksonWireFormat {
         assertRoundTrip(DucklakeFileColumnStats::class.java, instance)
     }
 
+    @Test
+    fun fileColumnStatsUnknownCountsAndNanAreOmitted() {
+        // W-D4: unknown statistics are nullable and simply absent on the wire; absent fields read back as null.
+        val instance = DucklakeFileColumnStats(1L, 512L, null, null, "a", "z", null)
+        assertJson(
+            DucklakeFileColumnStats::class.java,
+            instance,
+            """{"columnId":1,"columnSizeBytes":512,"minValue":"a","maxValue":"z"}""",
+        )
+        assertRoundTrip(DucklakeFileColumnStats::class.java, instance)
+    }
+
     // --- DucklakeDeleteFragment (no Optional fields) ---
 
     @Test
