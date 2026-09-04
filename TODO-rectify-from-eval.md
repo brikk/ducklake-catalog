@@ -300,6 +300,17 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   (`:1674-1679`, `ducklake_delete_filter.cpp:153-200`). `path_is_relative` hard-coded `true` (`:3926`).
   Low priority; document the divergence.
 
+### W-B7 · BUG (DuckDB interop) · Column DDL on an inlined-data table does not create the new inlined table
+- [ ] **Status:** open — found by Q-5 coverage work (`TestJdbcDucklakeCatalogCoverageDdl.
+  duckDbCanInlineRowsIntoAStructAfterALibraryAddField`, `@Disabled`).
+- Upstream: any column-schema change on a table that has `ducklake_inlined_data_tables` rows creates and registers
+  `ducklake_inlined_data_<tableId>_<newSchemaVersion>` in the same commit (`ducklake_transaction_state.cpp:1245-1266`
+  → `ducklake_metadata_manager.cpp:2559 WriteNewInlinedTables`), because DuckDB's `LatestInlinedTableQuery`
+  (`:2486`, `MAX(schema_version)`) picks the physical table to INSERT into by schema version. The library's
+  `addColumn`/`dropColumn`/`renameColumn`/`setColumnType`/`addField`/`dropField`/`setFieldType` only bump
+  `schema_version`, so DuckDB's next inlined INSERT writes into the old-schema table: a struct-field change makes the
+  read INTERNAL-error, a top-level column change makes the INSERT fail to commit.
+
 ### W-D7 · DRIFT · Catalog table columns
 - [x] **Status:** RESOLVED (except the `files_scheduled_for_deletion` relative-path nit and the unsupported-feature
   documentation, left as-is): `default_value_dialect = 'duckdb'` on new columns; `dropTable` end-snapshots
@@ -781,23 +792,30 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `DucklakeNameMap/Entry` documented as non-round-tripping (`TestJacksonWireFormat.kt:35-40`) — consider fixing.
 
 ### Q-5 · DRIFT · Test coverage gaps
-- [ ] **Status:** open
-- 42 `DucklakeCatalog` methods with no reference under `test/` or `testFixtures/`: `addField, commitMerge,
-  countInlinedRows, dropField, expireSnapshots, flushInlinedData, getAllColumnsWithParentage, getColumnComments,
-  getDataFilesAddedBetween, getDataFilesByIds, getDataPath, getDeletionsBetween, getInlinedChangesBetween,
-  getInlinedDataInfos, getInlinedDeletes, getInlinedFileDeletesBetween, getLatestDataFileFormat, getNameMaps,
-  getPartitionNameMaps, getSortKeys, getTableComment, getTableDataFileFormat, hasInlinedDeletes, hasInlinedRows,
-  hasPartialDeleteFilesRequiringSnapshotFilter, listExpirableSnapshots, listFilesScheduledForDeletion,
-  listReferencedFilePaths, listSnapshotChanges, listViews, readInlinedBeginSnapshots, readInlinedData,
-  readInlinedRowIds, removeScheduledFileRows, renameSchema, renameTable, renameView, resolveSchemaVersionSnapshot,
-  setColumnComment, setFieldType, setTableComment, truncateTable`. The entire inlined-data read path (R-B5, C-B4,
-  R-D4) and all of expire/GC (C-B5, R-D5) are untested here (coverage may exist in trino-ducklake — confirm).
+- [x] **Status:** RESOLVED — 245 → 273 tests; every interface method has a behaviour test, the snapshot-PK collision
+  path is exercised on two backends, and a stock-DuckDB oracle suite covers the library's write paths. Writing them
+  found two real bugs: the snapshot-PK collision reporting (fixed, see C-B1 addendum) and the missing inlined-data
+  table on column DDL (tracked as **W-B7** below).
+- [x] every `DucklakeCatalog` method has a behaviour test (the last 19 zero-reference methods are covered by
+  `TestJdbcDucklakeCatalogCoverageDdl` — renameTable, renameSchema, addField, dropField, getTableComment,
+  getColumnComments, getSortKeys, resolveSchemaVersionSnapshot; `TestJdbcDucklakeCatalogCoverageFiles` —
+  getDataFilesAddedBetween, getDataFilesByIds, listReferencedFilePaths, getLatestDataFileFormat,
+  getTableDataFileFormat, getDataPath, getPartitionNameMaps; `TestJdbcDucklakeCatalogCoverageInlined` —
+  hasInlinedDeletes, getInlinedFileDeletesBetween, readInlinedBeginSnapshots, flushInlinedData; stock DuckDB on the
+  same PG catalog is the oracle throughout). Found while writing them, left `@Disabled("bug: …")` in
+  `TestJdbcDucklakeCatalogCoverageDdl.duckDbCanInlineRowsIntoAStructAfterALibraryAddField`: column-changing DDL
+  (`addColumn`/`addField`/…) does not create + register `ducklake_inlined_data_<t>_<newSv>` for a table that already
+  has inlined-data tables, unlike upstream's `column_schema_change` → `WriteNewInlinedTables`; DuckDB's next inlined
+  INSERT then writes into the old-schema inlined table (struct field: read INTERNAL-errors; top-level column: the
+  INSERT fails to commit).
 - [x] `ConcurrentWriterHarness.ParkPoint.BEFORE_SNAPSHOT_INSERT` parks the loser after every conflict check, right
   before the `ducklake_snapshot` INSERT; `TestConcurrentSnapshotPkCollision` runs it on PG and local DuckDB — and
   found the collision path broken (see C-B1 addendum).
-- **Add a DuckDB-oracle interop test**: library writes (schema, table with nested cols, view, add/drop column,
+- [x] **Add a DuckDB-oracle interop test**: library writes (schema, table with nested cols, view, add/drop column,
   insert, delete, add_files w/ name map, comments) → DuckDB `ATTACH 'ducklake:postgres:...'` → `SELECT` /
   `information_schema` / `ducklake_table_info`. Would have caught W-B1, W-B3, W-B4, W-B5, W-D5 outright.
+  Done: `TestJdbcDucklakeCatalogDuckDbOracleInterop` (5 tests: nested DDL + FIELD_IDS parquet inserts + time travel +
+  positional delete + global-stats parity; view; add/rename/drop column + comments; partitioned table; add_files name map).
 
 ### Q-6 · NIT · HikariCP / resources
 - [x] **Status:** RESOLVED — pool named `ducklake-catalog-<urlhash>`, `leakDetectionThreshold` 2 min; the
