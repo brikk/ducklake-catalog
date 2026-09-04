@@ -79,4 +79,25 @@ internal interface MetadataQuery {
      * server-side against the real base table.
      */
     fun execute(dsl: DSLContext, mutation: Query): Int
+
+    /**
+     * Starts the BACKEND transaction for a unit of work on [dsl]'s connection, which the caller has
+     * already put into `autoCommit = false`. Direct backends need nothing more: the JDBC
+     * transaction is the backend transaction. On Quack the local JDBC transaction never reaches the
+     * server (appends and `quack_query_by_name` calls autocommit there), so the transaction must be
+     * opened explicitly on the server session with a wrapped `BEGIN TRANSACTION`.
+     */
+    fun begin(dsl: DSLContext) {
+        // Direct backends: the JDBC transaction started by autoCommit = false is the transaction.
+    }
+
+    /** Commits the backend transaction started by [begin]; a conflict raised here must propagate. */
+    fun commit(dsl: DSLContext, connection: java.sql.Connection) {
+        connection.commit()
+    }
+
+    /** Rolls back the backend transaction started by [begin]; must not throw on an already-ended transaction. */
+    fun rollback(dsl: DSLContext, connection: java.sql.Connection) {
+        connection.rollback()
+    }
 }

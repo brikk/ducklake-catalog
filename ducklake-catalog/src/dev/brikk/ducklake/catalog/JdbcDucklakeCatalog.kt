@@ -95,6 +95,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private val hikariDataSource: HikariDataSource
     private val dialect: SQLDialect
     private val jooqSettings: Settings
+    /** jOOQ configuration template (dialect, settings, Quack read-wrapping listener); derived per connection. */
+    private val jooqConfiguration: org.jooq.Configuration
     private val metadata: MetadataQuery
 
     /** Pool-backed context: each statement checks out a connection and autocommits. */
@@ -183,7 +185,21 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // `USE <metadata_catalog>.main` makes unqualified resolution work. Stripping
             // the rendered schema works for both — but is required for the latter.
             .withRenderSchema(false)
-        this.pooledDsl = DSL.using(dataSource, dialect, jooqSettings)
+        if (metadataQuery is QuackWrappedMetadataQuery) {
+            // Every SELECT must run server-side through quack_query_by_name (see ReadWrappingListener);
+            // STATIC_STATEMENT inlines the bind values so the rendered SQL is self-contained.
+            jooqSettings.withStatementType(org.jooq.conf.StatementType.STATIC_STATEMENT)
+        }
+        val configuration = org.jooq.impl.DefaultConfiguration().set(dialect).set(jooqSettings) // clones the settings
+        if (metadataQuery is QuackWrappedMetadataQuery) {
+            configuration.set(
+                org.jooq.impl.DefaultExecuteListenerProvider(
+                    QuackWrappedMetadataQuery.ReadWrappingListener(metadataQuery.metadataCatalogName),
+                ),
+            )
+        }
+        this.jooqConfiguration = configuration
+        this.pooledDsl = DSL.using(configuration.derive(dataSource))
         this.metadata = metadataQuery
 
         log.log(
@@ -202,7 +218,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * single transactional connection.
      */
     internal fun forConnection(connection: Connection): DSLContext =
-        DSL.using(connection, dialect, jooqSettings)
+        DSL.using(jooqConfiguration.derive(connection))
 
     override fun <T> readSession(action: java.util.function.Supplier<T>): T {
         if (readSessionDsl.get() != null) {
@@ -215,14 +231,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // reject read-only, so neither is fatal. HikariCP resets whatever changed on return.
             trySetting("read-only") { conn.isReadOnly = true }
             trySetting("REPEATABLE READ") { conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ }
-            readSessionDsl.set(forConnection(conn))
+            val sessionDsl = forConnection(conn)
+            metadata.begin(sessionDsl)
+            readSessionDsl.set(sessionDsl)
             try {
                 return action.get()
             }
             finally {
                 readSessionDsl.remove()
                 try {
-                    conn.rollback() // nothing to commit; release the snapshot
+                    metadata.rollback(sessionDsl, conn) // nothing to commit; release the snapshot
                 }
                 catch (e: SQLException) {
                     log.log(System.Logger.Level.DEBUG, "readSession: rollback failed: {0}", e.message)
@@ -756,8 +774,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // Plain catalog transaction — destructive GC, no new snapshot (mirrors analyzeTable).
         dataSource.connection.use { conn ->
             conn.autoCommit = false
+            val ctx = forConnection(conn)
+            metadata.begin(ctx)
             try {
-                val ctx = forConnection(conn)
                 val maxId = readLatestSnapshotId(ctx)
                 require(maxId !in snapshotIds) { "cannot expire the latest snapshot ($maxId)" }
 
@@ -785,7 +804,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 // sweep so a long-lived warehouse doesn't accumulate dead metadata.
                 deleteDeadSchemaViewMacroMetadata(ctx)
 
-                conn.commit()
+                metadata.commit(ctx, conn)
                 // Each DROP autocommits on its own; with autoCommit still false it would open an
                 // implicit transaction that is rolled back when the connection returns to the pool.
                 conn.autoCommit = true
@@ -793,7 +812,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 return ExpireSnapshotsResult(snapshotIds.size, scheduledCount)
             }
             catch (e: Exception) {
-                rollbackQuietly(conn, e)
+                rollbackQuietly(ctx, conn, e)
                 throw e
             }
         }
@@ -909,7 +928,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private fun dropDeadInlinedTables(ctx: DSLContext, tableNames: List<String>) {
         for (name in tableNames) {
             try {
-                ctx.dropTableIfExists(DSL.table(DSL.name(name))).execute()
+                metadata.execute(ctx, ctx.dropTableIfExists(DSL.table(DSL.name(name))))
             }
             catch (e: DataAccessException) {
                 log.log(
@@ -1122,7 +1141,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return
         }
         val sched = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION
-        pooledDsl.deleteFrom(sched).where(sched.DATA_FILE_ID.`in`(dataFileIds)).execute()
+        metadata.execute(pooledDsl, pooledDsl.deleteFrom(sched).where(sched.DATA_FILE_ID.`in`(dataFileIds)))
     }
 
     private fun resolveScopedPath(path: String?, isRelative: Boolean?, parentPath: String): String {
@@ -1359,8 +1378,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // machinery.
         dataSource.connection.use { conn ->
             conn.autoCommit = false
+            val ctx = forConnection(conn)
+            metadata.begin(ctx)
             try {
-                val ctx = forConnection(conn)
                 val snapshotId = readLatestSnapshotId(ctx)
                 recomputeTableStats(ctx, tableId, snapshotId)
                 // The per-file aggregate covers Parquet rows only. While the table has LIVE inlined
@@ -1372,10 +1392,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 if (!hasLiveInlinedRows(tableId, snapshotId)) {
                     recomputeTableColumnStats(ctx, tableId, snapshotId)
                 }
-                conn.commit()
+                metadata.commit(ctx, conn)
             }
             catch (e: Exception) {
-                rollbackQuietly(conn, e)
+                rollbackQuietly(ctx, conn, e)
                 throw e
             }
         }
@@ -1412,11 +1432,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .where(tabstats.TABLE_ID.eq(tableId))
             .fetchOne()
         if (existing != null) {
-            ctx.update(tabstats)
+            metadata.execute(ctx, ctx.update(tabstats)
                 .set(tabstats.RECORD_COUNT, grossRecordCount)
                 .set(tabstats.FILE_SIZE_BYTES, totalFileSize)
                 .where(tabstats.TABLE_ID.eq(tableId))
-                .execute()
+                )
         }
         else {
             ctx.insertInto(tabstats)
@@ -2422,6 +2442,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             dataSource.connection.use { conn ->
                 conn.autoCommit = false
                 val txDsl = forConnection(conn)
+                metadata.begin(txDsl)
                 var baseSnapshotId: Long = -1
                 try {
                     // 1. Read current snapshot state. Routed through `metadata` because
@@ -2514,10 +2535,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                             .execute()
                     }
 
-                    conn.commit()
+                    metadata.commit(txDsl, conn)
                 }
                 catch (e: Exception) {
-                    rollbackQuietly(conn, e)
+                    rollbackQuietly(txDsl, conn, e)
                     // Typed catalog exceptions (conflicts, not-found, already-exists, invalid
                     // operation, guards) propagate as themselves so engines can map them; only
                     // genuinely unexpected failures are wrapped.
@@ -2577,6 +2598,27 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .set(inlined.TABLE_NAME, name)
                 .set(inlined.SCHEMA_VERSION, tx.getSchemaVersion()),
         )
+    }
+
+    /**
+     * Roll back after a failed statement WITHOUT letting a failing rollback replace the original
+     * error. DuckDB auto-aborts the transaction on a constraint or conflict error, so the
+     * subsequent `rollback()` throws "cannot rollback - no transaction is active"; if that escaped
+     * the catch block the conflict classification above would never see the real exception and
+     * the commit would surface as an opaque failure instead of being retried.
+     */
+    private fun rollbackQuietly(dsl: DSLContext, conn: java.sql.Connection, original: Throwable) {
+        try {
+            metadata.rollback(dsl, conn)
+        }
+        catch (e: SQLException) {
+            original.addSuppressed(e)
+            log.log(System.Logger.Level.DEBUG, "rollback after failure itself failed: {0}", e.message)
+        }
+        catch (e: DataAccessException) {
+            original.addSuppressed(e)
+            log.log(System.Logger.Level.DEBUG, "rollback after failure itself failed: {0}", e.message)
+        }
     }
 
     private fun ensureSnapshotLineageUnchanged(ctx: DSLContext, expectedSnapshotId: Long, operationDescription: String) {
@@ -2852,11 +2894,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     private fun endSnapshotActiveView(tx: DucklakeWriteTransaction, viewId: Long) {
         val view = DUCKLAKE_VIEW.`as`("view")
-        val updatedRows = tx.dsl().update(view)
+        val updatedRows = metadata.execute(tx.dsl(), tx.dsl().update(view)
             .set(view.END_SNAPSHOT, tx.getNewSnapshotId())
             .where(view.VIEW_ID.eq(viewId))
             .and(view.END_SNAPSHOT.isNull)
-            .execute()
+            )
         if (updatedRows == 0) {
             throw DucklakeEntityNotFoundException("view", viewId.toString())
         }
@@ -2919,11 +2961,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
             tx.recordChange(WriteChange.DroppedSchema(schemaId, schemaName))
 
-            tx.dsl().update(sch)
+            metadata.execute(tx.dsl(), tx.dsl().update(sch)
                 .set(sch.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(sch.SCHEMA_ID.eq(schemaId))
                 .and(sch.END_SNAPSHOT.isNull)
-                .execute()
+                )
 
             tx.incrementSchemaVersion()
         }
@@ -3280,11 +3322,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .fetchOne(file.DATA_FILE_ID) ?: throw DucklakeCatalogCorruptionException(
                     "flush: registered data file ${flushed.fragment.path} not found",
                 )
-                ctx.update(file)
+                metadata.execute(ctx, ctx.update(file)
                     .set(file.BEGIN_SNAPSHOT, flushed.beginSnapshot)
                     .set(file.PARTIAL_MAX, flushed.partialMax)
                     .where(file.DATA_FILE_ID.eq(dataFileId))
-                    .execute()
+                    )
                 // Delete file for the rows that were already deleted while inlined. The data file is
                 // brand new, so there is nothing to supersede; `embeddedSnapshotMax` is the last
                 // ORIGINAL deletion snapshot, not this commit's (no new deletion happens here).
@@ -3669,12 +3711,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // "Could not find parent column for column ...". Mirrors
             // DuckLakeTableEntry::RemoveColumns, which recurses.
             val subtree = collectSubtreeIds(columns, columnId)
-            ctx.update(col)
+            metadata.execute(ctx, ctx.update(col)
                 .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(col.TABLE_ID.eq(tableId))
                 .and(col.COLUMN_ID.`in`(subtree))
                 .and(col.END_SNAPSHOT.isNull)
-                .execute()
+                )
 
             tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
@@ -3721,12 +3763,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         val existing: DucklakeColumnRecord = query.fetchOne() ?: throw DucklakeEntityNotFoundException("column", columnId.toString())
 
-        ctx.update(col)
+        metadata.execute(ctx, ctx.update(col)
             .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
             .where(col.TABLE_ID.eq(tableId))
             .and(col.COLUMN_ID.eq(columnId))
             .and(col.END_SNAPSHOT.isNull)
-            .execute()
+            )
 
         val next = DucklakeColumnRecord()
         next.from(existing)
@@ -3784,19 +3826,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return
         }
         val fcs = DUCKLAKE_FILE_COLUMN_STATS.`as`("fcs")
-        ctx.update(fcs)
+        metadata.execute(ctx, ctx.update(fcs)
             .set(fcs.MIN_VALUE, null as String?)
             .set(fcs.MAX_VALUE, null as String?)
             .where(fcs.TABLE_ID.eq(tableId))
             .and(fcs.COLUMN_ID.eq(columnId))
-            .execute()
+            )
         val tcs = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tcs")
-        ctx.update(tcs)
+        metadata.execute(ctx, ctx.update(tcs)
             .set(tcs.MIN_VALUE, null as String?)
             .set(tcs.MAX_VALUE, null as String?)
             .where(tcs.TABLE_ID.eq(tableId))
             .and(tcs.COLUMN_ID.eq(columnId))
-            .execute()
+            )
     }
 
     override fun setFieldType(tableId: Long, fieldPath: List<String>, newColumnType: String) {
@@ -3862,12 +3904,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // End-snapshot the field and every transitive descendant (struct subfields nest
             // arbitrarily) — same recursive cascade as dropColumn.
             val subtree = collectSubtreeIds(columns, targetId)
-            ctx.update(col)
+            metadata.execute(ctx, ctx.update(col)
                 .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(col.TABLE_ID.eq(tableId))
                 .and(col.COLUMN_ID.`in`(subtree))
                 .and(col.END_SNAPSHOT.isNull)
-                .execute()
+                )
             tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
@@ -4129,7 +4171,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (advanceRowIds) {
                 upd = upd.set(tabstats.NEXT_ROW_ID, orZero(existingStats.nextRowId) + totalRecords)
             }
-            upd.where(tabstats.TABLE_ID.eq(tableId)).execute()
+            metadata.execute(ctx, upd.where(tabstats.TABLE_ID.eq(tableId)))
         }
         else {
             // No prior stats. For a flush/rewrite this is unexpected (existing rows imply stats
@@ -4186,14 +4228,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 }
                 val mergedMin = merged.min
                 val mergedMax = merged.max
-                val upd = ctx.update(tabcolst)
-                    .set(tabcolst.MIN_VALUE, DSL.`val`(mergedMin, tabcolst.MIN_VALUE.dataType))
-                    .set(tabcolst.MAX_VALUE, DSL.`val`(mergedMax, tabcolst.MAX_VALUE.dataType))
-                    .set(tabcolst.CONTAINS_NULL, mergedFlag(tabcolst.CONTAINS_NULL, agg.containsNull))
-                    .set(tabcolst.CONTAINS_NAN, mergedFlag(tabcolst.CONTAINS_NAN, agg.containsNan))
-                upd.where(tabcolst.TABLE_ID.eq(tableId))
-                    .and(tabcolst.COLUMN_ID.eq(columnId))
-                    .execute()
+                metadata.execute(
+                    ctx,
+                    ctx.update(tabcolst)
+                        .set(tabcolst.MIN_VALUE, DSL.`val`(mergedMin, tabcolst.MIN_VALUE.dataType))
+                        .set(tabcolst.MAX_VALUE, DSL.`val`(mergedMax, tabcolst.MAX_VALUE.dataType))
+                        .set(tabcolst.CONTAINS_NULL, mergedFlag(tabcolst.CONTAINS_NULL, agg.containsNull))
+                        .set(tabcolst.CONTAINS_NAN, mergedFlag(tabcolst.CONTAINS_NAN, agg.containsNan))
+                        .where(tabcolst.TABLE_ID.eq(tableId))
+                        .and(tabcolst.COLUMN_ID.eq(columnId)),
+                )
             }
             else {
                 val r = ctx.newRecord(tabcolst)
@@ -4373,13 +4417,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 // Back-date the just-registered merged file to begin = MIN row snapshot + tag it
                 // partial (partial_max = MAX row snapshot); rows newer than a time-travel read are
                 // filtered via the file's _ducklake_internal_snapshot_id column.
-                ctx.update(file)
+                metadata.execute(ctx, ctx.update(file)
                     .set(file.BEGIN_SNAPSHOT, merged.beginSnapshot)
                     .set(file.PARTIAL_MAX, merged.partialMax)
                     .where(file.TABLE_ID.eq(tableId))
                     .and(file.PATH.eq(merged.fragment.path))
                     .and(file.BEGIN_SNAPSHOT.eq(tx.getNewSnapshotId()))
-                    .execute()
+                    )
             }
 
             scheduleAndDeleteRewriteSources(tx, sourceDataFileIds)
@@ -4564,7 +4608,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      */
     private fun netRewriteStats(tx: DucklakeWriteTransaction, tableId: Long, retired: RetiredSourceStats) {
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
-        tx.dsl().update(tabstats)
+        metadata.execute(tx.dsl(), tx.dsl().update(tabstats)
             .set(
                 tabstats.RECORD_COUNT,
                 DSL.greatest(DSL.inline(0L), tabstats.RECORD_COUNT.minus(retired.recordCount)),
@@ -4574,7 +4618,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 DSL.greatest(DSL.inline(0L), tabstats.FILE_SIZE_BYTES.minus(retired.fileSizeBytes)),
             )
             .where(tabstats.TABLE_ID.eq(tableId))
-            .execute()
+            )
         recomputeTableColumnStats(tx.dsl(), tableId, tx.getNewSnapshotId())
     }
 
@@ -4636,11 +4680,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
         }
         if (plain.isNotEmpty()) {
-            ctx.update(delfile)
+            metadata.execute(ctx, ctx.update(delfile)
                 .set(delfile.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(delfile.DATA_FILE_ID.`in`(plain.mapTo(HashSet()) { it.dataFileId }))
                 .and(delfile.END_SNAPSHOT.isNull)
-                .execute()
+                )
         }
         insertDeleteFileRows(tx, tableId, deleteFragments, requireCommitSnapshotMatch = true)
     }
@@ -5118,22 +5162,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 message.contains("primary key or unique constraint violation") // DuckDB commit
         }
 
-        /**
-         * Roll back after a failed statement WITHOUT letting a failing rollback replace the original
-         * error. DuckDB auto-aborts the transaction on a constraint or conflict error, so the
-         * subsequent `rollback()` throws "cannot rollback - no transaction is active"; if that escaped
-         * the catch block the conflict classification above would never see the real exception and
-         * the commit would surface as an opaque failure instead of being retried.
-         */
-        private fun rollbackQuietly(conn: java.sql.Connection, original: Throwable) {
-            try {
-                conn.rollback()
-            }
-            catch (e: SQLException) {
-                original.addSuppressed(e)
-                log.log(System.Logger.Level.DEBUG, "rollback after failure itself failed: {0}", e.message)
-            }
-        }
 
         // DuckLake's jOOQ codegen marks most BIGINT columns as nullable (no schema-level NOT NULL
         // constraint), so accessor methods return Long. The JDBC implementation historically used

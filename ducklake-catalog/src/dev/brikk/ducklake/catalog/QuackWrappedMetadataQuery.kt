@@ -48,7 +48,7 @@ import java.util.stream.Collectors
  * `Record.into(Class)` mapping picks the columns up by name into the
  * caller's generated record type without further coercion hints.
  */
-internal class QuackWrappedMetadataQuery(private val metadataCatalogName: String) : MetadataQuery {
+internal class QuackWrappedMetadataQuery(val metadataCatalogName: String) : MetadataQuery {
 
     override fun <R : Record> fetchOne(dsl: DSLContext, query: ResultQuery<R>): R? {
         val wrapped = wrap(dsl.renderInlined(query))
@@ -95,14 +95,68 @@ internal class QuackWrappedMetadataQuery(private val metadataCatalogName: String
         return if (value is Number) value.toInt() else 0
     }
 
-    private fun wrap(innerSql: String): String =
-        ("CALL system.main.quack_query_by_name("
-                + sqlLiteral(metadataCatalogName)
-                + ", "
-                + sqlLiteral(innerSql)
-                + ")")
+    /**
+     * Quack transactions: the Quack client only sends `BEGIN TRANSACTION` to the server lazily
+     * (`QuackTransaction::ForceStart`, on catalog-level DDL), and neither its appends nor
+     * `quack_query_by_name` go through that path — so the local JDBC transaction has no server-side
+     * counterpart and a local `rollback()` undoes nothing. Sending BEGIN / COMMIT / ROLLBACK through
+     * the wrapper opens a real transaction on the connection's server session: wrapped statements,
+     * direct appends and direct reads on the same connection all participate, other sessions do not
+     * see uncommitted rows, and a primary-key collision surfaces at COMMIT as a write-write conflict.
+     */
+    override fun begin(dsl: DSLContext) {
+        dsl.fetch(wrap("BEGIN TRANSACTION"))
+    }
+
+    override fun commit(dsl: DSLContext, connection: java.sql.Connection) {
+        dsl.fetch(wrap("COMMIT")) // a conflict is raised here; let it propagate to the classifier
+        connection.commit() // ends the (empty) local transaction so the pooled connection is clean
+    }
+
+    override fun rollback(dsl: DSLContext, connection: java.sql.Connection) {
+        try {
+            dsl.fetch(wrap("ROLLBACK"))
+        }
+        catch (e: org.jooq.exception.DataAccessException) {
+            // A failed COMMIT has already ended the server transaction; nothing left to roll back.
+            LOG.log(System.Logger.Level.DEBUG, "quack ROLLBACK after failure: {0}", e.message)
+        }
+        connection.rollback()
+    }
+
+    private fun wrap(innerSql: String): String = wrap(metadataCatalogName, innerSql)
+
+    /**
+     * jOOQ [org.jooq.ExecuteListener] that routes every rendered `SELECT` on the Quack backend
+     * through `quack_query_by_name` — the attached-catalog scan path rejects any query with more
+     * than one scan ("Multiple streaming scans … are not currently supported"), while the wrapped
+     * SQL runs server-side as plain DuckDB. Requires `StatementType.STATIC_STATEMENT` so the SQL
+     * seen at [renderEnd] has its bind values inlined (the wrapper takes one text literal). Column
+     * names that collide across joined tables are aliased positionally (`_q(c0, c1, …)`); jOOQ maps
+     * typed selects by position so the caller's fields still resolve. Mutations are NOT rewritten
+     * here — they go through [MetadataQuery.execute] explicitly, and direct INSERTs (Quack appends)
+     * take part in the server transaction on their own.
+     */
+    class ReadWrappingListener(private val metadataCatalogName: String) : org.jooq.impl.DefaultExecuteListener() {
+        override fun renderEnd(ctx: org.jooq.ExecuteContext) {
+            val query = ctx.query() as? ResultQuery<*> ?: return
+            val sql = ctx.sql() ?: return
+            if (sql.trimStart().startsWith("CALL ", ignoreCase = true)) {
+                return // already wrapped (MetadataQuery paths, BEGIN/COMMIT/ROLLBACK)
+            }
+            val fields = query.fields()
+            val names = fields.map { it.name }
+            val inner = if (fields.isNotEmpty() && names.toSet().size != names.size) aliasColumnsPositionally(sql, fields.size) else sql
+            ctx.sql(wrap(metadataCatalogName, inner))
+        }
+    }
 
     companion object {
+        private val LOG: System.Logger = System.getLogger(QuackWrappedMetadataQuery::class.java.name)
+
+        private fun wrap(metadataCatalogName: String, innerSql: String): String =
+            "CALL system.main.quack_query_by_name(${sqlLiteral(metadataCatalogName)}, ${sqlLiteral(innerSql)})"
+
         private fun aliasColumnsPositionally(innerSql: String, columnCount: Int): String {
             val aliases = StringBuilder()
             for (i in 0 until columnCount) {

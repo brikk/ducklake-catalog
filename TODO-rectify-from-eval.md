@@ -701,7 +701,22 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
 - `beforeWriteTransactionAction :1989-1990` is a `@Volatile public var` test seam on the production class.
 
 ### C-D5 · DRIFT · Quack backend routing is inconsistent / unverified
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED — Quack writes are a supported path, verified end to end. Probing the server showed the
+  answer to the open question: on Quack the local JDBC transaction reaches the server for NOTHING — neither the
+  attached-catalog append nor `quack_query_by_name` — so a local `rollback()` undid nothing and a wrapped INSERT
+  was visible to other sessions immediately (the Quack client only sends `BEGIN TRANSACTION` lazily from
+  `QuackTransaction::ForceStart`, which those paths bypass). Sending `BEGIN TRANSACTION` / `COMMIT` / `ROLLBACK`
+  through the wrapper opens a real transaction on the connection's server session in which wrapped statements,
+  direct appends and direct reads all participate, with isolation, and a PK collision surfaces at COMMIT as a
+  write-write conflict. So: `MetadataQuery.begin/commit/rollback` hooks (no-ops / JDBC on direct backends,
+  wrapped on Quack) drive every transactional unit (`attemptWriteTransaction`, `analyzeTable`, `expireSnapshots`,
+  `readSession`); every direct UPDATE / DELETE / DROP now goes through `metadata.execute`; and a jOOQ
+  `ExecuteListener` (`QuackWrappedMetadataQuery.ReadWrappingListener`, with `STATIC_STATEMENT`) rewrites every
+  rendered SELECT into the wrapper — the attached-catalog scan rejects any query with two scans — aliasing
+  positionally only when column names collide. INSERTs stay direct (appends join the server transaction).
+  `TestJdbcDucklakeCatalogOnQuackWrites`: create/insert/delete/add/rename/retype/drop column/comment/rewrite/drop
+  table/drop schema, views + analyze + expire + readSession, an aborted commit rolling back wrapped and direct
+  statements together, and the snapshot-PK collision retried (surfaces at the wrapped COMMIT).
 - Upstream `QuackMetadataManager::Query` (`quack_metadata_manager.cpp:15-31`) routes every statement (incl. the whole
   commit batch) through `quack_query_by_name` as one server-side call. Library mixes two paths in one "transaction":
   INSERTs via the attached catalog on the local connection, UPDATE/DELETE via `metadata.execute` →
