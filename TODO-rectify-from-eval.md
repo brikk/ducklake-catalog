@@ -34,9 +34,10 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
 
 ### 2026-09-04 cross-repo reconciliation (`trino-ducklake/dev-docs/TODO-rectify-from-eval.md`)
 - [x] **P-H1 / P-M1 (catalog half):** `listAllReferencedFiles()` returns every data/delete row at
-  every snapshot with its owning table path, including dropped-but-unexpired tables, and returns
-  scheduled rows separately because their relative paths use catalog `data_path`, not a table path.
-  Commit `861f67c`; Trino must switch `remove_orphan_files` to the new API.
+  every snapshot with its complete owning `schema path → table path → file path` hierarchy,
+  including dropped-but-unexpired tables/schemas, and returns scheduled rows separately because
+  their relative paths use catalog `data_path`, not a table path. Initial API commit `861f67c`;
+  0.7.0 adds the required schema path fields. Trino must switch `remove_orphan_files` to this API.
 - [x] **E-M5:** upstream's `ducklake_schema.schema_id PRIMARY KEY` makes a versioned same-id schema
   rename impossible (and upstream has no schema rename). The replacement row now preserves
   `schema_uuid`; schema-scoped settings and versioned tags/comments follow the replacement id;

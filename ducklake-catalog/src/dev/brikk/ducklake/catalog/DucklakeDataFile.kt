@@ -109,11 +109,16 @@ data class DucklakeFilePathRef(
 )
 
 /**
- * A data/delete file reference together with the owning table path needed to resolve a relative
- * [path]. The table row is the latest catalog row for [tableId], whether active or dropped: files
- * of a dropped-but-unexpired table remain catalog-owned and must not be classified as orphans.
+ * A data/delete file reference together with its complete owning path hierarchy. A relative
+ * [path] is relative to [tablePath]; a relative [tablePath] is relative to [schemaPath]; a relative
+ * [schemaPath] is relative to the catalog-global `data_path`. The table/schema rows are retained
+ * whether active or dropped: files of dropped-but-unexpired objects remain catalog-owned and must
+ * not be classified as orphans.
  */
 data class DucklakeTableFilePathRef(
+    val schemaId: Long,
+    val schemaPath: String?,
+    val schemaPathIsRelative: Boolean?,
     val tableId: Long,
     val tablePath: String?,
     val tablePathIsRelative: Boolean?,

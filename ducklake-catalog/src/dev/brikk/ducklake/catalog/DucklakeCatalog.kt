@@ -149,8 +149,9 @@ interface DucklakeCatalog : AutoCloseable {
     /**
      * Every storage path referenced anywhere in the catalog, regardless of table/snapshot
      * liveness. Unlike [listReferencedFilePaths], this includes dropped-but-unexpired tables and
-     * keeps scheduled paths in their catalog-root namespace instead of mixing them with paths
-     * relative to a table directory. This is the safe known set for catalog-wide orphan sweeps.
+     * carries each file's full schema-path → table-path → file-path hierarchy, and keeps scheduled
+     * paths in their catalog-root namespace instead of mixing them with paths relative to a table
+     * directory. This is the safe known set for catalog-wide orphan sweeps.
      */
     fun listAllReferencedFiles(): DucklakeReferencedFiles
 

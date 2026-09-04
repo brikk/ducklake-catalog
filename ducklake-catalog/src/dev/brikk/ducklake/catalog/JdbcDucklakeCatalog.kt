@@ -752,6 +752,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun listAllReferencedFiles(): DucklakeReferencedFiles {
+        val sch = DUCKLAKE_SCHEMA.`as`("sch")
         val tab = DUCKLAKE_TABLE.`as`("tab")
         // A table id may have several versioned rows after rename. Its storage path is preserved,
         // so use the latest row; importantly, do NOT filter activeAt — dropped-but-unexpired table
@@ -764,6 +765,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val table = toDucklakeTable(row)
             tables.putIfAbsent(table.tableId, table)
         }
+        val schemas = linkedMapOf<Long, DucklakeSchema>()
+        metadata.fetch(
+            dsl,
+            dsl.selectFrom(sch).orderBy(sch.SCHEMA_ID, sch.BEGIN_SNAPSHOT.desc()),
+        ).forEach { row ->
+            val schema = toDucklakeSchema(row)
+            schemas.putIfAbsent(schema.schemaId, schema)
+        }
 
         val tableFiles = mutableListOf<DucklakeTableFilePathRef>()
         fun collect(tableId: Long?, path: String?, pathIsRelative: Boolean?) {
@@ -772,8 +781,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
             val table = tables[tableId]
                 ?: throw DucklakeCatalogCorruptionException("file row references missing table_id $tableId")
+            val schema = schemas[table.schemaId]
+                ?: throw DucklakeCatalogCorruptionException(
+                    "table_id $tableId references missing schema_id ${table.schemaId}",
+                )
             tableFiles.add(
                 DucklakeTableFilePathRef(
+                    schema.schemaId,
+                    schema.path,
+                    schema.pathIsRelative,
                     tableId,
                     table.path,
                     table.pathIsRelative,

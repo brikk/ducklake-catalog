@@ -318,6 +318,10 @@ class TestJdbcDucklakeCatalogCoverageFiles {
             .containsExactlyInAnyOrderElementsOf(expectedData + expectedDeletes)
         assertThat(tableRefs.map { it.path }).doesNotContainAnyElementsOf(expectedScheduled)
         assertThat(tableRefs).allSatisfy {
+            val schema = catalog.getSchema(SCHEMA, catalog.currentSnapshotId)!!
+            assertThat(it.schemaId).isEqualTo(schema.schemaId)
+            assertThat(it.schemaPath).isEqualTo(schema.path)
+            assertThat(it.schemaPathIsRelative).isEqualTo(schema.pathIsRelative)
             assertThat(it.tablePath).isEqualTo(table.path)
             assertThat(it.tablePathIsRelative).isEqualTo(table.pathIsRelative)
         }
@@ -339,8 +343,11 @@ class TestJdbcDucklakeCatalogCoverageFiles {
         catalog.commitInsert(table.tableId, listOf(fragment("owned.parquet", id, 1)))
         val beforeDrop = catalog.currentSnapshotId
         catalog.dropTable("known_dropped", "t")
+        val schema = catalog.getSchema("known_dropped", catalog.currentSnapshotId)!!
+        catalog.dropSchema("known_dropped")
 
         assertThat(catalog.getTable("known_dropped", "t", catalog.currentSnapshotId)).isNull()
+        assertThat(catalog.getSchema("known_dropped", catalog.currentSnapshotId)).isNull()
         assertThat(catalog.getTable("known_dropped", "t", beforeDrop)).isNotNull()
         assertThat(catalog.listAllReferencedFiles().tableFiles)
             .`as`("time-travel files remain known after DROP until snapshot expiry schedules them")
@@ -348,6 +355,9 @@ class TestJdbcDucklakeCatalogCoverageFiles {
                 assertThat(it.tableId).isEqualTo(table.tableId)
                 assertThat(it.path).isEqualTo("owned.parquet")
                 assertThat(it.tablePath).isEqualTo(table.path)
+                assertThat(it.schemaId).isEqualTo(schema.schemaId)
+                assertThat(it.schemaPath).isEqualTo(schema.path)
+                assertThat(it.schemaPathIsRelative).isEqualTo(schema.pathIsRelative)
             }
     }
 
