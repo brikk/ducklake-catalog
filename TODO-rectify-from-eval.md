@@ -32,6 +32,24 @@ Suggested order of attack: W-B1, W-B4, W-B5 (catalog becomes unloadable for Duck
 C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend-specific breakage)
 → everything else.
 
+### 2026-09-04 cross-repo reconciliation (`trino-ducklake/dev-docs/TODO-rectify-from-eval.md`)
+- [x] **P-H1 / P-M1 (catalog half):** `listAllReferencedFiles()` returns every data/delete row at
+  every snapshot with its owning table path, including dropped-but-unexpired tables, and returns
+  scheduled rows separately because their relative paths use catalog `data_path`, not a table path.
+  Commit `861f67c`; Trino must switch `remove_orphan_files` to the new API.
+- [x] **E-M5:** upstream's `ducklake_schema.schema_id PRIMARY KEY` makes a versioned same-id schema
+  rename impossible (and upstream has no schema rename). The replacement row now preserves
+  `schema_uuid`; schema-scoped settings and versioned tags/comments follow the replacement id;
+  every re-pointed table gets a `ducklake_schema_versions` row. Commit `26cd2ca`.
+- [x] **T-H5 / T-M4 / T-L5:** DROP COLUMN guards active partition/sort dependencies and the last
+  top-level column; DDL rejects reserved inlined-system names; schema/table/view resolution and
+  rename clashes are case-insensitive. Commit `f64072a`.
+- [x] **E-L5 / E-L8 / E-L11 / T-L2:** database clock for snapshots/scheduled files; NULL
+  `row_id_start` fails as corruption; file reads order by `data_file_id`; new column rows use
+  upstream `column_order = column_id`. Commit `90927e3`.
+- [ ] **Connector-only follow-ups:** TR-1, TR-2, TR-4, TR-6/TR-7, TR-9, TR-10, TR-11, TR-12 and
+  adoption of the new P-H1/P-M1 API remain in the Trino repository; they are not catalog changes.
+
 ---
 
 ## W — Write path (verified against upstream source)
