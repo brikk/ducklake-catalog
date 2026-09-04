@@ -105,6 +105,12 @@ class TestJdbcDucklakeCatalogCoverageDdl {
     private fun pg(sql: String): List<List<String?>> =
         DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { it.rows(sql) }
 
+    private fun pgExec(sql: String) {
+        DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { connection ->
+            connection.createStatement().use { it.execute(sql) }
+        }
+    }
+
     private fun q(s: String) = "'" + s.replace("'", "''") + "'"
 
     private fun table(name: String, schema: String = SCHEMA): DucklakeTable =
@@ -207,6 +213,14 @@ class TestJdbcDucklakeCatalogCoverageDdl {
         val oldSchema = catalog.getSchema("rs_old", before)!!
         val t = table("t", "rs_old")
         val v = catalog.getView("rs_old", "v", before)!!
+        pgExec(
+            "INSERT INTO ducklake_metadata(key, value, scope, scope_id) " +
+                "VALUES ('parquet_compression', 'zstd', 'schema', ${oldSchema.schemaId})",
+        )
+        pgExec(
+            "INSERT INTO ducklake_tag(object_id, begin_snapshot, key, value) " +
+                "VALUES (${oldSchema.schemaId}, $before, 'comment', 'schema comment')",
+        )
 
         catalog.renameSchema("rs_old", "rs_new")
         val after = catalog.currentSnapshotId
@@ -214,6 +228,7 @@ class TestJdbcDucklakeCatalogCoverageDdl {
 
         val newSchema = catalog.getSchema("rs_new", after)!!
         assertThat(newSchema.schemaId).`as`("PK on schema_id forces a NEW id").isNotEqualTo(oldSchema.schemaId)
+        assertThat(newSchema.schemaUuid).`as`("logical schema identity survives the replacement row").isEqualTo(oldSchema.schemaUuid)
         assertThat(newSchema.path).`as`("keeps the OLD path so no data moves").isEqualTo(oldSchema.path)
         assertThat(newSchema.pathIsRelative).isEqualTo(oldSchema.pathIsRelative)
         assertThat(newSchema.beginSnapshot).isEqualTo(after)
@@ -240,6 +255,7 @@ class TestJdbcDucklakeCatalogCoverageDdl {
             .contains("created_schema:\"rs_new\"")
             .contains("altered_table:${t.tableId}")
         assertThat(schemaVersionOf(after)).isEqualTo(schemaVersionOf(before) + 1)
+        assertRenamedSchemaMetadata(oldSchema, newSchema, t.tableId, before, after)
 
         // Oracle: DuckDB resolves the data through the renamed schema (the path did not move).
         assertThat(duckColumn("SELECT v FROM lake.rs_new.t ORDER BY id")).containsExactly("a", "b")
@@ -247,6 +263,38 @@ class TestJdbcDucklakeCatalogCoverageDdl {
         assertThat(duckColumn("SELECT schema_name FROM information_schema.schemata WHERE catalog_name = 'lake' AND schema_name IN ('rs_old', 'rs_new')"))
             .containsExactly("rs_new")
         assertThat(duckColumn("SELECT v FROM lake.rs_old.t AT (VERSION => $before) ORDER BY id")).containsExactly("a", "b")
+    }
+
+    private fun assertRenamedSchemaMetadata(
+        oldSchema: DucklakeSchema,
+        newSchema: DucklakeSchema,
+        tableId: Long,
+        before: Long,
+        after: Long,
+    ) {
+        assertThat(
+            pg(
+                "SELECT scope_id::text FROM ducklake_metadata " +
+                    "WHERE scope = 'schema' AND key = 'parquet_compression'",
+            ).flatten(),
+        ).`as`("schema-scoped settings follow the replacement schema id").containsExactly(newSchema.schemaId.toString())
+        assertThat(
+            pg(
+                "SELECT object_id::text, begin_snapshot::text, end_snapshot::text, value FROM ducklake_tag " +
+                    "WHERE key = 'comment' AND object_id IN (${oldSchema.schemaId}, ${newSchema.schemaId}) " +
+                    "ORDER BY begin_snapshot",
+            ),
+        ).`as`("old comment remains for time travel; the active copy belongs to the new id")
+            .containsExactly(
+                listOf(oldSchema.schemaId.toString(), before.toString(), after.toString(), "schema comment"),
+                listOf(newSchema.schemaId.toString(), after.toString(), null, "schema comment"),
+            )
+        assertThat(
+            pg(
+                "SELECT table_id::text FROM ducklake_schema_versions " +
+                    "WHERE begin_snapshot = $after AND schema_version = ${schemaVersionOf(after)}",
+            ).flatten(),
+        ).`as`("every re-pointed table gets a schema-version history row").contains(tableId.toString())
     }
 
     @Test

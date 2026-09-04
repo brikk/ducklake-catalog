@@ -3550,7 +3550,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             )
             ctx.insertInto(sch)
                 .set(sch.SCHEMA_ID, newSchemaId)
-                .set(sch.SCHEMA_UUID, UUID.fromString(newCatalogUuid()))
+                // schema_id is the versioned row key and must change (upstream declares it PRIMARY
+                // KEY), but schema_uuid is the logical identity and survives the rename.
+                .set(sch.SCHEMA_UUID, existing.get(sch.SCHEMA_UUID))
                 .set(sch.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
                 .set(sch.SCHEMA_NAME, newName)
                 .set(sch.PATH, existing.get(sch.PATH))
@@ -3582,6 +3584,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .set(tab.PATH_IS_RELATIVE, t.get(tab.PATH_IS_RELATIVE))
                     .execute()
                 tx.recordChange(WriteChange.AlteredTable(tableId))
+                // Re-pointing schema_id changes the table's catalog definition. Record the new
+                // schema version for this table so schema-version reads resolve the move.
+                tx.incrementSchemaVersion(tableId)
             }
 
             val activeViews = metadata.fetch(
@@ -3638,6 +3643,46 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .set(macro.MACRO_NAME, m.get(macro.MACRO_NAME))
                     .set(macro.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
                     .execute()
+            }
+
+            // Schema-scoped settings are unversioned and schema_id is never reused: move them to
+            // the replacement id. Without this, a rename silently loses settings such as
+            // data_inlining_row_limit / parquet_compression.
+            val meta = DUCKLAKE_METADATA.`as`("meta")
+            metadata.execute(
+                ctx,
+                ctx.update(meta)
+                    .set(meta.SCOPE_ID, newSchemaId)
+                    .where(meta.SCOPE.eq(SCHEMA_SETTING_SCOPE))
+                    .and(meta.SCOPE_ID.eq(schemaId)),
+            )
+
+            // Tags (including comments) are snapshot-versioned. Preserve the old-id rows for time
+            // travel and copy each active tag to the replacement schema id at the rename snapshot.
+            val tag = DUCKLAKE_TAG.`as`("tag")
+            val activeTags = metadata.fetch(
+                ctx,
+                ctx.select(tag.KEY, tag.VALUE)
+                    .from(tag)
+                    .where(tag.OBJECT_ID.eq(schemaId))
+                    .and(activeAt(tag, tx.getCurrentSnapshotId())),
+            )
+            if (activeTags.isNotEmpty()) {
+                metadata.execute(
+                    ctx,
+                    ctx.update(tag)
+                        .set(tag.END_SNAPSHOT, tx.getNewSnapshotId())
+                        .where(tag.OBJECT_ID.eq(schemaId))
+                        .and(tag.END_SNAPSHOT.isNull),
+                )
+                activeTags.forEach { oldTag ->
+                    ctx.insertInto(tag)
+                        .set(tag.OBJECT_ID, newSchemaId)
+                        .set(tag.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
+                        .set(tag.KEY, oldTag.get(tag.KEY))
+                        .set(tag.VALUE, oldTag.get(tag.VALUE))
+                        .execute()
+                }
             }
 
             tx.incrementSchemaVersion()
@@ -4922,6 +4967,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // declares WITH (data_file_format = ...); read back by write-format resolution.
         private const val TABLE_DATA_FILE_FORMAT_KEY = "data_file_format"
         private const val TABLE_SETTING_SCOPE = "table"
+        private const val SCHEMA_SETTING_SCOPE = "schema"
 
         // Tag key upstream COMMENT ON writes into ducklake_tag / ducklake_column_tag.
         private const val COMMENT_TAG_KEY = "comment"
