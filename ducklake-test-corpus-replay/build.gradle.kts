@@ -11,7 +11,7 @@ plugins {
     alias(libs.plugins.vanniktech.publish)
 }
 
-version = "0.6.0-SNAPSHOT"
+version = "0.6.0"
 
 // Published to Maven Central as dev.brikk.ducklake:ducklake-test-corpus-replay. This ships the
 // engine-agnostic replay FRAMEWORK only (DuckDB oracle, SLT parser/driver, ReplayReadEngine
