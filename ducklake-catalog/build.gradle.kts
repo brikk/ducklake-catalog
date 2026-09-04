@@ -17,7 +17,7 @@ plugins {
     alias(libs.plugins.vanniktech.publish)
 }
 
-version = "0.5.0"
+version = "0.6.0-SNAPSHOT"
 
 // Published to Maven Central as dev.brikk.ducklake:ducklake-catalog. The java-test-fixtures
 // variant (TestingDucklake*CatalogServer + testing helpers) is published alongside the main
