@@ -310,6 +310,86 @@ class TestJdbcDucklakeCatalogCoverageDdl {
         assertThat(catalog.currentSnapshotId).isEqualTo(snapshot)
     }
 
+    @Test
+    fun tableAndSchemaNamesResolveAndClashCaseInsensitively() {
+        catalog.createSchema("CaseSchema")
+        catalog.createTable(
+            "caseschema", "Alpha",
+            listOf(TableColumnSpec.leaf("id", "int32", true)),
+            null, null,
+        )
+        catalog.createTable(
+            "CASESCHEMA", "Bravo",
+            listOf(TableColumnSpec.leaf("id", "int32", true)),
+            null, null,
+        )
+        val bravo = table("bravo", "caseschema")
+        assertThatThrownBy { catalog.renameTable(bravo.tableId, "CaseSchema", "aLPHa") }
+            .isInstanceOf(DucklakeEntityAlreadyExistsException::class.java)
+        assertThatThrownBy { catalog.renameSchema("caseschema", "CASESCHEMA") }
+            .isInstanceOf(DucklakeEntityAlreadyExistsException::class.java)
+
+        catalog.dropTable("caseschema", "ALPHA")
+        assertThat(catalog.getTable("CaseSchema", "alpha", catalog.currentSnapshotId)).isNull()
+    }
+
+    @Test
+    fun reservedInlinedSystemColumnNamesAreRejectedAtTheDdlBoundary() {
+        val before = catalog.currentSnapshotId
+        assertThatThrownBy {
+            catalog.createTable(
+                SCHEMA, "reserved_create",
+                listOf(TableColumnSpec.leaf("_ducklake_internal_row_id", "int64", true)),
+                null, null,
+            )
+        }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("reserved")
+        assertThat(catalog.currentSnapshotId).isEqualTo(before)
+
+        catalog.createTable(
+            SCHEMA, "reserved_alter",
+            listOf(TableColumnSpec.leaf("id", "int32", true), TableColumnSpec.leaf("v", "varchar", true)),
+            null, null,
+        )
+        val table = table("reserved_alter")
+        assertThatThrownBy { catalog.addColumn(table.tableId, TableColumnSpec.leaf("begin_snapshot", "int64", true)) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java)
+        val id = columnsByPath(table.tableId, catalog.currentSnapshotId).getValue("id").columnId
+        assertThatThrownBy { catalog.renameColumn(table.tableId, id, "ROW_ID") }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java)
+    }
+
+    @Test
+    fun dropColumnRefusesPartitionSortAndLastColumnDependencies() {
+        catalog.createTable(
+            SCHEMA, "drop_part_guard",
+            listOf(TableColumnSpec.leaf("region", "varchar", true), TableColumnSpec.leaf("v", "int32", true)),
+            listOf(PartitionFieldSpec("region", DucklakePartitionTransform.IDENTITY)),
+            null,
+        )
+        val partitioned = table("drop_part_guard")
+        val partCols = columnsByPath(partitioned.tableId, catalog.currentSnapshotId)
+        assertThatThrownBy { catalog.dropColumn(partitioned.tableId, partCols.getValue("region").columnId) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java)
+            .hasMessageContaining("partitioned by")
+
+        duckExec(
+            "CREATE TABLE lake.$SCHEMA.drop_sort_guard (a INTEGER, b INTEGER)",
+            "ALTER TABLE lake.$SCHEMA.drop_sort_guard SET SORTED BY (b DESC NULLS FIRST)",
+        )
+        val sorted = table("drop_sort_guard")
+        val sortCols = columnsByPath(sorted.tableId, catalog.currentSnapshotId)
+        assertThatThrownBy { catalog.dropColumn(sorted.tableId, sortCols.getValue("b").columnId) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java)
+            .hasMessageContaining("sorted by")
+
+        catalog.createTable(SCHEMA, "drop_last_guard", listOf(TableColumnSpec.leaf("only", "int32", true)), null, null)
+        val last = table("drop_last_guard")
+        val only = columnsByPath(last.tableId, catalog.currentSnapshotId).getValue("only")
+        assertThatThrownBy { catalog.dropColumn(last.tableId, only.columnId) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java)
+            .hasMessageContaining("one column")
+    }
+
     // ---------------------------------------------------------------- addField / dropField
 
     private fun structColumns() = listOf(

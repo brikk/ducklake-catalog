@@ -368,7 +368,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     override fun getSchema(schemaName: String, snapshotId: Long): DucklakeSchema? {
         val sch = DUCKLAKE_SCHEMA.`as`("sch")
         return dsl.selectFrom(sch)
-            .where(sch.SCHEMA_NAME.eq(schemaName))
+            .where(DSL.lower(sch.SCHEMA_NAME).eq(schemaName.lowercase(Locale.ENGLISH)))
             .and(activeAt(sch, snapshotId))
             .fetchOne()
             ?.let { toDucklakeSchema(it) }
@@ -388,7 +388,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val tab = DUCKLAKE_TABLE.`as`("tab")
         return dsl.selectFrom(tab)
             .where(tab.SCHEMA_ID.eq(schema.schemaId))
-            .and(tab.TABLE_NAME.eq(tableName))
+            .and(DSL.lower(tab.TABLE_NAME).eq(tableName.lowercase(Locale.ENGLISH)))
             .and(activeAt(tab, snapshotId))
             .fetchOne()
             ?.let { toDucklakeTable(it) }
@@ -2311,7 +2311,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         val view = DUCKLAKE_VIEW.`as`("view")
         val matches = fetchViewsWithTags(
-            view.SCHEMA_ID.eq(schema.schemaId).and(view.VIEW_NAME.eq(viewName)),
+            view.SCHEMA_ID.eq(schema.schemaId)
+                .and(DSL.lower(view.VIEW_NAME).eq(viewName.lowercase(Locale.ENGLISH))),
             snapshotId,
         )
         if (matches.size > 1) {
@@ -2866,7 +2867,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         )
             .from(view)
             .where(view.SCHEMA_ID.eq(schemaId))
-            .and(view.VIEW_NAME.eq(viewName))
+            .and(DSL.lower(view.VIEW_NAME).eq(viewName.lowercase(Locale.ENGLISH)))
             .and(activeAt(view, tx.getCurrentSnapshotId()))
             .fetchOne()
         if (row == null) {
@@ -3026,6 +3027,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         location: TableLocationSpec?,
         dataFileFormat: String?,
     ) {
+        columns.forEach { InlinedDataTables.requireNonSystemColumn(it.name) }
         val tab = DUCKLAKE_TABLE.`as`("tab")
         val partinfo = DUCKLAKE_PARTITION_INFO.`as`("partinfo")
         val partcol = DUCKLAKE_PARTITION_COLUMN.`as`("partcol")
@@ -3463,7 +3465,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 ctx.select(tab.TABLE_ID)
                     .from(tab)
                     .where(tab.SCHEMA_ID.eq(targetSchemaId))
-                    .and(tab.TABLE_NAME.eq(newTableName))
+                    .and(DSL.lower(tab.TABLE_NAME).eq(newTableName.lowercase(Locale.ENGLISH)))
                     .and(activeAt(tab, tx.getCurrentSnapshotId())),
             )
             if (clash != null) {
@@ -3521,7 +3523,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 ctx,
                 ctx.select(sch.SCHEMA_ID)
                     .from(sch)
-                    .where(sch.SCHEMA_NAME.eq(newName))
+                    .where(DSL.lower(sch.SCHEMA_NAME).eq(newName.lowercase(Locale.ENGLISH)))
                     .and(activeAt(sch, tx.getCurrentSnapshotId())),
             )
             if (clash != null) {
@@ -3770,6 +3772,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun addColumn(tableId: Long, column: TableColumnSpec) {
+        InlinedDataTables.requireNonSystemColumn(column.name)
         val col = DUCKLAKE_COLUMN.`as`("col")
         executeWriteTransaction("add column to table $tableId") { tx ->
             // Find the current max column_order for top-level columns
@@ -3801,6 +3804,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // "Could not find parent column for column ...". Mirrors
             // DuckLakeTableEntry::RemoveColumns, which recurses.
             val subtree = collectSubtreeIds(columns, columnId)
+            validateColumnCanBeDropped(ctx, tableId, columns, columnId, subtree, tx.getCurrentSnapshotId())
             metadata.execute(ctx, ctx.update(col)
                 .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(col.TABLE_ID.eq(tableId))
@@ -3815,12 +3819,146 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun renameColumn(tableId: Long, columnId: Long, newName: String) {
         executeWriteTransaction("rename column in table $tableId") { tx ->
+            val current = activeColumnRows(tx.dsl(), tableId, tx.getCurrentSnapshotId())
+                .firstOrNull { it.columnId == columnId }
+                ?: throw DucklakeEntityNotFoundException("column", columnId.toString())
+            if (current.parentColumn == null) {
+                InlinedDataTables.requireNonSystemColumn(newName)
+            }
             replaceColumnVersion(tx, tableId, columnId, topLevelOnly = false) { next ->
                 next.setColumnName(newName)
             }
             tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
+    }
+
+    private fun validateColumnCanBeDropped(
+        ctx: DSLContext,
+        tableId: Long,
+        columns: List<DucklakeColumn>,
+        columnId: Long,
+        subtree: Set<Long>,
+        snapshotId: Long,
+    ) {
+        val column = columns.first { it.columnId == columnId }
+        if (column.parentColumn == null && columns.count { it.parentColumn == null } == 1) {
+            throw DucklakeInvalidOperationException(
+                "Cannot drop column '${column.columnName}': table only has one column remaining",
+            )
+        }
+        requireColumnNotPartitioned(ctx, tableId, column, subtree, snapshotId)
+        requireColumnNotSorted(ctx, tableId, column, snapshotId)
+    }
+
+    private fun requireColumnNotPartitioned(
+        ctx: DSLContext,
+        tableId: Long,
+        column: DucklakeColumn,
+        subtree: Set<Long>,
+        snapshotId: Long,
+    ) {
+        val partinfo = DUCKLAKE_PARTITION_INFO.`as`("partinfo")
+        val partcol = DUCKLAKE_PARTITION_COLUMN.`as`("partcol")
+        val match = metadata.fetchOne(
+            ctx,
+            ctx.selectOne().from(partinfo)
+                .innerJoin(partcol)
+                .on(partinfo.PARTITION_ID.eq(partcol.PARTITION_ID))
+                .and(partinfo.TABLE_ID.eq(partcol.TABLE_ID))
+                .where(partinfo.TABLE_ID.eq(tableId))
+                .and(activeAt(partinfo, snapshotId))
+                .and(partcol.COLUMN_ID.`in`(subtree))
+                .limit(1),
+        )
+        if (match != null) {
+            throw DucklakeInvalidOperationException(
+                "Cannot drop column '${column.columnName}': the table is partitioned by this column",
+            )
+        }
+    }
+
+    private fun requireColumnNotSorted(
+        ctx: DSLContext,
+        tableId: Long,
+        column: DucklakeColumn,
+        snapshotId: Long,
+    ) {
+        val sortinfo = DUCKLAKE_SORT_INFO.`as`("sortinfo")
+        val sortexpr = DUCKLAKE_SORT_EXPRESSION.`as`("sortexpr")
+        val expressions = metadata.fetch(
+            ctx,
+            ctx.select(sortexpr.EXPRESSION).from(sortinfo)
+                .innerJoin(sortexpr)
+                .on(sortinfo.SORT_ID.eq(sortexpr.SORT_ID))
+                .and(sortinfo.TABLE_ID.eq(sortexpr.TABLE_ID))
+                .where(sortinfo.TABLE_ID.eq(tableId))
+                .and(activeAt(sortinfo, snapshotId)),
+        ).mapNotNull { it.get(sortexpr.EXPRESSION) }
+        if (expressions.any { expressionReferencesColumn(it, column.columnName) }) {
+            throw DucklakeInvalidOperationException(
+                "Cannot drop column '${column.columnName}': the table is sorted by this column",
+            )
+        }
+    }
+
+    /** SQL identifier scan for stored DuckDB sort expressions; quoted string literals are ignored. */
+    private fun expressionReferencesColumn(expression: String, columnName: String): Boolean {
+        var pos = 0
+        while (pos < expression.length) {
+            val c = expression[pos]
+            when {
+                c == '\'' -> pos = skipSqlQuoted(expression, pos, '\'')
+                c == '"' -> {
+                    val (identifier, next) = readQuotedIdentifier(expression, pos)
+                    if (identifier.equals(columnName, ignoreCase = true)) return true
+                    pos = next
+                }
+                c.isLetter() || c == '_' -> {
+                    val start = pos++
+                    while (pos < expression.length && isIdentifierPart(expression[pos])) pos++
+                    if (expression.substring(start, pos).equals(columnName, ignoreCase = true)) return true
+                }
+                else -> pos++
+            }
+        }
+        return false
+    }
+
+    private fun isIdentifierPart(c: Char): Boolean = c.isLetterOrDigit() || c == '_' || c == '$'
+
+    private fun skipSqlQuoted(text: String, start: Int, quote: Char): Int {
+        var pos = start + 1
+        while (pos < text.length) {
+            if (text[pos] != quote) {
+                pos++
+            }
+            else if (pos + 1 < text.length && text[pos + 1] == quote) {
+                pos += 2
+            }
+            else {
+                return pos + 1
+            }
+        }
+        return pos
+    }
+
+    private fun readQuotedIdentifier(text: String, start: Int): Pair<String, Int> {
+        val value = StringBuilder()
+        var pos = start + 1
+        while (pos < text.length) {
+            if (text[pos] != '"') {
+                value.append(text[pos++])
+            }
+            else if (pos + 1 < text.length && text[pos + 1] == '"') {
+                value.append('"')
+                pos += 2
+            }
+            else {
+                return value.toString() to pos + 1
+            }
+        }
+        return value.toString() to pos
     }
 
     /**
@@ -4996,7 +5134,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 DSL.selectOne()
                     .from(view)
                     .where(view.SCHEMA_ID.eq(schemaId))
-                    .and(view.VIEW_NAME.eq(viewName))
+                    .and(DSL.lower(view.VIEW_NAME).eq(viewName.lowercase(Locale.ENGLISH)))
                     .and(activeAt(view, tx.getCurrentSnapshotId())),
             )
         }
@@ -5007,7 +5145,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 DSL.selectOne()
                     .from(tab)
                     .where(tab.SCHEMA_ID.eq(schemaId))
-                    .and(tab.TABLE_NAME.eq(tableName))
+                    .and(DSL.lower(tab.TABLE_NAME).eq(tableName.lowercase(Locale.ENGLISH)))
                     .and(activeAt(tab, tx.getCurrentSnapshotId())),
             )
         }

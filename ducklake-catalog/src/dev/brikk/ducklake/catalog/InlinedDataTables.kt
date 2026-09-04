@@ -38,6 +38,16 @@ internal object InlinedDataTables {
     /** Upstream `DuckLakeUtil::IsInlinedSystemColumn`. */
     private val SYSTEM_COLUMNS = setOf("row_id", "begin_snapshot", "end_snapshot", "_ducklake_internal_snapshot_id", "_ducklake_internal_row_id")
 
+    fun isSystemColumn(name: String): Boolean = name.lowercase() in SYSTEM_COLUMNS
+
+    fun requireNonSystemColumn(name: String) {
+        if (isSystemColumn(name)) {
+            throw DucklakeInvalidOperationException(
+                "Column name '$name' is reserved by DuckLake for internal use when data inlining is enabled",
+            )
+        }
+    }
+
     /** PostgreSQL `NAMEDATALEN - 1`; DuckDB has no practical limit (upstream `MaxIdentifierLength`). */
     private const val POSTGRES_MAX_IDENTIFIER = 63
 
@@ -74,7 +84,7 @@ internal object InlinedDataTables {
     fun canInline(columns: List<InlinedTypeNode>, dialect: SQLDialect): Boolean {
         val maxIdentifier = if (dialect == SQLDialect.POSTGRES) POSTGRES_MAX_IDENTIFIER else Int.MAX_VALUE
         return columns.all { c ->
-            c.name.lowercase() !in SYSTEM_COLUMNS && c.name.length <= maxIdentifier && supportsInlining(c, dialect)
+            !isSystemColumn(c.name) && c.name.length <= maxIdentifier && supportsInlining(c, dialect)
         }
     }
 

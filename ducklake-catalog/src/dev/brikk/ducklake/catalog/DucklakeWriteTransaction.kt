@@ -78,7 +78,8 @@ internal class DucklakeWriteTransaction(
     fun resolveSchemaId(schemaName: String): Long {
         connection.prepareStatement(
             "SELECT schema_id FROM ducklake_schema " +
-                "WHERE schema_name = ? AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)",
+                "WHERE lower(schema_name) = lower(?) " +
+                "AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)",
         ).use { stmt ->
             stmt.setString(1, schemaName)
             stmt.setLong(2, currentSnapshotId)
@@ -99,7 +100,8 @@ internal class DucklakeWriteTransaction(
     fun resolveTableId(schemaId: Long, tableName: String): Long {
         connection.prepareStatement(
             "SELECT table_id FROM ducklake_table " +
-                "WHERE schema_id = ? AND table_name = ? AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)",
+                "WHERE schema_id = ? AND lower(table_name) = lower(?) " +
+                "AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)",
         ).use { stmt ->
             stmt.setLong(1, schemaId)
             stmt.setString(2, tableName)
