@@ -185,6 +185,21 @@ internal class DucklakeWriteTransaction(
         incrementSchemaVersion()
     }
 
+    private val columnSchemaChangedTableIds: MutableSet<Long> = linkedSetOf()
+
+    /**
+     * Records that this transaction changed [tableId]'s COLUMN definitions (add/drop/rename/retype a
+     * column or nested field) — upstream's `column_schema_change`. Also bumps the schema version.
+     * The commit then registers a new physical inlined-data table for the new schema version if the
+     * table already has inlined-data tables (upstream `WriteNewInlinedTables`).
+     */
+    fun recordColumnSchemaChange(tableId: Long) {
+        columnSchemaChangedTableIds.add(tableId)
+        incrementSchemaVersion(tableId)
+    }
+
+    fun getColumnSchemaChangedTableIds(): Set<Long> = columnSchemaChangedTableIds
+
     /**
      * Bumps the schema version for DDL that does not alter a table's own definition: create/drop
      * view or schema, DROP TABLE. Upstream `SchemaChangesMade()` flips for these too (a DuckDB

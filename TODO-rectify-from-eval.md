@@ -301,8 +301,14 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   Low priority; document the divergence.
 
 ### W-B7 · BUG (DuckDB interop) · Column DDL on an inlined-data table does not create the new inlined table
-- [ ] **Status:** open — found by Q-5 coverage work (`TestJdbcDucklakeCatalogCoverageDdl.
-  duckDbCanInlineRowsIntoAStructAfterALibraryAddField`, `@Disabled`).
+- [x] **Status:** RESOLVED. `DucklakeWriteTransaction.recordColumnSchemaChange` (add/drop/rename/retype column or
+  field) → at commit `registerInlinedTablesForColumnChanges` creates `ducklake_inlined_data_<t>_<newSv>` with the
+  post-change columns in the backend's PHYSICAL types (`InlinedDataTables`: PG `GetColumnTypeInternal` mapping —
+  BYTEA text, VARCHAR for nested/wide-int/temporal, DOUBLE PRECISION, …; DuckDB names elsewhere) and registers it,
+  for every table that already has inlined tables (`CanInlineColumns` honoured; a table with none is left to
+  DuckDB's on-demand creation). Tests: `TestJdbcDucklakeCatalogCoverageDdl.duckDbCanInlineRowsIntoAStructAfter
+  LibraryAddField` (re-enabled) and `duckDbCanInlineRowsAfterLibraryAddDropAndRenameColumn` (8 ALTERs of many
+  types; DuckDB inlines into the library-made table and reads back; `readInlinedDataDecoded` too).
 - Upstream: any column-schema change on a table that has `ducklake_inlined_data_tables` rows creates and registers
   `ducklake_inlined_data_<tableId>_<newSchemaVersion>` in the same commit (`ducklake_transaction_state.cpp:1245-1266`
   → `ducklake_metadata_manager.cpp:2559 WriteNewInlinedTables`), because DuckDB's `LatestInlinedTableQuery`

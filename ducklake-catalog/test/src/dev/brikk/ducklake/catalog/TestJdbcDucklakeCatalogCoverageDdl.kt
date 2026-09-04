@@ -17,7 +17,6 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import java.sql.Connection
 import java.sql.DriverManager
@@ -318,20 +317,14 @@ class TestJdbcDucklakeCatalogCoverageDdl {
     }
 
     /**
-     * Upstream creates `ducklake_inlined_data_<t>_<newSchemaVersion>` (registered in
+     * W-B7: upstream creates `ducklake_inlined_data_<t>_<newSchemaVersion>` (registered in
      * `ducklake_inlined_data_tables`) in the SAME commit as any column-schema change on a table that has
      * inlined-data tables (`ducklake_transaction_state.cpp` `column_schema_change` →
-     * `DuckLakeMetadataManager::WriteNewInlinedTables`). A later inlined INSERT then goes to that table
-     * (`LatestInlinedTableQuery` = MAX(schema_version)). The library's ALTERs do not, so DuckDB's next small
-     * INSERT lands in the OLD-schema inlined table; for a struct field the read then fails with
-     * `INTERNAL Error: Attempted to access index 0 within vector of size 0` (DuckLakeInlinedDataReader), for
-     * a top-level [DucklakeCatalog.addColumn] the INSERT itself fails to commit (the old table lacks the column).
+     * `DuckLakeMetadataManager::WriteNewInlinedTables`), because a later inlined INSERT goes to the table with
+     * the highest schema version (`LatestInlinedTableQuery`). Without it DuckDB's next small INSERT lands in
+     * the OLD-schema inlined table: for a struct field the read then INTERNAL-errors, for a top-level column
+     * the INSERT fails to commit.
      */
-    @Disabled(
-        "bug: JdbcDucklakeCatalog.addField/addColumn (all column-changing DDL) do not create + register " +
-            "ducklake_inlined_data_<t>_<newSv> for a table that already has inlined-data tables, unlike upstream; " +
-            "DuckDB's next inlined INSERT writes into the old-schema inlined table and the read INTERNAL-errors",
-    )
     @Test
     fun duckDbCanInlineRowsIntoAStructAfterALibraryAddField() {
         duckExec(
@@ -348,6 +341,63 @@ class TestJdbcDucklakeCatalogCoverageDdl {
         duckExec("INSERT INTO lake.$SCHEMA.af_ins VALUES (3, {'a': 30, 'b': 'z', 'c': 7})")
         assertThat(duckColumn("SELECT s.c FROM lake.$SCHEMA.af_ins ORDER BY id")).containsExactly(null, "7")
         assertThat(duckColumn("SELECT s.a FROM lake.$SCHEMA.af_ins ORDER BY id")).containsExactly("10", "30")
+    }
+
+    /**
+     * W-B7 for top-level DDL and for the PostgreSQL physical-type mapping: after the library adds columns of
+     * many types (nested, wide ints, temporals, blob, decimal), DuckDB must be able to inline rows into the
+     * table the library created and read them back — the library's table must therefore have exactly the
+     * physical column types DuckDB's own postgres writer expects.
+     */
+    @Test
+    fun duckDbCanInlineRowsAfterLibraryAddDropAndRenameColumn() {
+        duckExec(
+            "CREATE TABLE lake.$SCHEMA.ac_ins (id INTEGER, old VARCHAR, gone INTEGER)",
+            "INSERT INTO lake.$SCHEMA.ac_ins VALUES (1, 'a', 0)",
+        )
+        val t = table("ac_ins")
+        val gone = columnsByPath(t.tableId, catalog.currentSnapshotId).getValue("gone").columnId
+        catalog.dropColumn(t.tableId, gone)
+        catalog.renameColumn(t.tableId, columnsByPath(t.tableId, catalog.currentSnapshotId).getValue("old").columnId, "renamed")
+        catalog.addColumn(t.tableId, TableColumnSpec.leaf("d", "decimal(18,3)", true))
+        catalog.addColumn(t.tableId, TableColumnSpec.leaf("ts", "timestamptz", true))
+        catalog.addColumn(t.tableId, TableColumnSpec.leaf("big", "uint64", true))
+        catalog.addColumn(t.tableId, TableColumnSpec.leaf("bl", "blob", true))
+        catalog.addColumn(
+            t.tableId,
+            // No DATE inside the struct: DuckDB's own postgres writer renders a non-native nested leaf as
+            // CAST('…' AS VARCHAR) text and then cannot read it back (upstream defect, see R-D4).
+            TableColumnSpec("nest", "struct", true, listOf(
+                TableColumnSpec.leaf("x", "int32", true),
+                TableColumnSpec("l", "list", true, listOf(TableColumnSpec.leaf("element", "int32", true))),
+            )),
+        )
+        catalog.addColumn(t.tableId, TableColumnSpec.leaf("dt", "date", true))
+        val schemaVersion = schemaVersionOf(catalog.currentSnapshotId)
+        assertThat(pg("SELECT count(*) FROM ducklake_inlined_data_tables WHERE table_id = ${t.tableId}"))
+            .`as`("one inlined table per column-changing commit (create + 8 ALTERs)")
+            .containsExactly(listOf("9"))
+        assertThat(pg("SELECT max(schema_version) FROM ducklake_inlined_data_tables WHERE table_id = ${t.tableId}"))
+            .containsExactly(listOf(schemaVersion.toString()))
+
+        duckExec(
+            "INSERT INTO lake.$SCHEMA.ac_ins VALUES (2, 'b', 1.5, TIMESTAMPTZ '2024-02-29 10:00:00+00', " +
+                "18446744073709551615, '\\x00\\xFF'::BLOB, {'x': 5, 'l': [1, 2]}, DATE '2000-01-02')",
+        )
+        assertThat(duckColumn("SELECT renamed FROM lake.$SCHEMA.ac_ins ORDER BY id")).containsExactly("a", "b")
+        assertThat(duckColumn("SELECT d::VARCHAR FROM lake.$SCHEMA.ac_ins ORDER BY id")).containsExactly(null, "1.500")
+        assertThat(duckColumn("SELECT big::VARCHAR FROM lake.$SCHEMA.ac_ins ORDER BY id")).containsExactly(null, "18446744073709551615")
+        assertThat(duckColumn("SELECT bl::VARCHAR FROM lake.$SCHEMA.ac_ins ORDER BY id")).containsExactly(null, "\\x00\\xFF")
+        assertThat(duckColumn("SELECT nest.l[2]::VARCHAR FROM lake.$SCHEMA.ac_ins ORDER BY id")).containsExactly(null, "2")
+        assertThat(duckColumn("SELECT dt::VARCHAR FROM lake.$SCHEMA.ac_ins ORDER BY id")).containsExactly(null, "2000-01-02")
+        assertThat(duckColumn("SELECT epoch_us(ts)::VARCHAR FROM lake.$SCHEMA.ac_ins ORDER BY id"))
+            .containsExactly(null, "1709200800000000")
+        // The library's decoder reads DuckDB's inlined row out of the library-created table too.
+        val snapshot = catalog.currentSnapshotId
+        val cols = catalog.getTableColumns(t.tableId, snapshot)
+        val decoded = catalog.readInlinedDataDecoded(t.tableId, schemaVersion, snapshot, cols).single()
+        assertThat(decoded[cols.indexOfFirst { it.columnName == "d" }]).isEqualTo(java.math.BigDecimal("1.500"))
+        assertThat(decoded[cols.indexOfFirst { it.columnName == "big" }]).isEqualTo(java.math.BigInteger("18446744073709551615"))
     }
 
     @Test

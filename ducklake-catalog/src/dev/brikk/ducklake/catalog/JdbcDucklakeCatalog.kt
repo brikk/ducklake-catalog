@@ -2485,6 +2485,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                         )
                     }
 
+                    // 3d. Column-schema changes on tables with inlined data need a physical inlined
+                    // table for the new schema version (upstream WriteNewInlinedTables).
+                    registerInlinedTablesForColumnChanges(txDsl, tx)
+
                     // 4. Create new snapshot row (with final allocated IDs)
                     beforeSnapshotInsertAction.run()
                     insertSnapshotRow(txDsl, tx, operationDescription)
@@ -2528,6 +2532,51 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         catch (e: SQLException) {
             throw DucklakeException("Failed to $operationDescription", e)
         }
+    }
+
+    /**
+     * For every table whose columns this transaction changed and that already has rows in
+     * `ducklake_inlined_data_tables`: create `ducklake_inlined_data_<t>_<newSchemaVersion>` with the
+     * post-change columns (backend physical types) and register it. DuckDB inserts inlined rows into
+     * the registered table with the highest schema version, so without this its next inlined INSERT
+     * would target the old-schema table (upstream `column_schema_change` → `WriteNewInlinedTables`).
+     * A table with NO inlined tables yet is left alone — DuckDB creates the first one on demand.
+     */
+    private fun registerInlinedTablesForColumnChanges(ctx: DSLContext, tx: DucklakeWriteTransaction) {
+        tx.getColumnSchemaChangedTableIds()
+            .filter { hasInlinedTables(ctx, it) }
+            .forEach { tableId -> registerInlinedTable(ctx, tx, tableId) }
+    }
+
+    private fun hasInlinedTables(ctx: DSLContext, tableId: Long): Boolean {
+        val inlined = DUCKLAKE_INLINED_DATA_TABLES.`as`("inlined")
+        return try {
+            ctx.fetchExists(ctx.selectOne().from(inlined).where(inlined.TABLE_ID.eq(tableId)))
+        }
+        catch (e: DataAccessException) {
+            rethrowUnlessMissingTable(e, "ducklake_inlined_data_tables", "register inlined table")
+            false
+        }
+    }
+
+    private fun registerInlinedTable(ctx: DSLContext, tx: DucklakeWriteTransaction, tableId: Long) {
+        // Columns as they stand AFTER this transaction: rows added here begin at the new snapshot,
+        // rows dropped here end at it.
+        val columns = activeColumnRows(ctx, tableId, tx.getNewSnapshotId())
+        val trees = columns.filter { it.parentColumn == null }.map { InlinedValues.typeTree(it, columns) }
+        if (!InlinedDataTables.canInline(trees, dialect)) {
+            return
+        }
+        val inlined = DUCKLAKE_INLINED_DATA_TABLES.`as`("inlined")
+        val name = InlinedDataTables.tableName(tableId, tx.getSchemaVersion())
+        metadata.execute(ctx, ctx.query(InlinedDataTables.createTableSql(name, trees, dialect)))
+        metadata.execute(
+            ctx,
+            ctx.insertInto(inlined)
+                .set(inlined.TABLE_ID, tableId)
+                .set(inlined.TABLE_NAME, name)
+                .set(inlined.SCHEMA_VERSION, tx.getSchemaVersion()),
+        )
     }
 
     private fun ensureSnapshotLineageUnchanged(ctx: DSLContext, expectedSnapshotId: Long, operationDescription: String) {
@@ -3600,7 +3649,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .fetchOne(0, Long::class.java)
 
             insertColumnTree(tx, tableId, column, orZero(maxOrder) + 1, OptionalLong.empty())
-            tx.incrementSchemaVersion(tableId)
+            tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3627,7 +3676,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .and(col.END_SNAPSHOT.isNull)
                 .execute()
 
-            tx.incrementSchemaVersion(tableId)
+            tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3637,7 +3686,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             replaceColumnVersion(tx, tableId, columnId, topLevelOnly = false) { next ->
                 next.setColumnName(newName)
             }
-            tx.incrementSchemaVersion(tableId)
+            tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3697,7 +3746,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 next.setColumnType(canonicalType)
             }
             invalidateStatBoundsIfComparisonClassChanged(tx.dsl(), tableId, columnId, previous.columnType, canonicalType)
-            tx.incrementSchemaVersion(tableId)
+            tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3762,7 +3811,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 next.setColumnType(canonicalType)
             }
             invalidateStatBoundsIfComparisonClassChanged(ctx, tableId, columnId, previous.columnType, canonicalType)
-            tx.incrementSchemaVersion(tableId)
+            tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3799,7 +3848,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .fetchOne(0, Long::class.java)
             val childOrder = if (maxChildOrder == null) 0L else maxChildOrder + 1
             insertColumnTree(tx, tableId, field, childOrder, OptionalLong.of(parentId))
-            tx.incrementSchemaVersion(tableId)
+            tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -3819,7 +3868,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .and(col.COLUMN_ID.`in`(subtree))
                 .and(col.END_SNAPSHOT.isNull)
                 .execute()
-            tx.incrementSchemaVersion(tableId)
+            tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
