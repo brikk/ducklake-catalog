@@ -504,7 +504,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .and(activeAt(delfile, snapshotId))
                 .where(file.TABLE_ID.eq(tableId))
                 .and(activeAt(file, snapshotId))
-                .orderBy(file.FILE_ORDER),
+                .orderBy(file.DATA_FILE_ID),
         ) { r ->
             DucklakeDataFile(
                 orZero(r.get(file.DATA_FILE_ID)),
@@ -518,7 +518,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 orZero(r.get(file.RECORD_COUNT)),
                 orZero(r.get(file.FILE_SIZE_BYTES)),
                 orZero(r.get(dataFileFooterSize)),
-                orZero(r.get(file.ROW_ID_START)),
+                requiredRowIdStart(r.get(file.ROW_ID_START), r.get(file.DATA_FILE_ID)),
                 r.get(file.PARTITION_ID),
                 r.get(deleteFilePath),
                 r.get(deleteFilePathIsRelative),
@@ -550,7 +550,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .where(file.TABLE_ID.eq(tableId))
             .and(file.BEGIN_SNAPSHOT.le(endSnapshot))
             .and(file.BEGIN_SNAPSHOT.ge(startSnapshot).or(file.PARTIAL_MAX.ge(startSnapshot)))
-            .orderBy(file.BEGIN_SNAPSHOT, file.FILE_ORDER)
+            .orderBy(file.BEGIN_SNAPSHOT, file.DATA_FILE_ID)
             .fetch { r -> toDataFileNoDelete(r) }
     }
 
@@ -666,7 +666,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             orZero(r.recordCount),
             orZero(r.fileSizeBytes),
             orZero(r.footerSize),
-            orZero(r.rowIdStart),
+            requiredRowIdStart(r.rowIdStart, r.dataFileId),
             r.partitionId,
             null,
             null,
@@ -692,7 +692,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             CatalogFileFormat.fromStoredRequired(dataFile.fileFormat),
             orZero(dataFile.footerSize),
             orZero(dataFile.fileSizeBytes),
-            orZero(dataFile.rowIdStart),
+            requiredRowIdStart(dataFile.rowIdStart, dataFile.dataFileId),
             orZero(dataFile.recordCount),
             fullFileDelete,
             current?.path,
@@ -1149,7 +1149,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .set(DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.DATA_FILE_ID, f.fileId)
             .set(DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.PATH, absolute)
             .set(DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.PATH_IS_RELATIVE, false)
-            .set(DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.SCHEDULE_START, nowUtc()))
+            .set(
+                DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.SCHEDULE_START,
+                DSL.field("CURRENT_TIMESTAMP", DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.SCHEDULE_START.dataType),
+            ))
         return true
     }
 
@@ -2674,23 +2677,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    /**
-     * The commit wall-clock, bound as an `OffsetDateTime` value (a `?` parameter). We deliberately
-     * do NOT use `DSL.currentOffsetDateTime()`: jOOQ renders that as `cast(current_timestamp() as
-     * timestamp with time zone)`, which PostgreSQL/DuckDB accept but MySQL rejects (no `TIMESTAMP
-     * WITH TIME ZONE`). Binding the app-clock UTC value is dialect-portable and semantically fine
-     * for a catalog commit timestamp — the connector owns the commit, and the driver coerces the
-     * value to whatever physical type the backend gave `snapshot_time` (timestamptz on PG, text/
-     * timestamp on DuckDB/MySQL).
-     */
-    private fun nowUtc(): OffsetDateTime = OffsetDateTime.now(ZoneOffset.UTC)
-
     private fun insertSnapshotRow(ctx: DSLContext, tx: DucklakeWriteTransaction, operationDescription: String) {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
         try {
             ctx.insertInto(snap)
                 .set(snap.SNAPSHOT_ID, tx.getNewSnapshotId())
-                .set(snap.SNAPSHOT_TIME, nowUtc())
+                // Upstream uses database NOW(). A raw CURRENT_TIMESTAMP field is portable across
+                // PostgreSQL, DuckDB/Quack and MySQL (unlike jOOQ's timestamptz cast rendering).
+                .set(snap.SNAPSHOT_TIME, DSL.field("CURRENT_TIMESTAMP", snap.SNAPSHOT_TIME.dataType))
                 .set(snap.SCHEMA_VERSION, tx.getSchemaVersion())
                 .set(snap.NEXT_CATALOG_ID, tx.getFinalNextCatalogId())
                 .set(snap.NEXT_FILE_ID, tx.getFinalNextFileId())
@@ -3051,11 +3045,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .execute()
 
             // 2. Insert column rows (flattening nested types with parent links)
-            // column_order is 1-based per DuckDB convention
             val topLevelColumnIds: MutableMap<String, Long> = linkedMapOf()
-            var columnOrder: Long = 1
             for (column in columns) {
-                val columnId = insertColumnTree(tx, tableId, column, columnOrder++, OptionalLong.empty())
+                val columnId = insertColumnTree(tx, tableId, column, OptionalLong.empty())
                 topLevelColumnIds[column.name] = columnId
             }
 
@@ -3130,7 +3122,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         tx: DucklakeWriteTransaction,
         tableId: Long,
         column: TableColumnSpec,
-        columnOrder: Long,
         parentColumnId: OptionalLong,
     ): Long {
         if (!parentColumnId.isPresent) {
@@ -3152,7 +3143,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .set(col.COLUMN_ID, columnId)
             .set(col.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
             .set(col.TABLE_ID, tableId)
-            .set(col.COLUMN_ORDER, columnOrder)
+            // Upstream stores the globally unique field id here, not a sibling ordinal.
+            .set(col.COLUMN_ORDER, columnId)
             .set(col.COLUMN_NAME, column.name)
             .set(col.COLUMN_TYPE, DucklakeTypeNames.canonical(column.ducklakeType))
             .set(col.DEFAULT_VALUE, "NULL")
@@ -3164,10 +3156,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .set(col.DEFAULT_VALUE_DIALECT, "duckdb")
             .execute()
 
-        // Insert children with their own column_order (0-based within parent)
-        var childOrder: Long = 0
         for (child in column.children) {
-            insertColumnTree(tx, tableId, child, childOrder++, OptionalLong.of(columnId))
+            insertColumnTree(tx, tableId, child, OptionalLong.of(columnId))
         }
 
         return columnId
@@ -3773,17 +3763,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun addColumn(tableId: Long, column: TableColumnSpec) {
         InlinedDataTables.requireNonSystemColumn(column.name)
-        val col = DUCKLAKE_COLUMN.`as`("col")
         executeWriteTransaction("add column to table $tableId") { tx ->
-            // Find the current max column_order for top-level columns
-            val maxOrder: Long? = tx.dsl().select(DSL.max(col.COLUMN_ORDER))
-                .from(col)
-                .where(col.TABLE_ID.eq(tableId))
-                .and(col.PARENT_COLUMN.isNull)
-                .and(activeAt(col, tx.getCurrentSnapshotId()))
-                .fetchOne(0, Long::class.java)
-
-            insertColumnTree(tx, tableId, column, orZero(maxOrder) + 1, OptionalLong.empty())
+            insertColumnTree(tx, tableId, column, OptionalLong.empty())
             tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
@@ -4095,7 +4076,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 return
             }
         }
-        val col = DUCKLAKE_COLUMN.`as`("col")
         executeWriteTransaction("add field ${(parentPath + field.name).joinToString(".")} to table $tableId") { tx ->
             val columns = activeColumnRows(tx.dsl(), tableId, tx.getCurrentSnapshotId())
             val parentId = resolveColumnIdByPath(columns, parentPath)
@@ -4109,15 +4089,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 throw DucklakeEntityAlreadyExistsException("field", (parentPath + field.name).joinToString("."))
             }
             DucklakeTypeNames.validate(field, (parentPath + field.name).joinToString("."))
-            // Children carry their own column_order within the parent; append at max+1 (0 if first).
-            val maxChildOrder: Long? = tx.dsl().select(DSL.max(col.COLUMN_ORDER))
-                .from(col)
-                .where(col.TABLE_ID.eq(tableId))
-                .and(col.PARENT_COLUMN.eq(parentId))
-                .and(activeAt(col, tx.getCurrentSnapshotId()))
-                .fetchOne(0, Long::class.java)
-            val childOrder = if (maxChildOrder == null) 0L else maxChildOrder + 1
-            insertColumnTree(tx, tableId, field, childOrder, OptionalLong.of(parentId))
+            insertColumnTree(tx, tableId, field, OptionalLong.of(parentId))
             tx.recordColumnSchemaChange(tableId)
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
@@ -4787,7 +4759,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         var records = 0L
         var bytes = 0L
         var minRowIdStart = Long.MAX_VALUE
-        tx.dsl().select(file.RECORD_COUNT, file.FILE_SIZE_BYTES, file.ROW_ID_START)
+        tx.dsl().select(file.DATA_FILE_ID, file.RECORD_COUNT, file.FILE_SIZE_BYTES, file.ROW_ID_START)
             .from(file)
             .where(file.TABLE_ID.eq(tableId))
             .and(file.DATA_FILE_ID.`in`(sourceDataFileIds))
@@ -4796,7 +4768,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .forEach { r ->
                 records += orZero(r.get(file.RECORD_COUNT))
                 bytes += orZero(r.get(file.FILE_SIZE_BYTES))
-                minRowIdStart = minOf(minRowIdStart, orZero(r.get(file.ROW_ID_START)))
+                minRowIdStart = minOf(
+                    minRowIdStart,
+                    requiredRowIdStart(r.get(file.ROW_ID_START), r.get(file.DATA_FILE_ID)),
+                )
             }
         return RetiredSourceStats(records, bytes, if (minRowIdStart == Long.MAX_VALUE) 0L else minRowIdStart)
     }
@@ -5398,6 +5373,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // with records that don't populate optional columns (e.g. file_order).
         private fun orZero(value: Long?): Long =
             value ?: 0L
+
+        /** `row_id_start` is required for stable row identity; NULL is catalog corruption, never 0. */
+        private fun requiredRowIdStart(value: Long?, dataFileId: Long?): Long =
+            value ?: throw DucklakeCatalogCorruptionException(
+                "ducklake_data_file.row_id_start is NULL for data_file_id ${dataFileId ?: "unknown"}",
+            )
 
         // Existing table-level column stat bounds, keyed by column_id, for the numeric-aware
         // merge in applyInsertFragments. Presence in the map == the row exists (UPDATE path);

@@ -424,7 +424,7 @@ class TestJdbcDucklakeCatalogCoverageDdl {
         val c = cols.getValue("s.c")
         assertThat(c.parentColumn).isEqualTo(beforeCols.getValue("s").columnId)
         assertThat(c.columnId).`as`("fresh column id").isGreaterThan(maxId)
-        assertThat(c.columnOrder).`as`("appended after a, b").isEqualTo(beforeCols.getValue("s.b").columnOrder + 1)
+        assertThat(c.columnOrder).`as`("upstream stores column_order = column_id").isEqualTo(c.columnId)
         assertThat(c.columnType).isEqualTo("int64")
         assertThat(c.beginSnapshot).isEqualTo(after)
         assertThat(cols.getValue("s")).`as`("struct row itself unchanged").isEqualTo(beforeCols.getValue("s"))
@@ -537,6 +537,9 @@ class TestJdbcDucklakeCatalogCoverageDdl {
         catalog.addField(t.tableId, listOf("s", "deep"), TableColumnSpec.leaf("y", "varchar", true), false)
         val snapshot = catalog.currentSnapshotId
         val cols = columnsByPath(t.tableId, snapshot)
+        assertThat(cols.values).allSatisfy {
+            assertThat(it.columnOrder).`as`("upstream stores column_order = column_id for every field").isEqualTo(it.columnId)
+        }
         assertThat(cols.getValue("s.deep.x").parentColumn).isEqualTo(cols.getValue("s.deep").columnId)
         assertThat(cols.getValue("s.deep.y").parentColumn).isEqualTo(cols.getValue("s.deep").columnId)
         assertThat(cols.getValue("s.deep.y").columnOrder).isEqualTo(cols.getValue("s.deep.x").columnOrder + 1)

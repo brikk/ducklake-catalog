@@ -14,6 +14,7 @@
 package dev.brikk.ducklake.catalog
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -107,6 +108,12 @@ class TestJdbcDucklakeCatalogCoverageFiles {
 
     private fun pg(sql: String): List<List<String?>> =
         DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { it.rows(sql) }
+
+    private fun pgExec(sql: String) {
+        DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { connection ->
+            connection.createStatement().use { it.execute(sql) }
+        }
+    }
 
     private fun pgColumn(sql: String): List<String?> = pg(sql).map { it[0] }
 
@@ -232,6 +239,44 @@ class TestJdbcDucklakeCatalogCoverageFiles {
         assertThat(fileByPath(files, "m.parquet").rowIdStart).`as`("rewrite keeps the retired source's row_id_start").isEqualTo(3L)
         assertThat(catalog.getDataFilesByIds(h.tableId, emptyList())).isEmpty()
         assertThat(catalog.getDataFilesByIds(h.tableId + 1_000_000, requested)).`as`("scoped to the table").isEmpty()
+    }
+
+    @Test
+    fun dataFileOrderingUsesIdWhenUpstreamLeavesFileOrderNull() {
+        catalog.createSchema("file_order")
+        catalog.createTable(
+            "file_order", "t",
+            listOf(TableColumnSpec.leaf("id", "int32", true)),
+            null, null,
+        )
+        val table = table("t", "file_order")
+        val id = columnIds(table.tableId).getValue("id")
+        catalog.commitInsert(
+            table.tableId,
+            listOf(fragment("first.parquet", id, 1), fragment("second.parquet", id, 1)),
+        )
+        pgExec("UPDATE ducklake_data_file SET file_order = NULL WHERE table_id = ${table.tableId}")
+        val files = catalog.getDataFiles(table.tableId, catalog.currentSnapshotId)
+        assertThat(files.map { it.dataFileId }).isSorted()
+        assertThat(files.map { it.path }).containsExactly("first.parquet", "second.parquet")
+    }
+
+    @Test
+    fun nullRowIdStartFailsLoudlyInsteadOfAliasingToZero() {
+        catalog.createTable(
+            SCHEMA, "null_row_id_start",
+            listOf(TableColumnSpec.leaf("id", "int32", true)),
+            null, null,
+        )
+        val table = table("null_row_id_start")
+        val id = columnIds(table.tableId).getValue("id")
+        catalog.commitInsert(table.tableId, listOf(fragment("null-row-id.parquet", id, 1)))
+        pgExec("UPDATE ducklake_data_file SET row_id_start = NULL WHERE table_id = ${table.tableId}")
+
+        assertThatThrownBy { catalog.getDataFiles(table.tableId, catalog.currentSnapshotId) }
+            .isInstanceOf(DucklakeCatalogCorruptionException::class.java)
+            .hasMessageContaining("row_id_start")
+            .hasMessageContaining("data_file_id")
     }
 
     @Test

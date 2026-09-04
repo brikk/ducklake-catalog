@@ -101,7 +101,7 @@ interface DucklakeCatalog : AutoCloseable {
      * row of such a file was inserted at the file's `begin_snapshot`, with row identifier
      * `row_id_start + file position`. Delete-file columns are left null (the feed reads ALL rows of
      * the file regardless of any later deletions — those are separate delete events). Ordered by
-     * `begin_snapshot`, then `file_order`.
+     * `begin_snapshot`, then `data_file_id` (upstream files may leave `file_order` NULL).
      */
     fun getDataFilesAddedBetween(tableId: Long, startSnapshot: Long, endSnapshot: Long): List<DucklakeDataFile>
 
