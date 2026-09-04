@@ -433,7 +433,14 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `isMissingCatalogSchema` (`:4238-4253`); rethrow everything else.
 
 ### R-D1 · DRIFT · No read-consistency envelope
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `DucklakeCatalog.readSession(Supplier<T>)`: pins every read on the calling thread to one
+  pooled connection in a read-only REPEATABLE READ transaction (best-effort per backend; DuckDB is snapshot-isolated
+  anyway) for the block, released on exit; nested calls reuse it; writes inside throw
+  `DucklakeInvalidOperationException` (their own reads must see the latest state). Implemented as a thread-local
+  `DSLContext` override behind the `dsl` accessor, so no read method changed. `TestJdbcDucklakeCatalogReadSession`
+  (concurrent commit invisible inside / visible outside and on other threads; a physically DELETEd data-file row stays
+  consistent across `getDataFiles` + `getFilePartitionValues`; nesting; write refusal) + smoke on DuckDB-file and
+  MySQL. **trino-ducklake follow-up:** wrap the planning pass (`getTableHandle` → splits) in `readSession`.
 - `currentSnapshotId` + every subsequent read run as separate autocommit statements (HikariCP defaults; no
   isolation set, `:108-150`). Upstream runs all metadata reads of a transaction on one connection
   (`ducklake_transaction.cpp:759-778`). Safe under row-versioning except against physically destructive ops

@@ -95,8 +95,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private val hikariDataSource: HikariDataSource
     private val dialect: SQLDialect
     private val jooqSettings: Settings
-    private val dsl: DSLContext
     private val metadata: MetadataQuery
+
+    /** Pool-backed context: each statement checks out a connection and autocommits. */
+    private val pooledDsl: DSLContext
+
+    /** Set on a thread for the duration of [readSession]: every read on that thread uses it. */
+    private val readSessionDsl: ThreadLocal<DSLContext?> = ThreadLocal()
+
+    /** The context reads use: the thread's pinned read session if one is open, else the pool. */
+    private val dsl: DSLContext
+        get() = readSessionDsl.get() ?: pooledDsl
 
     // Retained only for diagnostics (the "catalog not initialized" message). Never used for
     // connection — the pool already holds the parsed URL.
@@ -172,7 +181,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // `USE <metadata_catalog>.main` makes unqualified resolution work. Stripping
             // the rendered schema works for both — but is required for the latter.
             .withRenderSchema(false)
-        this.dsl = DSL.using(dataSource, dialect, jooqSettings)
+        this.pooledDsl = DSL.using(dataSource, dialect, jooqSettings)
         this.metadata = metadataQuery
 
         log.log(
@@ -194,6 +203,52 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     // `internal`) to preserve JVM call-compatibility with same-package callers.
     fun forConnection(connection: Connection): DSLContext =
         DSL.using(connection, dialect, jooqSettings)
+
+    override fun <T> readSession(action: java.util.function.Supplier<T>): T {
+        if (readSessionDsl.get() != null) {
+            return action.get() // nested: reuse the outer session
+        }
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            // Best effort per backend: PostgreSQL / MySQL honour both; DuckDB's JDBC driver rejects
+            // levels other than its own (its transactions are snapshot-isolated regardless) and may
+            // reject read-only, so neither is fatal. HikariCP resets whatever changed on return.
+            trySetting("read-only") { conn.isReadOnly = true }
+            trySetting("REPEATABLE READ") { conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ }
+            readSessionDsl.set(forConnection(conn))
+            try {
+                return action.get()
+            }
+            finally {
+                readSessionDsl.remove()
+                try {
+                    conn.rollback() // nothing to commit; release the snapshot
+                }
+                catch (e: SQLException) {
+                    log.log(System.Logger.Level.DEBUG, "readSession: rollback failed: {0}", e.message)
+                }
+            }
+        }
+    }
+
+    private inline fun trySetting(what: String, set: () -> Unit) {
+        try {
+            set()
+        }
+        catch (e: SQLException) {
+            log.log(System.Logger.Level.DEBUG, "readSession: backend does not support {0} ({1})", what, e.message)
+        }
+    }
+
+    /** Writes must not run inside [readSession]: their own reads would see the pinned, stale snapshot. */
+    private fun requireNotInReadSession(operation: String) {
+        if (readSessionDsl.get() != null) {
+            throw DucklakeInvalidOperationException(
+                "Cannot $operation inside readSession: a read session pins a read-only snapshot for planning; " +
+                    "run writes outside it",
+            )
+        }
+    }
 
     /**
      * Runs a catalog read and, if it fails because the `ducklake_*` metadata schema does not
@@ -694,6 +749,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun expireSnapshots(snapshotIds: Set<Long>): ExpireSnapshotsResult {
+        requireNotInReadSession("expire snapshots")
         if (snapshotIds.isEmpty()) {
             return ExpireSnapshotsResult(0, 0)
         }
@@ -1061,11 +1117,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun removeScheduledFileRows(dataFileIds: Collection<Long>) {
+        requireNotInReadSession("remove scheduled file rows")
         if (dataFileIds.isEmpty()) {
             return
         }
         val sched = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION
-        dsl.deleteFrom(sched).where(sched.DATA_FILE_ID.`in`(dataFileIds)).execute()
+        pooledDsl.deleteFrom(sched).where(sched.DATA_FILE_ID.`in`(dataFileIds)).execute()
     }
 
     private fun resolveScopedPath(path: String?, isRelative: Boolean?, parentPath: String): String {
@@ -1289,6 +1346,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun analyzeTable(tableId: Long) {
+        requireNotInReadSession("analyze table $tableId")
         // Stats tables are mutable, non-snapshot-versioned side tables, so this is a plain catalog
         // transaction — no new snapshot, no `changes_made` entry (see the interface contract). It
         // mirrors `attemptWriteTransaction`'s connection handling without the snapshot/conflict
@@ -2264,6 +2322,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * retry semantics so that low-rate contention is absorbed transparently.
      */
     private fun executeWriteTransaction(operationDescription: String, action: WriteTransactionAction) {
+        requireNotInReadSession(operationDescription)
         // Captured once on attempt 1, propagated across retries so the
         // change-vs-change conflict matrix on retry can ask "what committed
         // since this transaction started?" — mirrors upstream's

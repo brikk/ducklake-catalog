@@ -848,6 +848,30 @@ interface DucklakeCatalog : AutoCloseable {
     fun dropView(schemaName: String, viewName: String)
 
     /**
+     * Runs [action] with every read on the CURRENT THREAD pinned to one catalog connection holding a
+     * read-only, snapshot-isolated transaction (REPEATABLE READ on PostgreSQL / MySQL; DuckDB
+     * transactions are snapshot-isolated by nature), then releases it. Without this, each read
+     * method checks out its own pooled connection in autocommit mode, so a planning pass such as
+     * `currentSnapshotId` → [getDataFiles] → [findDataFileIdsInRange] → [getFilePartitionValues] can
+     * straddle a concurrent commit. Row versioning makes that harmless for ordinary commits, but
+     * physically destructive ones — [expireSnapshots], [rewriteDataFilesPartial] (which deletes its
+     * source rows), a snapshot-tagged DELETE (which deletes the superseded delete-file row), an
+     * upstream-shaped flush (which deletes inlined rows) — can make two reads disagree on the file
+     * set and drop a file from a plan. Upstream reads all metadata of a transaction on one
+     * connection (`DuckLakeTransaction`); this is the equivalent envelope.
+     *
+     * Semantics:
+     *  - the snapshot is taken at the first statement inside [action]; everything the block reads
+     *    afterwards (on this thread) reflects that instant, so read `currentSnapshotId` first and pass
+     *    it to the other reads;
+     *  - nested calls reuse the outer session;
+     *  - **writes are refused** inside a session with [DucklakeInvalidOperationException]: a read
+     *    session is for planning, and a write's own reads must see the latest state;
+     *  - the returned objects are plain values and remain valid after the block.
+     */
+    fun <T> readSession(action: java.util.function.Supplier<T>): T
+
+    /**
      * Close any resources (JDBC connections, etc)
      */
     override fun close()

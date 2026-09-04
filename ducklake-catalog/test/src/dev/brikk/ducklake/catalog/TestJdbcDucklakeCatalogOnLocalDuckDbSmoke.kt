@@ -140,4 +140,17 @@ class TestJdbcDucklakeCatalogOnLocalDuckDbSmoke {
             .extracting(java.util.function.Function<DucklakeSchema, String> { it.schemaName })
             .doesNotContain(schemaName)
     }
+
+    @Test
+    fun readSessionWorksOnThisBackend() {
+        val catalog = catalog!!
+        val pinned = catalog.readSession(
+            java.util.function.Supplier {
+                val s = catalog.currentSnapshotId
+                catalog.listSchemas(s) // exercise a second read on the pinned connection
+                s
+            },
+        )
+        assertThat(pinned).isEqualTo(catalog.currentSnapshotId)
+    }
 }
