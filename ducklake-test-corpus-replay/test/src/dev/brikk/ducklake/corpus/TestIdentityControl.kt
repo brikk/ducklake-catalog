@@ -40,6 +40,11 @@ class TestIdentityControl {
             "geo/ducklake_geometry_add_files.test" to GEO_REASON,
             "geo/ducklake_geometry_inlining.test" to GEO_REASON,
             "geo/ducklake_geometry_merge.test" to GEO_REASON,
+            // These three `require no_alternative_verify` (PRESENT, as upstream) and so replay now;
+            // they store GEOMETRY nested in LIST/MAP/STRUCT, which the driver hands back as WKB bytes.
+            "geo/ducklake_geometry_nested_list.test" to GEO_REASON,
+            "geo/ducklake_geometry_nested_map.test" to GEO_REASON,
+            "geo/ducklake_geometry_nested_struct.test" to GEO_REASON,
         )
 
     companion object {

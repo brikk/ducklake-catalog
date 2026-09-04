@@ -14,19 +14,24 @@ import java.time.ZoneOffset
 
 /**
  * Converts JDBC results to sqllogictest golden form and compares against a
- * query record's expected block.
+ * query record's expected block, mirroring upstream `test/sqlite/result_helper.cpp`.
  *
- * Golden-form rules (DuckDB's sqllogictest conventions):
+ * Golden-form rules (`SQLLogicTestConvertValue` + `CompareValues`):
  *  - SQL NULL renders as `NULL`
- *  - empty string renders as `(empty)`
- *  - booleans render `true`/`false`
- *  - everything else uses DuckDB's own string rendering (JDBC `getString`)
- *  - expected block: one row per line, columns tab-separated; a legacy
- *    value-per-line layout (rows*cols single-column lines) is regrouped
+ *  - empty string renders as `(empty)`; embedded NUL bytes as `\0`
+ *  - booleans render `true`/`false` here (upstream renders `1`/`0`); either side may write
+ *    `true`/`false` (any case) or `1`/`0` for a boolean column, whatever the type letter
+ *  - everything else reproduces DuckDB's own `::VARCHAR` rendering from the JDBC objects:
+ *    DOUBLE/FLOAT and the temporal infinities via [DuckDbText], nested types via
+ *    [renderNested] (quoting rules of the nested→VARCHAR casts); engine adapters use the same
+ *    entry points for their values
+ *  - expected block: one row per line, columns tab-separated and taken verbatim (no trimming —
+ *    a golden may legitimately start with a space); a legacy value-per-line layout
+ *    (rows*cols single-column lines) is regrouped
  *  - `rowsort` sorts rows lexicographically on both sides; `valuesort` sorts
  *    all cells individually
- *  - an expected block of exactly `N values hashing to <md5>` is a hash
- *    result we don't support → surfaces as [Comparison.Unsupported]
+ *  - an expected block of exactly `N values hashing to <md5>` is compared by MD5 of the
+ *    sorted cells (`result_helper.cpp:129-136`); the same hash serves labelled queries
  */
 object GoldenComparator {
 
@@ -47,6 +52,8 @@ object GoldenComparator {
             rows +=
                 (1..cols).map { i ->
                     try {
+                        // Always the object path: the driver's getString is DuckDB's own text for
+                        // plain LIST/STRUCT columns but Java's Map/List toString for VARIANT.
                         renderCell(rs.getObject(i))
                     } catch (_: Exception) {
                         // e.g. the JDBC driver cannot represent TIME '24:00:00'
@@ -71,14 +78,15 @@ object GoldenComparator {
             is String -> value.replace("\u0000", "\\0")
             is Timestamp, is LocalDateTime, is OffsetDateTime, is java.time.ZonedDateTime,
             is LocalTime, is LocalDate -> renderTemporal(value)
-            is Double -> renderFloating(value)
+            is Double -> DuckDbText.double(value)
             // A FLOAT must render as a float: widening 0.1f to double gives 0.10000000149011612,
             // which DuckDB's `0.1` golden would reject even under the numeric tolerance.
-            is Float -> renderFloating(value)
+            is Float -> DuckDbText.float(value)
             is List<*> -> value.joinToString(", ", prefix = "[", postfix = "]") { renderNested(it) }
             is DuckDBStruct ->
                 value.map.entries.joinToString(", ", prefix = "{", postfix = "}") { (k, v) ->
-                    "'$k': ${renderNested(v)}"
+                    // struct keys are always quoted (`CalculateEscapedStringLength<STRUCT_KEY=true>`)
+                    "${quoteNested(k.toString())}: ${renderNested(v)}"
                 }
             is DuckDBArray -> renderArray(value)
             is Map<*, *> ->
@@ -95,12 +103,17 @@ object GoldenComparator {
             is Timestamp -> renderDateTime(value.toLocalDateTime())
             is LocalDateTime -> renderDateTime(value)
             is OffsetDateTime ->
-                renderDateTime(value.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime()) + "+00"
+                renderDateTimeTz(value.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime())
             is java.time.ZonedDateTime ->
-                renderDateTime(value.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime()) + "+00"
+                renderDateTimeTz(value.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime())
             is LocalTime -> renderTime(value)
-            else -> value.toString() // LocalDate
+            is LocalDate -> DuckDbText.dateSpecial(value) ?: value.toString()
+            else -> value.toString()
         }
+
+    /** TIMESTAMPTZ: `infinity` has no zone suffix (`Timestamp::ToString` returns before formatting). */
+    private fun renderDateTimeTz(dt: LocalDateTime): String =
+        DuckDbText.timestampSpecial(dt) ?: (renderDateTime(dt) + "+00")
 
     /** DuckDB blob rendering: printable ASCII as-is, backslash escaped, else \xHH. */
     private fun renderBlob(bytes: ByteArray): String =
@@ -119,50 +132,68 @@ object GoldenComparator {
         (value.array as Array<*>).joinToString(", ", prefix = "[", postfix = "]") { renderNested(it) }
 
     /**
-     * Values nested in LIST/STRUCT/MAP: DuckDB single-quotes a string only
-     * when it needs it (empty, NULL-lookalike, or special characters);
-     * simple strings render bare (e.g. `[main, hello]`, `{'k': FIX}`).
+     * Values nested in LIST/STRUCT/MAP, per DuckDB's nested→VARCHAR casts
+     * (`src/function/cast/{list_casts,struct_cast,map_cast}.cpp` +
+     * `vector_cast_helpers.hpp` `CalculateEscapedStringLength`/`WriteEscapedString`):
+     *  - a nested child (LIST/STRUCT/MAP/ARRAY) is written as-is;
+     *  - any other child is cast to text first and then single-quoted only when that text is
+     *    empty, starts or (when at least two characters long) ends with whitespace, equals `null`
+     *    case-insensitively, or contains one of `" ' ( ) , : = [ ] { }`
+     *    (`nested_to_varchar_cast.cpp` `LOOKUP_TABLE`); inside quotes `'` and `\` are
+     *    backslash-escaped. Interior spaces stay bare: `[a b, 'x:y', '', NULL]`. Timestamps and
+     *    times therefore end up quoted (`['2020-01-01 00:00:00']`), doubles do not (`[1e+20]`).
+     *  - struct keys are always quoted.
      * Public so engine adapters can render THEIR nested values into the same
      * dialect (see TrinoReplayEngine's typed renderer).
      */
     fun renderNested(value: Any?): String =
         when (value) {
-            is String -> {
-                val s = value.replace("\u0000", "\\0")
-                if (needsQuotes(s)) "'${s.replace("'", "''")}'" else s
-            }
-            else -> renderCell(value) ?: "NULL"
+            null -> "NULL"
+            is List<*>, is DuckDBStruct, is DuckDBArray, is Map<*, *> -> renderCell(value) ?: "NULL"
+            // Quote on the raw text (a NUL is not special upstream), then escape NULs like scalars.
+            is String -> quoteNestedIfNeeded(value).replace("\u0000", "\\0")
+            else -> quoteNestedIfNeeded(renderCell(value) ?: "NULL")
         }
 
-    private val SPECIAL = "'\"{}[](),=: \t\n".toCharArray().toSet()
+    /** `NestedToVarcharCast::LOOKUP_TABLE`: the characters that force quoting. */
+    private val SPECIAL = "\"'(),:=[]{}".toCharArray().toSet()
 
-    private fun needsQuotes(s: String): Boolean =
-        s.isEmpty() || s.equals("NULL", ignoreCase = true) || s.any { it in SPECIAL }
+    /** `StringUtil::CharacterIsSpace`: space, tab, LF, VT, FF, CR. */
+    private val SPACES = " \t\n\u000B\u000C\r".toCharArray().toSet()
+
+    private fun isSpace(c: Char): Boolean = c in SPACES
+
+    /** `CalculateEscapedStringLength<STRUCT_KEY=false>` — when does a nested string need quotes. */
+    fun requiresQuotes(s: String): Boolean =
+        when {
+            s.isEmpty() -> true
+            isSpace(s[0]) -> true
+            s.length >= 2 && isSpace(s[s.length - 1]) -> true
+            s.equals("null", ignoreCase = true) -> true
+            else -> s.any { it in SPECIAL }
+        }
+
+    private fun quoteNestedIfNeeded(s: String): String = if (requiresQuotes(s)) quoteNested(s) else s
+
+    /** `WriteEscapedString` with quotes forced: `'` and `\` get a backslash. */
+    private fun quoteNested(s: String): String =
+        buildString(s.length + 2) {
+            append('\'')
+            for (c in s) {
+                if (c == '\'' || c == '\\') append('\\')
+                append(c)
+            }
+            append('\'')
+        }
 
     private fun renderDateTime(dt: LocalDateTime): String {
+        DuckDbText.timestampSpecial(dt)?.let { return it }
         val base = "%04d-%02d-%02d %02d:%02d:%02d".format(dt.year, dt.monthValue, dt.dayOfMonth, dt.hour, dt.minute, dt.second)
         return base + fraction(dt.nano)
     }
 
     private fun renderTime(t: LocalTime): String =
         "%02d:%02d:%02d".format(t.hour, t.minute, t.second) + fraction(t.nano)
-
-    /** DuckDB renders special floats as inf/-inf/nan, not Java's Infinity/NaN. */
-    private fun renderFloating(d: Double): String =
-        when {
-            d.isNaN() -> "nan"
-            d == Double.POSITIVE_INFINITY -> "inf"
-            d == Double.NEGATIVE_INFINITY -> "-inf"
-            else -> d.toString()
-        }
-
-    private fun renderFloating(f: Float): String =
-        when {
-            f.isNaN() -> "nan"
-            f == Float.POSITIVE_INFINITY -> "inf"
-            f == Float.NEGATIVE_INFINITY -> "-inf"
-            else -> f.toString()
-        }
 
     /** Microsecond fraction, trailing zeros trimmed, omitted when zero (DuckDB style). */
     private fun fraction(nano: Int): String {
@@ -178,24 +209,54 @@ object GoldenComparator {
             else -> value
         }
 
+    /**
+     * Upstream `result_helper.cpp:127-136`: MD5 over every cell of the (sort-style-sorted) result,
+     * each followed by `\n`, reported as `<count> values hashing to <hex>`. Used for
+     * `N values hashing to …` goldens and for labelled queries (which compare hashes only).
+     * Caveat: upstream feeds booleans in as `1`/`0`; this side hashes `true`/`false`, so a hash
+     * golden over a boolean column written by DuckDB's runner will not match (labels are
+     * unaffected — both sides are rendered here).
+     */
+    fun resultHash(query: SltQuery, actual: List<List<String?>>): String {
+        val cells = sortRows(actual.map { row -> row.map(::toGoldenCell) }, query.sortMode).flatten()
+        val md5 = java.security.MessageDigest.getInstance("MD5")
+        for (cell in cells) {
+            md5.update(cell.toByteArray(Charsets.UTF_8))
+            md5.update('\n'.code.toByte())
+        }
+        val hex = md5.digest().joinToString("") { "%02x".format(it) }
+        return "${cells.size} values hashing to $hex"
+    }
+
+    /** `ResultIsHash`: the expected block is exactly one `N values hashing to <md5>` line. */
+    fun isHashGolden(query: SltQuery): Boolean =
+        query.expected.size == 1 && HASHING.matches(query.expected[0].trim())
+
     fun compare(query: SltQuery, actual: List<List<String?>>): Comparison {
-        if (query.expected.size == 1 && HASHING.matches(query.expected[0].trim())) {
-            return Comparison.Unsupported("hash-format expected result")
+        if (isHashGolden(query)) {
+            val expectedHash = query.expected[0].trim()
+            val hash = resultHash(query, actual)
+            return if (hash == expectedHash) {
+                Comparison.Match
+            } else {
+                Comparison.Mismatch("result hash: expected '$expectedHash', got '$hash'")
+            }
         }
         val colCount = query.types.length
         val actualRows = actual.map { row -> row.map(::toGoldenCell) }
 
-        var expectedRows = query.expected.map { it.split('\t').map(String::trim) }
+        // Cells verbatim, as upstream (`StringUtil::Split(values[i], "\t")`, `result_helper.cpp:198`).
+        var expectedRows = query.expected.map { it.split('\t') }
         // Legacy value-per-line layout: regroup when tabs are absent and counts line up.
         if (colCount > 1 &&
             expectedRows.all { it.size == 1 } &&
             query.expected.size == actualRows.size * colCount
         ) {
-            expectedRows = query.expected.map(String::trim).chunked(colCount)
+            expectedRows = query.expected.chunked(colCount)
         }
 
         val a = sortRows(actualRows, query.sortMode)
-        val e = sortRows(expectedRows.map { it.map(String::trim) }, query.sortMode)
+        val e = sortRows(expectedRows, query.sortMode)
 
         if (a.size != e.size) {
             return Comparison.Mismatch("row count: expected ${e.size}, got ${a.size}\n${diffPreview(e, a)}")
@@ -239,14 +300,22 @@ object GoldenComparator {
         if (expected.startsWith(NOT_REGEX_PREFIX)) {
             return !Regex(expected.removePrefix(NOT_REGEX_PREFIX), RegexOption.DOT_MATCHES_ALL).matches(actual)
         }
-        // Classic sqllogictest: booleans under an I column render as 1/0; and
-        // golden files are inconsistent about True/true capitalization.
+        // Boolean column (`result_helper.cpp:533-549`): the golden may say true/false (any case)
+        // or 1/0, whatever the declared type letter — upstream keys on the SQL type, not on it.
+        // [renderCell] emits booleans as exactly `true`/`false`, so that text identifies the column.
         if (actual == "true" || actual == "false") {
-            if (expected.equals(actual, ignoreCase = true)) return true
-            if (type == 'I') return expected == (if (actual == "true") "1" else "0")
+            return booleanValue(expected) == (actual == "true")
         }
         return (type == 'R' || type == 'I') && numericEqual(expected, actual)
     }
+
+    /** `CompareValues` boolean coercion: `true`/`false` case-insensitively, or exactly `1`/`0`. */
+    private fun booleanValue(cell: String): Boolean? =
+        when {
+            cell == "1" || cell.equals("true", ignoreCase = true) -> true
+            cell == "0" || cell.equals("false", ignoreCase = true) -> false
+            else -> null
+        }
 
     /**
      * Numeric tolerance: golden files write integers where engines may emit

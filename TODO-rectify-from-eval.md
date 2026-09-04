@@ -834,44 +834,88 @@ Default starter set (`TestIdentityControl.kt:71`) covers 58/471 files.
   vs golden `0.1`. Passes today only because corpus FLOAT goldens are dyadic. Use `Float.toString()`.
 
 ### S-D1 · DRIFT · Parser/expander semantics vs upstream runner
-- [ ] `statement maybe` with a message drops the expected error (`SltParser.kt:115-116`); upstream still requires a
-  match if an error occurs (`result_helper.cpp:311-331`). 3 corpus records.
-- [ ] `mode skip`/`unskip` → whole-file skip instead of "skip records until unskip" (`sqllogic_test_runner.cpp:846,
-  969-972`). 5 files never replayed.
-- [ ] No foreach special tokens (`<alltypes>`, `<numeric>`, `<integral>`, `<signed>`, `<unsigned>`, `<compression>`,
+- [x] **Status:** RESOLVED (slt-format side) — `SltParser` rewritten around a per-file `Parse` cursor that mirrors
+  `sqllogic_parser.cpp` line rules (`#`/`----` only at column 0, empty-line separation, verbatim SQL/result lines, a
+  `#` line ends the SQL block) and the runner's lexical `skip_level` counter (`mode skip`…`unskip` regions are dropped
+  at parse time; other/unbalanced/guarded `mode` → `SltUnsupported`); `query` modifiers are positional
+  (`sort-style|conN`, then label; `none`/`sort` aliases accepted; type string must be `[TIR]+`); malformed records
+  upstream `Fail`s on (`statement error|maybe` without `----`, `statement ok` with `----`, empty statement body, bad
+  `loop`/`foreach` headers, comma-arity mismatch) become `SltUnsupported` instead of being silently accepted. New
+  `SltForeachTokens` carries the exact upstream `ForEachTokenReplace` lists (`<signed>`/`<unsigned>`/`<integral>`/
+  `<numeric>`/`<alltypes>`/`<compression>`/`<all_types_columns>`, `!tok` exclusion incl. the "not found → keep
+  verbatim" quirk). `SltExpander` substitutes env first (`ReplaceKeywords`), then loop bindings outermost-first with
+  env-substituted values and comma-iterator splitting (`LoopReplacement`/`ReplaceLoopIterator`); `expectedError` is
+  env-only; `ConcreteRecord.mayError` distinguishes `statement maybe`. `SltQuery.goldenFile: SltGoldenFile?` models a
+  single `<FILE>:path` row. Corpus scan: the only record-count deltas vs the old parser are the 7 `mode skip` sites;
+  remaining unsupported frontier = `concurrentloop` 13, `unzip` 10, `require-env` 3. Still open in the consumer
+  (other module): `CorpusRunner.discover` must include `.test_slow`; `ReplayDriver` must load `goldenFile`, split
+  comma iterators, and apply env-before-loop substitution order.
+- [x] `statement maybe` with a message drops the expected error (`SltParser.kt:115-116`); upstream still requires a
+  match if an error occurs (`result_helper.cpp:311-331`). 3 corpus records. (Parser already kept it; now also surfaced
+  through the expander as `ConcreteRecord.mayError`, and an empty `----` block is null = any error, as upstream.)
+- [x] `mode skip`/`unskip` → whole-file skip instead of "skip records until unskip" (`sqllogic_test_runner.cpp:846,
+  969-972`). 5 files never replayed. (Dropped at parse time; nested counter; `endloop` still closes the body.)
+- [x] No foreach special tokens (`<alltypes>`, `<numeric>`, `<integral>`, `<signed>`, `<unsigned>`, `<compression>`,
   `<all_types_columns>`, `!tok`) or comma iterators (`SltParser.kt:209`). 0 in corpus; matters for the "DuckDB-dialect"
-  claim of a published library.
-- [ ] Precedence: `SltExpander.kt:130` lets loop bindings win over env; upstream env wins (replaced first).
-- [ ] `expectedError` loop-substituted (`SltExpander.kt:84`); upstream env-only. Lenient superset.
-- [ ] `query` modifier parsing (`SltParser.kt:141-155`) treats any `con\d+` as connection, other tokens as label;
+  claim of a published library. (`SltForeachTokens`; `SltLoop.variable`/`values` stay raw `a,b`/`1,x` as upstream.)
+- [x] Precedence: `SltExpander.kt:130` lets loop bindings win over env; upstream env wins (replaced first).
+- [x] `expectedError` loop-substituted (`SltExpander.kt:84`); upstream env-only. Lenient superset. (Verified:
+  `result_helper.cpp:315-316` only ever applies `ReplaceKeywords`; `sqllogic_command.cpp` never loop-substitutes it.)
+- [x] `query` modifier parsing (`SltParser.kt:141-155`) treats any `con\d+` as connection, other tokens as label;
   upstream is positional (`sqllogic_test_runner.cpp:931-950`).
-- [ ] Parser trims lines and ignores `#` inside SQL (`SltParser.kt:29,161`); upstream only recognises `#`/`----` at
-  column 0 and stops the SQL block at a `#` line (`sqllogic_parser.cpp:23,60-63`).
-- [ ] `KNOWN_UNSUPPORTED` (`SltParser.kt:11-12`) is dead — branches at `:67-74` are identical.
-- [ ] `<FILE>:` results (3 `.test_slow` records) unhandled; `.test_slow` never discovered (`CorpusRunner.kt:39-49`).
+- [x] Parser trims lines and ignores `#` inside SQL (`SltParser.kt:29,161`); upstream only recognises `#`/`----` at
+  column 0 and stops the SQL block at a `#` line (`sqllogic_parser.cpp:23,60-63`). (Only deliberate leniency left:
+  a whitespace-only line at a directive position reads as blank where upstream `Fail`s "Empty line!?".)
+- [x] `KNOWN_UNSUPPORTED` (`SltParser.kt:11-12`) is dead — branches at `:67-74` are identical. (Already gone at HEAD;
+  the `concurrentloop`/`concurrentforeach` branch is the single remaining one.)
+- [x] `<FILE>:` results (3 `.test_slow` records) unhandled; `.test_slow` never discovered (`CorpusRunner.kt:39-49`).
+  (Modelled as `SltQuery.goldenFile`; `expected` keeps the raw row as upstream `values`. Discovery + loading are in
+  `ducklake-test-corpus-replay` — see the Status line.)
 
 ### S-D2 · DRIFT · Comparator rendering vs DuckDB
-- [ ] `Double.toString` (`GoldenComparator.kt:154`) differs from DuckDB for |x| ≥ 1e7 or < 1e-3 (`1.2345678E7` vs
+- [x] **Status:** RESOLVED — `ducklake-test-corpus-replay`: new `DuckDbText` reproduces `duckdb_fmt::format("{}")`
+  for DOUBLE/FLOAT (shortest digits + fmt `float_writer` thresholds: `e` notation outside decimal exponent `[-4, 16)`,
+  `.0` on integral values, two-digit exponents, `nan`/`inf`/`-0.0`) and the `infinity`/`-infinity` TIMESTAMP(TZ)/DATE
+  sentinels; `GoldenComparator.renderNested` follows `nested_to_varchar_cast.cpp` `LOOKUP_TABLE` +
+  `vector_cast_helpers.hpp` (`" ' ( ) , : = [ ] { }`, empty, leading/trailing space, `null`; backslash escapes; struct
+  keys always quoted; non-nested children cast to text first, so `['2020-01-01 00:00:00']`); booleans accept
+  `true/false/1/0` for any type letter; expected cells are verbatim (no trim — a geo golden starts with a space);
+  `N values hashing to` goldens are MD5-compared instead of skipped; labels compare hashes only (golden rows ignored);
+  `require no_alternative_verify` PRESENT and `no_extension_autoloading` decided by the live `autoload_known_extensions`
+  setting; golden rows env-only, expected errors env-substituted + `<!REGEX>`, `INTERNAL`/`differs from original result!`
+  never accepted, `statement error` that succeeds fails even without a message; `FileResult.haltedMidFile`/
+  `failuresBeforeSkip` + `CorpusReport.failures` over all files; `.test_slow` discovered; `<FILE>:` goldens loaded via
+  `read_csv(header=1, sep='|', all VARCHAR)` (path env-then-loop substituted; missing file = record skip); comma
+  iterators + env-before-loop order in `ReplayDriver`; `statement maybe` honoured. Identity control (full corpus):
+  480 files / 442 ran / 9348 passed / 0 failed (was 471 / 436 / 7850 / 0; +9 `.test_slow`, 3 geo files newly reached by
+  `no_alternative_verify` are skip-listed under the existing GEOMETRY-WKB reason, the 4th now runs and passes). Unit tests:
+  `TestDuckDbText`, `TestGoldenComparator`, `TestReplayDriverSubstitution` (expected strings taken from DuckDB 1.5 itself).
+- [x] `Double.toString` (`GoldenComparator.kt:154`) differs from DuckDB for |x| ≥ 1e7 or < 1e-3 (`1.2345678E7` vs
   `12345678.0`, `1.0E-4` vs `0.0001`, `1.0E20` vs `1e+20`); masked under `I`/`R` by `numericEqual`, breaks for `T`
   columns and doubles nested in LIST/STRUCT. `'infinity'::TIMESTAMP` renders `294247-01-10 04:00:54.775807`.
-- [ ] Nested-string quoting (`GoldenComparator.kt:126-138`) doesn't match DuckDB (`nested_to_varchar_cast.cpp:5-40`,
+  (`DuckDbText.double/float` — fmt `format.h` `float_writer` + `format-inl.h` `format_float` shortest mode; only known
+  divergence: one-digit subnormals, `5e-324` vs Java's `4.9E-324`. Infinity sentinels = `±int64::max` µs / `±int32::max`
+  days, `timestamp.cpp:331-337`, `date.cpp:16-17`.)
+- [x] Nested-string quoting (`GoldenComparator.kt:126-138`) doesn't match DuckDB (`nested_to_varchar_cast.cpp:5-40`,
   `vector_cast_helpers.hpp:185-251`): DuckDB quotes only on empty/leading-or-trailing space/`null`/special chars and
   escapes with backslash; comparator quotes on interior whitespace and doubles quotes. KDoc `:119-122` claims parity.
-- [ ] Booleans: `1/0` accepted only under `I` (`:234-237`); upstream accepts for any boolean column.
-- [ ] `require no_alternative_verify` treated as unmet (`DuckDbOracle.kt:62`); upstream it is PRESENT except in
+  (Exact table transcribed; trailing-space rule only from length ≥ 2 as upstream; NUL escaped after quoting.)
+- [x] Booleans: `1/0` accepted only under `I` (`:234-237`); upstream accepts for any boolean column.
+- [x] `require no_alternative_verify` treated as unmet (`DuckDbOracle.kt:62`); upstream it is PRESENT except in
   ALTERNATIVE_VERIFY builds (`sqllogic_test_runner.cpp:562-568`). 4 `geo/*` files skipped for the wrong reason.
-- [ ] Golden rows loop-substituted (`ReplayDriver.kt:348`); `statement error` messages not env-substituted
+- [x] Golden rows loop-substituted (`ReplayDriver.kt:348`); `statement error` messages not env-substituted
   (`:262, 270-279`); internal errors accepted for `statement error` (upstream never accepts,
-  `result_helper.cpp:302-305`).
-- [ ] Unmet `require` mid-file returns `fileSkipReason` (`ReplayDriver.kt:176`) and `CorpusReport.failures` only
+  `result_helper.cpp:302-305`). (Regex error expectations now full-match the error text as `MatchesRegex`.)
+- [x] Unmet `require` mid-file returns `fileSkipReason` (`ReplayDriver.kt:176`) and `CorpusReport.failures` only
   counts `ranFiles` (`CorpusRunner.kt:97-101`) → earlier failures hidden.
-- [ ] Labelled queries with golden rows would be value-compared (`ReplayDriver.kt:324`); upstream hash-compares the
-  label only.
-- [ ] `ReplayReadEngine.kt:10-13` says "live-vs-live typed values"; comparisons are sorted string comparisons
+- [x] Labelled queries with golden rows would be value-compared (`ReplayDriver.kt:324`); upstream hash-compares the
+  label only. (Hash caveat: upstream feeds booleans as `1`/`0`; ours as `true`/`false` — affects explicit hash goldens
+  over boolean columns only, of which the corpus has none.)
+- [x] `ReplayReadEngine.kt:10-13` says "live-vs-live typed values"; comparisons are sorted string comparisons
   (`ReplayDriver.kt:385-400`). Fix doc.
-- [ ] `SltModel.kt:9` lists `require-env` as modeled but the parser emits `SltUnsupported` (`SltParser.kt:41-44`);
+- [x] `SltModel.kt:9` lists `require-env` as modeled but the parser emits `SltUnsupported` (`SltParser.kt:41-44`);
   `SltModel.kt:19-21` unsupported list omits `require-env`, `unzip`, `reconnect`, `concurrentforeach`; `:11` omits
-  `statement maybe`.
+  `statement maybe`. (Fixed in S-D1, slt-format side.)
 
 ### S-D3 · DRIFT · Harness is not run in CI
 - [x] **Status:** RESOLVED — `.github/workflows/ci.yml`: `check` on PR/push; nightly full-corpus replay; manual `full_corpus` dispatch.

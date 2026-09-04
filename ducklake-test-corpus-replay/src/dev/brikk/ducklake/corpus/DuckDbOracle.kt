@@ -51,18 +51,61 @@ class DuckDbOracle(
         }
 
     /**
-     * Satisfies a `require` directive. Returns null on success or a skip
-     * reason when the requirement can't be met in this harness.
+     * Satisfies a `require` directive (upstream `sqllogic_test_runner.cpp` `CheckRequire`).
+     * Returns null when PRESENT or a skip reason when MISSING / not met in this harness:
+     *  - `no_alternative_verify` is PRESENT — MISSING only in `DUCKDB_ALTERNATIVE_VERIFY` builds
+     *    (`:562-568`), which the release JDBC binary is not;
+     *  - `no_extension_autoloading` is MISSING exactly when `autoload_known_extensions` is on
+     *    (`:600-604`); the release binary enables it, so this is checked live.
      */
     fun require(requirement: String): String? {
-        val req = requirement.substringBefore(' ').trim()
+        val req = requirement.substringBefore(' ').trim().lowercase()
         return when (req) {
-            "notwindows", "core_functions" -> null // always true here
+            "notwindows", "core_functions", "no_alternative_verify" -> null // always true here
             "ducklake", "parquet", "icu", "json", "httpfs" -> installAndLoad(req)
-            "no_extension_autoloading", "no_alternative_verify" -> "requires harness flag '$req'"
+            "no_extension_autoloading" ->
+                if (autoloadKnownExtensions()) "setting autoload_known_extensions is enabled" else null
             else -> "unsupported extension requirement '$req'"
         }
     }
+
+    private fun autoloadKnownExtensions(): Boolean =
+        root.createStatement().use { st ->
+            st.executeQuery("SELECT current_setting('autoload_known_extensions')").use { rs ->
+                rs.next() && rs.getBoolean(1)
+            }
+        }
+
+    /**
+     * Upstream `TestResultHelper::LoadResultFromFile` (`result_helper.cpp:362-399`): a `<FILE>:`
+     * golden is a `|`-separated CSV WITH header, read with every column typed VARCHAR
+     * (`read_csv(..., header=1, sep='|', columns=STRUCT_PACK(<result names> := VARCHAR),
+     * auto_detect=false)`), each value then rendered with `Value::ToString()` — so an empty field
+     * is NULL and renders `NULL`. Column names only shape the struct; [columnCount] is what matters.
+     * Relative [path]s resolve against the repo root (upstream runs from the ducklake checkout).
+     */
+    fun loadGoldenCsv(path: String, columnCount: Int): List<List<String>> {
+        val resolved = Path.of(path).let { if (it.isAbsolute || repoRoot == null) it else repoRoot.resolve(it) }
+        if (!Files.isRegularFile(resolved)) {
+            throw GoldenFileMissing("golden file not found: $resolved")
+        }
+        val columns = (0 until columnCount).joinToString(", ") { "'c$it': 'VARCHAR'" }
+        val sql =
+            "SELECT * FROM read_csv('${resolved.toString().replace("'", "''")}', header=1, sep='|', " +
+                "columns={$columns}, auto_detect=false)"
+        return root.createStatement().use { st ->
+            st.executeQuery(sql).use { rs ->
+                val rows = mutableListOf<List<String>>()
+                while (rs.next()) {
+                    rows += (1..columnCount).map { rs.getString(it) ?: "NULL" }
+                }
+                rows
+            }
+        }
+    }
+
+    /** A `<FILE>:` golden that is not on disk — an environment gap (e.g. the `duckdb` submodule), not a result mismatch. */
+    class GoldenFileMissing(message: String) : RuntimeException(message)
 
     private fun installAndLoad(extension: String): String? {
         if (extension in loaded) return null

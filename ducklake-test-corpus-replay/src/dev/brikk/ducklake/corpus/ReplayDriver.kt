@@ -18,11 +18,16 @@ import java.sql.SQLException
  * where the oracle's results are validated against the golden text — which is
  * what proves the parser, templating, and comparator are faithful.
  *
+ * Substitution order follows upstream: env/template vars first (`ReplaceKeywords`, at parse
+ * time there), then loop bindings outermost-first with env-substituted values
+ * (`LoopReplacement`); expected-error text and golden rows are env-substituted only.
+ *
  * Skip policy (never fail on the un-runnable):
- *  - unsatisfiable `require` → whole-file skip with reason
+ *  - unsatisfiable `require` → the rest of the file is skipped with a reason; records already
+ *    executed keep their outcomes (see [FileResult])
  *  - [SltUnsupported] anywhere → whole-file skip (v1 keeps semantics honest
  *    rather than running around unknown constructs)
- *  - hash-format expected results / conditional records → record-level skip
+ *  - guarded-out conditional records, and a `<FILE>:` golden that is not on disk → record skip
  */
 class ReplayDriver(
     private val engine: ReplayReadEngine? = null,
@@ -56,6 +61,11 @@ class ReplayDriver(
         private val TXN_BEGIN = Regex("^\\s*BEGIN\\b", RegexOption.IGNORE_CASE)
         private val TXN_END = Regex("^\\s*(COMMIT|ROLLBACK|ABORT)\\b", RegexOption.IGNORE_CASE)
         private val DML = Regex("^\\s*(insert|update|delete|merge|truncate)\\b", RegexOption.IGNORE_CASE)
+        private const val REGEX_PREFIX = "<REGEX>:"
+        private const val NOT_REGEX_PREFIX = "<!REGEX>:"
+
+        /** Upstream `always_fail_error_messages`: errors a `statement error`/`maybe` never accepts. */
+        val ALWAYS_FAIL_ERROR_MESSAGES: Set<String> = setOf("differs from original result!", "INTERNAL")
     }
 
     fun replay(file: SltFile): FileResult {
@@ -82,8 +92,8 @@ class ReplayDriver(
         }
     }
 
-    /** Result-sharing store for labeled queries, per replayed file. */
-    private val labelResults = mutableMapOf<String, List<List<String>>>()
+    /** Result hash per label (upstream `hash_label_map`), per replayed file. */
+    private val labelResults = mutableMapOf<String, String>()
 
     /** Per-file memo of original → rewritten DuckLake connection remainders. */
     private val rewrittenAttachments = mutableMapOf<String, String>()
@@ -201,8 +211,9 @@ class ReplayDriver(
 
     /**
      * Executes records in order. Returns a file-skip reason when a `require`
-     * is unsatisfiable (upstream semantics: unmet require skips the rest of
-     * the file), null otherwise.
+     * is unsatisfiable — upstream `SKIP_TEST`s at that point while streaming the
+     * file (`sqllogic_test_runner.cpp:1084-1091`), so the remainder is skipped but
+     * everything already appended to [outcomes] stands — null otherwise.
      */
     private fun executeAll(
         records: List<SltRecord>,
@@ -216,7 +227,7 @@ class ReplayDriver(
                     val miss = oracle.require(record.requirement)
                     if (miss != null) return "require ${record.requirement}: $miss"
                 }
-                is SltTestEnv -> oracle.defineEnv(record.name, bind(record.value, bindings))
+                is SltTestEnv -> oracle.defineEnv(record.name, bindLoops(record.value, bindings, oracle))
                 is SltStatement -> outcomes += runStatement(record, oracle, bindings)
                 is SltQuery -> outcomes += runQuery(record, oracle, bindings)
                 is SltLoop -> {
@@ -258,10 +269,30 @@ class ReplayDriver(
     private fun evalCondition(expr: String, bindings: Map<String, String>): Boolean =
         dev.brikk.ducklake.slt.SltConditions.evaluate(expr, "duckdb", bindings)
 
-    private fun bind(text: String, bindings: Map<String, String>): String {
+    /** Upstream order: `ReplaceKeywords` (env, TEST_DIR, UUID) first, then `LoopReplacement`. */
+    private fun substituteAll(text: String, bindings: Map<String, String>, oracle: DuckDbOracle): String =
+        bindLoops(oracle.substitute(text), bindings, oracle)
+
+    /**
+     * `LoopReplacement` / `ReplaceLoopIterator` (`sqllogic_test_runner.cpp:198-235`): active loops
+     * outermost-first; each replacement value is env-substituted before insertion; `${it}` then
+     * `{it}` are replaced literally. A comma iterator `a,b` bound to `1,x` binds `a`→`1`, `b`→`x`
+     * (the parser guarantees equal arity for raw values; env substitution could still break it,
+     * which upstream `FAIL`s on — here it escapes [replay] and the runner reports a CRASH file).
+     */
+    private fun bindLoops(text: String, bindings: Map<String, String>, oracle: DuckDbOracle): String {
         var s = text
-        for ((k, v) in bindings) {
-            s = s.replace("\${$k}", v).replace("{$k}", v)
+        for ((iterator, rawValue) in bindings) {
+            val names = iterator.split(',')
+            val value = oracle.substitute(rawValue)
+            val values = if (names.size == 1) listOf(value) else value.split(',')
+            check(names.size == values.size) {
+                "foreach loop: number of commas in loop iterator ($iterator) does not match number of commas in " +
+                    "replacement ($value)"
+            }
+            for (i in names.indices) {
+                s = s.replace("\${${names[i]}}", values[i]).replace("{${names[i]}}", values[i])
+            }
         }
         return s
     }
@@ -271,7 +302,7 @@ class ReplayDriver(
         oracle: DuckDbOracle,
         bindings: Map<String, String>,
     ): RecordOutcome {
-        val substituted = oracle.substitute(bind(record.sql, bindings))
+        val substituted = substituteAll(record.sql, bindings, oracle)
         val (sql, pendingAttachment) = interceptAttach(substituted)
         val conn = oracle.connection(record.connection)
         return try {
@@ -283,32 +314,55 @@ class ReplayDriver(
                 engineTarget = pendingTarget
             }
             trackTransaction(sql, record.connection)
-            if (record.expectError && !record.mayError && record.expectedError != null) {
-                RecordOutcome.Fail(record, "expected error containing '${record.expectedError}' but statement succeeded")
-            } else {
-                // `statement ok`, `statement error` without an expectation is handled in the
-                // catch below, and `statement maybe`: success is acceptable.
-                RecordOutcome.Pass(record)
-            }
+            statementSucceeded(record)
         } catch (e: SQLException) {
-            if (!record.expectError) {
-                RecordOutcome.Fail(record, "unexpected error: ${firstLine(e)}")
-            } else if (errorMatches(record.expectedError, e)) {
-                RecordOutcome.Pass(record)
-            } else {
-                RecordOutcome.Fail(record, "error mismatch: expected '${record.expectedError}', got: ${firstLine(e)}")
-            }
+            statementErrored(record, e, oracle)
         }
     }
 
-    private fun errorMatches(expected: String?, e: SQLException): Boolean {
-        if (expected == null) return true
-        val message = e.message ?: return false
-        val regexPrefix = "<REGEX>:"
-        return if (expected.startsWith(regexPrefix)) {
-            Regex(expected.removePrefix(regexPrefix), RegexOption.DOT_MATCHES_ALL).containsMatchIn(message)
+    /** `statement ok` and `statement maybe` accept success; `statement error` must fail (any message). */
+    private fun statementSucceeded(record: SltStatement): RecordOutcome =
+        if (record.expectError && !record.mayError) {
+            val expectation = record.expectedError?.let { " containing '$it'" } ?: ""
+            RecordOutcome.Fail(record, "expected an error$expectation but the statement succeeded")
         } else {
-            message.contains(expected)
+            RecordOutcome.Pass(record)
+        }
+
+    /**
+     * Upstream `CheckStatementResult` (`result_helper.cpp:296-339`): for `statement error` AND
+     * `statement maybe`, an internal error is never acceptable (`always_fail_error_messages`,
+     * `:302-305`), and when an expectation is given the message must match it (`:311-331`).
+     */
+    private fun statementErrored(record: SltStatement, e: SQLException, oracle: DuckDbOracle): RecordOutcome {
+        val message = e.message ?: ""
+        return when {
+            !record.expectError -> RecordOutcome.Fail(record, "unexpected error: ${firstLine(e)}")
+            isInternalError(message) ->
+                RecordOutcome.Fail(record, "internal error is never an expected error: ${firstLine(e)}")
+            errorMatches(record.expectedError, message, oracle) -> RecordOutcome.Pass(record)
+            else -> RecordOutcome.Fail(record, "error mismatch: expected '${record.expectedError}', got: ${firstLine(e)}")
+        }
+    }
+
+    /** `sqllogic_test_runner.hpp:78` `always_fail_error_messages`. */
+    private fun isInternalError(message: String): Boolean =
+        ALWAYS_FAIL_ERROR_MESSAGES.any { message.contains(it) }
+
+    /**
+     * `result_helper.cpp:311-331`: substring match against the raw AND the env-substituted
+     * expectation (never loop-substituted), else `<REGEX>:` / `<!REGEX>:` full-match over the
+     * whole error text (`MatchesRegex`, dot matches newline).
+     */
+    private fun errorMatches(expected: String?, message: String, oracle: DuckDbOracle): Boolean {
+        if (expected == null) return true
+        if (message.contains(expected) || message.contains(oracle.substitute(expected))) return true
+        return when {
+            expected.startsWith(REGEX_PREFIX) ->
+                Regex(expected.removePrefix(REGEX_PREFIX), RegexOption.DOT_MATCHES_ALL).matches(message)
+            expected.startsWith(NOT_REGEX_PREFIX) ->
+                !Regex(expected.removePrefix(NOT_REGEX_PREFIX), RegexOption.DOT_MATCHES_ALL).matches(message)
+            else -> false
         }
     }
 
@@ -317,17 +371,22 @@ class ReplayDriver(
         oracle: DuckDbOracle,
         bindings: Map<String, String>,
     ): RecordOutcome {
-        val sql = oracle.substitute(bind(record.sql, bindings))
+        val sql = substituteAll(record.sql, bindings, oracle)
         // runCatching: unchecked escapes happen too (e.g. the JDBC driver throws
         // DateTimeException on TIME '24:00:00'); a record failure must never
         // abort the corpus.
         val actual =
             runCatching { executeQuerySql(oracle.connection(record.connection), sql) }
                 .getOrElse { e -> return RecordOutcome.Fail(record, "query errored: ${firstLine(e)}") }
-        labeledOutcome(record, actual)?.let { return it }
-        val goldenOutcome = goldenOutcome(record, oracle, bindings, actual)
-        if (goldenOutcome !is RecordOutcome.Pass || engine == null || !shouldMirror(record, sql)) {
-            return goldenOutcome
+        val label = record.label
+        val outcome =
+            if (label != null) {
+                labeledOutcome(record, label, actual)
+            } else {
+                goldenOutcome(record, oracle, bindings, actual)
+            }
+        if (outcome !is RecordOutcome.Pass || engine == null || !shouldMirror(record, sql)) {
+            return outcome
         }
         mirrorsThisFile++
         return mirrorOutcome(engine, record, sql, actual)
@@ -352,17 +411,23 @@ class ReplayDriver(
             }
         }
 
-    /** Result-sharing labels: first occurrence stores, later ones must match. */
-    private fun labeledOutcome(record: SltQuery, actual: List<List<String?>>): RecordOutcome? {
-        val label = record.label
-        if (label == null || record.expected.isNotEmpty()) {
-            return null
+    /**
+     * Labelled query (`result_helper.cpp:86-87, 250-263`): upstream switches to hash comparison —
+     * the first occurrence of a label stores its result hash, later ones must reproduce it — and
+     * any golden rows written under the query are IGNORED (only an explicit
+     * `N values hashing to …` golden is still checked, `:264-269`).
+     */
+    private fun labeledOutcome(record: SltQuery, label: String, actual: List<List<String?>>): RecordOutcome {
+        val hash = GoldenComparator.resultHash(record, actual)
+        val stored = labelResults.putIfAbsent(label, hash)
+        if (stored != null && stored != hash) {
+            return RecordOutcome.Fail(record, "labeled result '$label' diverged from first occurrence: $stored vs $hash")
         }
-        val cells = actual.map { row -> row.map(GoldenComparator::toGoldenCell) }
-        val stored = labelResults.putIfAbsent(label, cells)
-        return when {
-            stored == null || stored == cells -> RecordOutcome.Pass(record)
-            else -> RecordOutcome.Fail(record, "labeled result '$label' diverged from first occurrence")
+        if (!GoldenComparator.isHashGolden(record)) return RecordOutcome.Pass(record)
+        return when (val cmp = GoldenComparator.compare(record, actual)) {
+            is GoldenComparator.Comparison.Match -> RecordOutcome.Pass(record)
+            is GoldenComparator.Comparison.Mismatch -> RecordOutcome.Fail(record, cmp.detail)
+            is GoldenComparator.Comparison.Unsupported -> RecordOutcome.Skip(record, cmp.reason)
         }
     }
 
@@ -372,20 +437,40 @@ class ReplayDriver(
         bindings: Map<String, String>,
         actual: List<List<String?>>,
     ): RecordOutcome {
-        // Golden text may reference loop variables and template vars (e.g. an
-        // expected count that differs per foreach iteration, or DATA_PATH in
-        // path-returning metadata queries) — substitute before comparing.
         val effective =
-            if (record.expected.isEmpty()) {
-                record
-            } else {
-                record.copy(expected = record.expected.map { oracle.substitute(bind(it, bindings)) })
+            try {
+                resolveExpected(record, oracle, bindings, actual)
+            } catch (e: DuckDbOracle.GoldenFileMissing) {
+                // An environment gap (e.g. the `duckdb` submodule the tpch answers live in), not a mismatch.
+                return RecordOutcome.Skip(record, e.message ?: "golden file missing")
+            } catch (e: SQLException) {
+                return RecordOutcome.Fail(record, "could not read golden CSV: ${firstLine(e)}")
             }
         return when (val cmp = GoldenComparator.compare(effective, actual)) {
             is GoldenComparator.Comparison.Match -> RecordOutcome.Pass(record)
             is GoldenComparator.Comparison.Mismatch -> RecordOutcome.Fail(record, cmp.detail)
             is GoldenComparator.Comparison.Unsupported -> RecordOutcome.Skip(record, cmp.reason)
         }
+    }
+
+    /**
+     * The rows to compare against. A `<FILE>:path` golden (`result_helper.cpp:111-122`) has its
+     * path env-substituted THEN loop-substituted and the rows loaded from the CSV
+     * ([DuckDbOracle.loadGoldenCsv]); inline golden text is env-substituted only — upstream
+     * compares each cell raw and `ReplaceKeywords`-substituted (`CompareValues`, `:496`), never
+     * loop-substituted.
+     */
+    private fun resolveExpected(
+        record: SltQuery,
+        oracle: DuckDbOracle,
+        bindings: Map<String, String>,
+        actual: List<List<String?>>,
+    ): SltQuery {
+        val goldenFile = record.goldenFile ?: return record.copy(expected = record.expected.map { oracle.substitute(it) })
+        val path = substituteAll(goldenFile.path, bindings, oracle)
+        val columnCount = actual.firstOrNull()?.size ?: record.types.length
+        val rows = oracle.loadGoldenCsv(path, columnCount)
+        return record.copy(expected = rows.map { it.joinToString("\t") }, goldenFile = null)
     }
 
     /**

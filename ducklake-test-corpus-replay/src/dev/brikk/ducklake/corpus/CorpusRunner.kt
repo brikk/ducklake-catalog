@@ -35,14 +35,16 @@ class CorpusRunner(
 
     companion object {
         const val DEFAULT_FILE_TIMEOUT_SECONDS: Long = 300
+        val CORPUS_EXTENSIONS: Set<String> = setOf("test", "test_slow")
     }
 
+    /** Upstream runs both `.test` and `.test_slow` files (the latter carry the `<FILE>:` goldens). */
     fun discover(subdir: String? = null): List<Path> {
         val base = if (subdir == null) corpusRoot else corpusRoot.resolve(subdir)
         if (!Files.isDirectory(base)) return emptyList()
         Files.walk(base).use { stream ->
             return stream
-                .filter { Files.isRegularFile(it) && it.extension == "test" }
+                .filter { Files.isRegularFile(it) && it.extension in CORPUS_EXTENSIONS }
                 .sorted()
                 .toList()
         }
@@ -90,18 +92,31 @@ class CorpusRunner(
     }
 }
 
+/**
+ * Aggregate over [FileResult]s. Record counts ([failures], [totalPassed], [totalRecordSkips]) span
+ * EVERY file that executed records — including files an unmet `require` halted mid-way
+ * ([haltedFiles]); a failure recorded before such a skip is still a failure, as upstream.
+ */
 class CorpusReport(val files: List<FileResult>) {
 
+    /** Files that ran to the end. */
     val ranFiles: List<FileResult> get() = files.filter { it.fileSkipReason == null }
+
+    /** Files with a skip reason — whole-file skips AND mid-file halts (see [haltedFiles]). */
     val skippedFiles: List<FileResult> get() = files.filter { it.fileSkipReason != null }
+
+    /** Files that executed some records before an unmet `require` skipped the remainder. */
+    val haltedFiles: List<FileResult> get() = files.filter { it.haltedMidFile }
+
+    /** Every record failure, whether its file ran to the end or was halted afterwards. */
     val failures: List<Pair<FileResult, RecordOutcome.Fail>>
-        get() = ranFiles.flatMap { f -> f.failed.map { f to it } }
+        get() = files.flatMap { f -> f.failed.map { f to it } }
 
     /** Files whose replay threw (harness bug or driver escape) — always a defect, never a skip. */
     val crashes: List<FileResult> get() = skippedFiles.filter { it.fileSkipReason!!.startsWith("CRASH:") }
 
-    val totalPassed: Int get() = ranFiles.sumOf { it.passed }
-    val totalRecordSkips: Int get() = ranFiles.sumOf { it.skipped.size }
+    val totalPassed: Int get() = files.sumOf { it.passed }
+    val totalRecordSkips: Int get() = files.sumOf { it.skipped.size }
 
     fun summary(maxFailures: Int = 20): String {
         val sb = StringBuilder()
@@ -109,6 +124,9 @@ class CorpusReport(val files: List<FileResult>) {
         sb.appendLine(
             "  ran ${ranFiles.size} (records: $totalPassed passed, ${failures.size} failed, $totalRecordSkips skipped)",
         )
+        if (haltedFiles.isNotEmpty()) {
+            sb.appendLine("  halted mid-file by an unmet require ${haltedFiles.size} (records above include theirs)")
+        }
         sb.appendLine("  file-skips ${skippedFiles.size}:")
         skippedFiles
             .groupBy { it.fileSkipReason!!.substringBefore(" at line") }

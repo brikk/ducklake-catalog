@@ -7,11 +7,15 @@ package dev.brikk.ducklake.corpus
  * only defines the seam plus the DuckDB identity-control implementation.
  *
  * Contract:
- *  - [executeQuery] returns rows of canonical cell strings: SQL NULL is Kotlin
- *    `null`; everything else is the engine's string rendering. The driver
- *    canonicalizes further (see [GoldenComparator]) before comparing against
- *    the oracle's live results — comparisons are live-vs-live typed values,
- *    never sqllogictest golden text (only the oracle is held to golden text).
+ *  - [executeQuery] returns rows of cell strings: SQL NULL is Kotlin `null`;
+ *    everything else is the engine's rendering, which the adapter should have
+ *    put into DuckDB's text dialect via [GoldenComparator.renderCell] /
+ *    [GoldenComparator.renderNested]. The driver maps NULL/empty to
+ *    `NULL`/`(empty)` ([GoldenComparator.toGoldenCell]) on both sides, joins
+ *    each row's cells, sorts the rows, and compares the two sorted string lists
+ *    for exact equality — order-insensitive, text-based, no type coercion or
+ *    numeric tolerance (see `ReplayDriver.mirrorOutcome`). The engine is never
+ *    compared against sqllogictest golden text; only the oracle is held to it.
  *  - [accepts] is the dialect gate: return false for SQL the engine cannot or
  *    should not attempt (engine-specific syntax, non-SELECT, unsupported
  *    functions). Rejected queries count as engine-skips in the report, never
