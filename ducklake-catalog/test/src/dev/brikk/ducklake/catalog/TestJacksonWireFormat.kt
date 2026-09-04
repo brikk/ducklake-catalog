@@ -35,12 +35,8 @@ import org.junit.jupiter.api.Test
  * bare value; an empty one is OMITTED from the object entirely (not `null`, not
  * `{"present":false}`).
  *
- * [DucklakeNameMap] / [DucklakeNameMapEntry] are the exception: they carry
- * `@JsonCreator`/`@JsonProperty` for DESERIALIZATION only and (unlike the other
- * marked types) are NOT `@JvmRecord` and have no `@get:JsonProperty` getters, so
- * the codec emits an empty `{}` on the way out and then rejects that empty
- * object on the way back in. Those cases lock the real (lossy, non-round-trip)
- * behaviour rather than pretending it round-trips.
+ * [DucklakeNameMap] / [DucklakeNameMapEntry] are `@JvmRecord` like the rest and
+ * round-trip through record components (see the dedicated cases below).
  */
 class TestJacksonWireFormat {
     private fun <T> codec(type: Class<T>): JsonCodec<T> = JsonCodecFactory().jsonCodec(type)

@@ -13,12 +13,6 @@
  */
 package dev.brikk.ducklake.catalog
 
-// Visibility note: Java was package-private `final class`. Kotlin has no
-// package-private; widening to default `public` since `ConflictMatrix.check`
-// (also default `public` in Kotlin) exposes this type in its signature.
-// `internal` would fix the visibility but the parameter type is referenced
-// from JdbcDucklakeCatalog (same module) where it's also called from Kotlin.
-
 /**
  * Aggregated view of catalog changes committed in some snapshot range,
  * mirroring upstream's `SnapshotChangeInformation`
@@ -38,7 +32,7 @@ package dev.brikk.ducklake.catalog
  * `flushed_inlined` / `inline_flush`, scalar/table macros) round-trips
  * cleanly through the matrix when our connector is the in-flight writer.
  */
-class InterveningChanges {
+internal class InterveningChanges {
     /**
      * `(schemaName, entryName) → "table"|"view"`. Keyed by schema name
      * because that's the form upstream's matrix uses for the

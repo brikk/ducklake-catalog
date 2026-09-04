@@ -116,7 +116,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (config == null) throw NullPointerException("config is null")
 
         val hikariConfig = HikariConfig()
-        val configuredUrl: String = config.catalogDatabaseUrl!!
+        val configuredUrl: String = requireNotNull(config.catalogDatabaseUrl) {
+            "DucklakeCatalogConfig.catalogDatabaseUrl is required (jdbc:postgresql://…, jdbc:duckdb:…)"
+        }
         val dialectInferenceUrl: String
         val metadataQuery: MetadataQuery
         if (QuackBackedDuckDbCatalogUrl.matches(configuredUrl)) {
@@ -199,9 +201,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * Used by [DucklakeWriteTransaction] to keep all mutations on a
      * single transactional connection.
      */
-    // Visibility note: package-private in Java; widened to public (rather than
-    // `internal`) to preserve JVM call-compatibility with same-package callers.
-    fun forConnection(connection: Connection): DSLContext =
+    internal fun forConnection(connection: Connection): DSLContext =
         DSL.using(connection, dialect, jooqSettings)
 
     override fun <T> readSession(action: java.util.function.Supplier<T>): T {
@@ -496,7 +496,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 orZero(r.get(file.FILE_ORDER)),
                 r.get(dataFilePath),
                 r.get(dataFilePathIsRelative) == true,
-                CatalogFileFormat.fromStored(r.get(file.FILE_FORMAT))!!,
+                CatalogFileFormat.fromStoredRequired(r.get(file.FILE_FORMAT)),
                 orZero(r.get(file.RECORD_COUNT)),
                 orZero(r.get(file.FILE_SIZE_BYTES)),
                 orZero(r.get(dataFileFooterSize)),
@@ -644,7 +644,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             orZero(r.fileOrder),
             r.path!!,
             r.pathIsRelative == true,
-            CatalogFileFormat.fromStored(r.fileFormat)!!,
+            CatalogFileFormat.fromStoredRequired(r.fileFormat),
             orZero(r.recordCount),
             orZero(r.fileSizeBytes),
             orZero(r.footerSize),
@@ -671,7 +671,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             orZero(dataFile.beginSnapshot),
             dataFile.path!!,
             dataFile.pathIsRelative == true,
-            CatalogFileFormat.fromStored(dataFile.fileFormat)!!,
+            CatalogFileFormat.fromStoredRequired(dataFile.fileFormat),
             orZero(dataFile.footerSize),
             orZero(dataFile.fileSizeBytes),
             orZero(dataFile.rowIdStart),
@@ -2350,7 +2350,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     // Write transaction infrastructure
 
-    fun interface WriteTransactionAction {
+    internal fun interface WriteTransactionAction {
         @Throws(SQLException::class)
         fun execute(transaction: DucklakeWriteTransaction)
     }
@@ -2365,7 +2365,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * No-op in production.
      */
     @Volatile
-    var beforeWriteTransactionAction: Runnable = Runnable {}
+    internal var beforeWriteTransactionAction: Runnable = Runnable {}
 
     /**
      * Executes a write operation within an atomic snapshot transaction.

@@ -33,4 +33,8 @@ internal object CatalogFileFormat {
 
     /** Persisted value → bare internal format. Strips the legacy namespace; bare names pass through. */
     fun fromStored(stored: String?): String? = stored?.removePrefix(NAMESPACE_PREFIX)
+
+    /** [fromStored] for the NOT NULL `ducklake_data_file.file_format` column — a NULL there is catalog corruption. */
+    fun fromStoredRequired(stored: String?): String =
+        fromStored(stored) ?: throw DucklakeCatalogCorruptionException("ducklake_data_file.file_format is NULL")
 }

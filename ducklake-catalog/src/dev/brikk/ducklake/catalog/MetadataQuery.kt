@@ -40,13 +40,8 @@ import org.jooq.ResultQuery
  * remaining callers (i.e. upstream Quack relaxes the relevant restrictions),
  * delete the implementation and collapse this interface back to direct
  * execution. `git grep MetadataQuery` surfaces the call sites.
- *
- * Visibility note: this type is package-private in Java. Kotlin has no
- * package-private; widening to `public` (rather than `internal`) preserves
- * JVM call-compatibility with the existing Java implementations and call
- * sites in the same package.
  */
-interface MetadataQuery {
+internal interface MetadataQuery {
     /**
      * Fetch a single row from `query`, or `null` if no row matches.
      * The `dsl` is the same DSLContext the caller would have invoked

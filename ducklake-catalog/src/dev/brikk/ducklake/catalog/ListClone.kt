@@ -20,4 +20,4 @@ package dev.brikk.ducklake.catalog
  * behavior): the result is a new read-only list that does not reflect later changes to the source.
  */
 @Suppress("NOTHING_TO_INLINE") // intentional: inline away the wrapper so `.clone()` is exactly `.toList()`
-inline fun <T> List<T>.clone(): List<T> = toList()
+internal inline fun <T> List<T>.clone(): List<T> = toList()

@@ -35,7 +35,7 @@ package dev.brikk.ducklake.catalog
  * budget on a guaranteed-fail. Upstream achieves the same via its
  * `can_retry = false` flag; we use [LogicalConflictException.retryable] returning `false`.
  */
-object ConflictMatrix {
+internal object ConflictMatrix {
     /**
      * Run the matrix. Throws [LogicalConflictException] on the first
      * mismatch found.

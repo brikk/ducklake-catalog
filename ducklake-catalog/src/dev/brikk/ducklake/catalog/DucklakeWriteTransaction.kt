@@ -23,16 +23,8 @@ import java.sql.SQLException
  *
  * Instances are created by [JdbcDucklakeCatalog.executeWriteTransaction]
  * and must not be used outside the callback scope.
- *
- * Visibility note: Java's package-private (the original modifier on this
- * class and several of its methods) has no Kotlin equivalent. Kotlin's
- * `internal` mangles symbol names for Java callers (notably constructors
- * pick up a `DefaultConstructorMarker` parameter), which would break the
- * Java-side `JdbcDucklakeCatalog` callers. The class and its members are
- * therefore left at Kotlin's default `public` visibility; the package
- * remains the single-source-of-truth boundary the original design relied on.
  */
-class DucklakeWriteTransaction(
+internal class DucklakeWriteTransaction(
     private val connection: Connection,
     private val dsl: DSLContext,
     private val currentSnapshotId: Long,

@@ -757,7 +757,14 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `build/libs/ducklake-catalog-0.0.1*.jar` do contain it. Move out of `src/` or delete.
 
 ### Q-4 · NIT · Public API hygiene
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `internal`: `List.clone()`, `JdbcDucklakeCatalog.forConnection` /
+  `WriteTransactionAction` / `beforeWriteTransactionAction`, `DucklakeWriteTransaction`, `InterveningChanges`,
+  `MetadataQuery`, `LogicalConflictCheck`, `ConflictMatrix`, `WriteTransactionRetry` (no external consumer —
+  trino-ducklake / doris-ducklake checked — referenced any of them; the "package-private in Java" notes are gone).
+  `WriteChange.InsertedIntoTable/DeletedFromTable` are plain classes with a body-copied set (no `Unit` marker).
+  `catalogDatabaseUrl` → `requireNotNull` with a message; `ducklake_data_file.file_format` NULL →
+  `DucklakeCatalogCorruptionException` (`CatalogFileFormat.fromStoredRequired`); the `viewUuid!!` site no longer
+  exists. `DucklakeNameMap/Entry` already round-trip (`@JvmRecord`); the stale test KDoc claiming otherwise fixed.
 - Leaks that are "package-private in Java" leftovers per their own visibility notes: `ListClone.kt` public top-level
   `List<T>.clone()` (→ `ListCloneKt.clone`), `forConnection :188`, `DucklakeWriteTransaction` (whole class),
   `InterveningChanges` (public class, `internal` members), `MetadataQuery` public interface,

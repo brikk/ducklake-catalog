@@ -46,7 +46,7 @@ import org.jooq.impl.DSL
  * `Created*` variants are skipped — duplicate-name races are
  * already PK-protected on the underlying catalog row INSERTs.
  */
-object LogicalConflictCheck {
+internal object LogicalConflictCheck {
     fun run(tx: DucklakeWriteTransaction, operationDescription: String) {
         val snapshotId = tx.getCurrentSnapshotId()
         val ctx = tx.dsl()

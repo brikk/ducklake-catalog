@@ -25,13 +25,8 @@ import kotlin.math.ceil
  * Extracted from `JdbcDucklakeCatalog.executeWriteTransaction` so
  * that the policy can be unit-tested without a database. The [Sleeper]
  * seam lets tests record intervals and skip real sleeps.
- *
- * Visibility note: [Sleeper] and [Attempt] are package-private in Java. Kotlin
- * has no package-private; widening to `public` preserves JVM call-compatibility
- * with the existing tests (test-only-effective: same-package access remains
- * identical from production code).
  */
-object WriteTransactionRetry {
+internal object WriteTransactionRetry {
     private val log: System.Logger = System.getLogger(WriteTransactionRetry::class.java.name)
 
     fun interface Sleeper {

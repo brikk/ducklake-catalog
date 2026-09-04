@@ -120,68 +120,41 @@ sealed interface WriteChange {
     }
 
     /**
-     * @param referencedColumnIds column IDs the data files depend on (drawn from
-     *        each fragment's `columnStats`). Captured so a logical
-     *        conflict check can verify they are still active at commit time.
-     *        Defensively copied to an immutable [Set] on construction
-     *        (mirrors the Java record's compact-constructor `Set.copyOf`).
+     * @param referencedColumnIds column IDs the data files depend on (drawn from each fragment's
+     *        `columnStats`). Captured so a logical conflict check can verify they are still
+     *        active at commit time. Defensively copied to an immutable [Set] on construction.
      */
-    class InsertedIntoTable private constructor(
-        val tableId: Long,
-        val referencedColumnIds: Set<Long>,
-        @Suppress("UNUSED_PARAMETER") marker: Unit,
-    ) : WriteChange {
-        constructor(tableId: Long, referencedColumnIds: Set<Long>) :
-            this(tableId, referencedColumnIds.toSet(), Unit)
+    class InsertedIntoTable(val tableId: Long, referencedColumnIds: Set<Long>) : WriteChange {
+        val referencedColumnIds: Set<Long> = referencedColumnIds.toSet()
 
         override fun toChangesMadeEntry(): String =
             "inserted_into_table:$tableId"
 
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is InsertedIntoTable) return false
-            return tableId == other.tableId && referencedColumnIds == other.referencedColumnIds
-        }
+        override fun equals(other: Any?): Boolean =
+            this === other || (other is InsertedIntoTable && tableId == other.tableId && referencedColumnIds == other.referencedColumnIds)
 
-        override fun hashCode(): Int {
-            var result = tableId.hashCode()
-            result = 31 * result + referencedColumnIds.hashCode()
-            return result
-        }
+        override fun hashCode(): Int = 31 * tableId.hashCode() + referencedColumnIds.hashCode()
 
         override fun toString(): String =
             "InsertedIntoTable[tableId=$tableId, referencedColumnIds=$referencedColumnIds]"
     }
 
     /**
-     * @param referencedDataFileIds `data_file_id`s the delete fragments
-     *        target. Captured so a logical conflict check can verify they are
-     *        still active at commit time. Defensively copied to an immutable
-     *        [Set] on construction (mirrors the Java record's compact-constructor
-     *        `Set.copyOf`).
+     * @param referencedDataFileIds `data_file_id`s the delete fragments target. Captured so a
+     *        logical conflict check can verify they are still active at commit time.
+     *        Defensively copied to an immutable [Set] on construction.
      */
-    class DeletedFromTable private constructor(
-        val tableId: Long,
-        val referencedDataFileIds: Set<Long>,
-        @Suppress("UNUSED_PARAMETER") marker: Unit,
-    ) : WriteChange {
-        constructor(tableId: Long, referencedDataFileIds: Set<Long>) :
-            this(tableId, referencedDataFileIds.toSet(), Unit)
+    class DeletedFromTable(val tableId: Long, referencedDataFileIds: Set<Long>) : WriteChange {
+        val referencedDataFileIds: Set<Long> = referencedDataFileIds.toSet()
 
         override fun toChangesMadeEntry(): String =
             "deleted_from_table:$tableId"
 
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is DeletedFromTable) return false
-            return tableId == other.tableId && referencedDataFileIds == other.referencedDataFileIds
-        }
+        override fun equals(other: Any?): Boolean =
+            this === other ||
+                (other is DeletedFromTable && tableId == other.tableId && referencedDataFileIds == other.referencedDataFileIds)
 
-        override fun hashCode(): Int {
-            var result = tableId.hashCode()
-            result = 31 * result + referencedDataFileIds.hashCode()
-            return result
-        }
+        override fun hashCode(): Int = 31 * tableId.hashCode() + referencedDataFileIds.hashCode()
 
         override fun toString(): String =
             "DeletedFromTable[tableId=$tableId, referencedDataFileIds=$referencedDataFileIds]"
