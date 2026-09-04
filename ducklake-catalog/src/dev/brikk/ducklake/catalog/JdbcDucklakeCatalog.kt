@@ -751,6 +751,51 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         return refs
     }
 
+    override fun listAllReferencedFiles(): DucklakeReferencedFiles {
+        val tab = DUCKLAKE_TABLE.`as`("tab")
+        // A table id may have several versioned rows after rename. Its storage path is preserved,
+        // so use the latest row; importantly, do NOT filter activeAt — dropped-but-unexpired table
+        // files remain owned by the catalog.
+        val tables = linkedMapOf<Long, DucklakeTable>()
+        metadata.fetch(
+            dsl,
+            dsl.selectFrom(tab).orderBy(tab.TABLE_ID, tab.BEGIN_SNAPSHOT.desc()),
+        ).forEach { row ->
+            val table = toDucklakeTable(row)
+            tables.putIfAbsent(table.tableId, table)
+        }
+
+        val tableFiles = mutableListOf<DucklakeTableFilePathRef>()
+        fun collect(tableId: Long?, path: String?, pathIsRelative: Boolean?) {
+            if (tableId == null || path == null) {
+                return
+            }
+            val table = tables[tableId]
+                ?: throw DucklakeCatalogCorruptionException("file row references missing table_id $tableId")
+            tableFiles.add(
+                DucklakeTableFilePathRef(
+                    tableId,
+                    table.path,
+                    table.pathIsRelative,
+                    path,
+                    pathIsRelative ?: false,
+                ),
+            )
+        }
+
+        val df = DUCKLAKE_DATA_FILE.`as`("df")
+        metadata.fetch(dsl, dsl.select(df.TABLE_ID, df.PATH, df.PATH_IS_RELATIVE).from(df))
+            .forEach { collect(it.value1(), it.value2(), it.value3()) }
+        val delf = DUCKLAKE_DELETE_FILE.`as`("delf")
+        metadata.fetch(dsl, dsl.select(delf.TABLE_ID, delf.PATH, delf.PATH_IS_RELATIVE).from(delf))
+            .forEach { collect(it.value1(), it.value2(), it.value3()) }
+
+        val sched = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.`as`("sched")
+        val scheduled = metadata.fetch(dsl, dsl.select(sched.PATH, sched.PATH_IS_RELATIVE).from(sched))
+            .mapNotNull { row -> row.value1()?.let { DucklakeFilePathRef(it, row.value2() ?: false) } }
+        return DucklakeReferencedFiles(tableFiles, scheduled)
+    }
+
     override fun listExpirableSnapshots(olderThan: Instant?, versions: Set<Long>?): List<Long> {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
         val maxId: Long = dsl.select(DSL.max(snap.SNAPSHOT_ID)).from(snap)

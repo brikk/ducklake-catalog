@@ -147,6 +147,14 @@ interface DucklakeCatalog : AutoCloseable {
     fun listReferencedFilePaths(tableId: Long): List<DucklakeFilePathRef>
 
     /**
+     * Every storage path referenced anywhere in the catalog, regardless of table/snapshot
+     * liveness. Unlike [listReferencedFilePaths], this includes dropped-but-unexpired tables and
+     * keeps scheduled paths in their catalog-root namespace instead of mixing them with paths
+     * relative to a table directory. This is the safe known set for catalog-wide orphan sweeps.
+     */
+    fun listAllReferencedFiles(): DucklakeReferencedFiles
+
+    /**
      * Snapshot ids eligible for expiry — every snapshot EXCEPT the latest (which is never
      * expirable), optionally narrowed to those older than [olderThan] or to an explicit [versions]
      * set. [olderThan] and [versions] are mutually exclusive; pass both null to list all

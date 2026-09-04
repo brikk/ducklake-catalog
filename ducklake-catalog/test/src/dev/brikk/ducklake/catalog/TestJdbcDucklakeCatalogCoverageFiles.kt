@@ -258,6 +258,54 @@ class TestJdbcDucklakeCatalogCoverageFiles {
             .containsExactlyInAnyOrderElementsOf(expectedScheduled.map { it[0] })
     }
 
+    @Test
+    fun allReferencedFilesKeepsTableAndCatalogRootNamespacesSeparate() {
+        val h = ref()
+        val table = table("ref")
+        val all = catalog.listAllReferencedFiles()
+        val tableRefs = all.tableFiles.filter { it.tableId == h.tableId }
+        val expectedData = pg("SELECT path FROM ducklake_data_file WHERE table_id = ${h.tableId}").flatten()
+        val expectedDeletes = pg("SELECT path FROM ducklake_delete_file WHERE table_id = ${h.tableId}").flatten()
+        val expectedScheduled = pg("SELECT path FROM ducklake_files_scheduled_for_deletion").flatten()
+
+        assertThat(tableRefs.map { it.path })
+            .`as`("all data/delete rows remain table-relative, including retired rows")
+            .containsExactlyInAnyOrderElementsOf(expectedData + expectedDeletes)
+        assertThat(tableRefs.map { it.path }).doesNotContainAnyElementsOf(expectedScheduled)
+        assertThat(tableRefs).allSatisfy {
+            assertThat(it.tablePath).isEqualTo(table.path)
+            assertThat(it.tablePathIsRelative).isEqualTo(table.pathIsRelative)
+        }
+        assertThat(all.scheduledFiles.map { it.path })
+            .`as`("scheduled paths are returned separately for resolution against global data_path")
+            .containsExactlyInAnyOrderElementsOf(expectedScheduled)
+    }
+
+    @Test
+    fun allReferencedFilesIncludesDroppedButUnexpiredTables() {
+        catalog.createSchema("known_dropped")
+        catalog.createTable(
+            "known_dropped", "t",
+            listOf(TableColumnSpec.leaf("id", "int32", true)),
+            null, null,
+        )
+        val table = table("t", "known_dropped")
+        val id = columnIds(table.tableId).getValue("id")
+        catalog.commitInsert(table.tableId, listOf(fragment("owned.parquet", id, 1)))
+        val beforeDrop = catalog.currentSnapshotId
+        catalog.dropTable("known_dropped", "t")
+
+        assertThat(catalog.getTable("known_dropped", "t", catalog.currentSnapshotId)).isNull()
+        assertThat(catalog.getTable("known_dropped", "t", beforeDrop)).isNotNull()
+        assertThat(catalog.listAllReferencedFiles().tableFiles)
+            .`as`("time-travel files remain known after DROP until snapshot expiry schedules them")
+            .anySatisfy {
+                assertThat(it.tableId).isEqualTo(table.tableId)
+                assertThat(it.path).isEqualTo("owned.parquet")
+                assertThat(it.tablePath).isEqualTo(table.path)
+            }
+    }
+
     // ---------------------------------------------------------------- formats / data path
 
     @Test

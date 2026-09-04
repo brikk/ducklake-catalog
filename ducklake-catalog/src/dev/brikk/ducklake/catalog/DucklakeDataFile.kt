@@ -109,6 +109,32 @@ data class DucklakeFilePathRef(
 )
 
 /**
+ * A data/delete file reference together with the owning table path needed to resolve a relative
+ * [path]. The table row is the latest catalog row for [tableId], whether active or dropped: files
+ * of a dropped-but-unexpired table remain catalog-owned and must not be classified as orphans.
+ */
+data class DucklakeTableFilePathRef(
+    val tableId: Long,
+    val tablePath: String?,
+    val tablePathIsRelative: Boolean?,
+    val path: String,
+    val pathIsRelative: Boolean,
+)
+
+/**
+ * Catalog-wide known files for orphan detection.
+ *
+ * [tableFiles] are resolved against each entry's table path. [scheduledFiles] are deliberately
+ * separate: DuckLake defines their relative paths against the catalog-global `data_path`, never a
+ * table directory. Combining both into one per-table list can resolve a scheduled path twice and
+ * delete a still-owned file (P-H1/P-M1).
+ */
+data class DucklakeReferencedFiles(
+    val tableFiles: List<DucklakeTableFilePathRef>,
+    val scheduledFiles: List<DucklakeFilePathRef>,
+)
+
+/**
  * A file row from `ducklake_files_scheduled_for_deletion`. NOTE: per the DuckLake spec the
  * relative paths in this table are relative to the **catalog global `data_path` root** (not a
  * per-table directory — that's why the table carries no `table_id`). [dataFileId] is the id of the
