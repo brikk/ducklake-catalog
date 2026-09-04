@@ -34,15 +34,38 @@ class TestSltExpander {
     }
 
     @Test
-    fun `statement maybe is an error kind with no expectation`() {
+    fun `statement maybe is an error kind flagged mayError with an empty expectation as null`() {
         val records = expand(
             """
             statement maybe
             SET threads=4;
+            ----
+
+            statement maybe
+            SET threads=4;
+            ----
+            some message
             """.trimIndent(),
         )
-        assertThat(records.single().kind).isEqualTo(RecordKind.ERROR)
-        assertThat(records.single().expectedError).isNull()
+        assertThat(records).hasSize(2)
+        assertThat(records[0].kind).isEqualTo(RecordKind.ERROR)
+        assertThat(records[0].mayError).isTrue()
+        assertThat(records[0].expectedError).isNull()
+        assertThat(records[1].mayError).isTrue()
+        assertThat(records[1].expectedError).isEqualTo("some message")
+    }
+
+    @Test
+    fun `statement error is not mayError`() {
+        val records = expand(
+            """
+            statement error
+            SELECT 1;
+            ----
+            boom
+            """.trimIndent(),
+        )
+        assertThat(records.single().mayError).isFalse()
     }
 
     @Test
@@ -175,6 +198,137 @@ class TestSltExpander {
             """.trimIndent(),
         )
         assertThat(records.single().sql).isEqualTo("ATTACH 'ducklake:\${UUID}.db' AS lk;")
+    }
+
+    @Test
+    fun `env is substituted before loop bindings so env wins on a name clash`() {
+        val records = expand(
+            """
+            foreach i loopval
+
+            statement ok
+            SELECT '${'$'}{i}', '{i}'
+
+            endloop
+            """.trimIndent(),
+            env = mapOf("i" to "envval"),
+        )
+        assertThat(records.single().sql).isEqualTo("SELECT 'envval', 'envval'")
+    }
+
+    @Test
+    fun `loop values are env-substituted before insertion`() {
+        val records = expand(
+            """
+            foreach p {ROOT}/a __TEST_DIR__/b
+
+            statement ok
+            SELECT '${'$'}{p}'
+
+            endloop
+            """.trimIndent(),
+            env = mapOf("ROOT" to "/r", "__TEST_DIR__" to "/t"),
+        )
+        assertThat(records.map { it.sql }).containsExactly("SELECT '/r/a'", "SELECT '/t/b'")
+    }
+
+    @Test
+    fun `expected error is env-substituted but never loop-substituted`() {
+        val records = expand(
+            """
+            loop i 0 1
+
+            statement error
+            SELECT ${'$'}{i}
+            ----
+            path {DATA_PATH}/x iteration ${'$'}{i}
+
+            endloop
+            """.trimIndent(),
+            env = mapOf("DATA_PATH" to "/d"),
+        )
+        val r = records.single()
+        assertThat(r.sql).isEqualTo("SELECT 0")
+        assertThat(r.expectedError).isEqualTo("path /d/x iteration \${i}")
+    }
+
+    @Test
+    fun `comma iterators bind each name to the matching value part`() {
+        val records = expand(
+            """
+            foreach type,val integer,42 varchar,'x'
+
+            statement ok
+            SELECT ${'$'}{val}::${'$'}{type}, {val}
+
+            endloop
+            """.trimIndent(),
+        )
+        assertThat(records.map { it.sql }).containsExactly(
+            "SELECT 42::integer, 42",
+            "SELECT 'x'::varchar, 'x'",
+        )
+    }
+
+    @Test
+    fun `foreach special tokens unroll`() {
+        val records = expand(
+            """
+            foreach t <signed> !hugeint
+
+            statement ok
+            CREATE TABLE t_${'$'}{t}(i ${'$'}{t});
+
+            endloop
+            """.trimIndent(),
+        )
+        assertThat(records.map { it.sql }).containsExactly(
+            "CREATE TABLE t_tinyint(i tinyint);",
+            "CREATE TABLE t_smallint(i smallint);",
+            "CREATE TABLE t_integer(i integer);",
+            "CREATE TABLE t_bigint(i bigint);",
+        )
+    }
+
+    @Test
+    fun `nested loops substitute outermost first`() {
+        val records = expand(
+            """
+            loop i 0 2
+
+            loop j 0 2
+
+            statement ok
+            SELECT ${'$'}{i}, ${'$'}{j}
+
+            endloop
+
+            endloop
+            """.trimIndent(),
+        )
+        assertThat(records.map { it.sql })
+            .containsExactly("SELECT 0, 0", "SELECT 0, 1", "SELECT 1, 0", "SELECT 1, 1")
+    }
+
+    @Test
+    fun `records under mode skip are not expanded`() {
+        val records = expand(
+            """
+            statement ok
+            SELECT 1;
+
+            mode skip
+
+            statement ok
+            SELECT 2;
+
+            mode unskip
+
+            statement ok
+            SELECT 3;
+            """.trimIndent(),
+        )
+        assertThat(records.map { it.sql }).containsExactly("SELECT 1;", "SELECT 3;")
     }
 
     @Test
