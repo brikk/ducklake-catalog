@@ -1874,29 +1874,39 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         startSnapshot: Long,
         endSnapshot: Long,
         columnIds: List<Long>,
+    ): List<DucklakeInlinedChangeRow> =
+        inlinedChangesBetweenInternal(tableId, schemaVersion, startSnapshot, endSnapshot, columnIds, decode = false)
+
+    override fun getInlinedChangesBetweenDecoded(
+        tableId: Long,
+        schemaVersion: Long,
+        startSnapshot: Long,
+        endSnapshot: Long,
+        columnIds: List<Long>,
+    ): List<DucklakeInlinedChangeRow> =
+        inlinedChangesBetweenInternal(tableId, schemaVersion, startSnapshot, endSnapshot, columnIds, decode = true)
+
+    private fun inlinedChangesBetweenInternal(
+        tableId: Long,
+        schemaVersion: Long,
+        startSnapshot: Long,
+        endSnapshot: Long,
+        columnIds: List<Long>,
+        decode: Boolean,
     ): List<DucklakeInlinedChangeRow> {
         val inlined = InlinedDataTable.of(tableId, schemaVersion)
         val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, endSnapshot)
             ?: return emptyList()
-        val sourceColumnsById: Map<Long, DucklakeColumn> = getTableColumns(tableId, sourceSchemaSnapshot)
-            .associateBy { it.columnId }
+        val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
+        val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
         val rowIdField: Field<Long> = DSL.field(DSL.name("row_id"), Long::class.java)
+        val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columnIds, "c", decode)
 
         val projected: MutableList<Field<*>> = ArrayList(columnIds.size + 3)
         projected.add(rowIdField)
         projected.add(inlined.beginSnapshot)
         projected.add(inlined.endSnapshot)
-        for (index in columnIds.indices) {
-            val sourceColumn = sourceColumnsById[columnIds[index]]
-            projected.add(
-                if (sourceColumn == null) {
-                    DSL.inline(null as Any?).`as`("c$index")
-                }
-                else {
-                    DSL.field(DSL.quotedName(sourceColumn.columnName)).`as`("c$index")
-                },
-            )
-        }
+        projected.addAll(projection.fields)
         return try {
             dsl.select(projected)
                 .from(inlined.table)
@@ -1907,7 +1917,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .map { rec ->
                     val values: MutableList<Any?> = ArrayList(columnIds.size)
                     for (i in columnIds.indices) {
-                        values.add(rec.get(3 + i))
+                        val raw = rec.get(3 + i)
+                        val node = projection.types[i]
+                        values.add(if (decode && node != null) InlinedValues.decode(raw, node) else raw)
                     }
                     DucklakeInlinedChangeRow(
                         orZero(rec.get(0, Long::class.java)),
@@ -1963,6 +1975,61 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         schemaVersion: Long,
         snapshotId: Long,
         columns: List<DucklakeColumn>,
+    ): List<List<Any?>> = readInlinedDataInternal(tableId, schemaVersion, snapshotId, columns, decode = false)
+
+    override fun readInlinedDataDecoded(
+        tableId: Long,
+        schemaVersion: Long,
+        snapshotId: Long,
+        columns: List<DucklakeColumn>,
+    ): List<List<Any?>> = readInlinedDataInternal(tableId, schemaVersion, snapshotId, columns, decode = true)
+
+    /**
+     * The per-column projection for an inlined read, resolved against the source schema version's
+     * column tree. When [decode] is requested, types whose native JDBC mapping loses information on
+     * text-backed backends (`time` → `java.sql.Time` drops microseconds, `timetz` also its offset,
+     * `interval` → a driver class) are read as text via [textCastIfNeeded]; [InlinedValues] then
+     * parses them. Absent columns project SQL NULL.
+     */
+    private class InlinedProjection(val fields: List<Field<*>>, val types: List<InlinedTypeNode?>)
+
+    private fun inlinedProjection(
+        sourceColumnsById: Map<Long, DucklakeColumn>,
+        allSourceColumns: List<DucklakeColumn>,
+        columnIds: List<Long>,
+        aliasPrefix: String,
+        decode: Boolean,
+    ): InlinedProjection {
+        val fields = ArrayList<Field<*>>(columnIds.size)
+        val types = ArrayList<InlinedTypeNode?>(columnIds.size)
+        for (index in columnIds.indices) {
+            val alias = "$aliasPrefix$index"
+            val sourceColumn = sourceColumnsById[columnIds[index]]
+            if (sourceColumn == null) {
+                fields.add(DSL.inline(null as Any?).`as`(alias))
+                types.add(null)
+                continue
+            }
+            val node = if (decode) InlinedValues.typeTree(sourceColumn, allSourceColumns) else null
+            var field: Field<*> = DSL.field(DSL.quotedName(sourceColumn.columnName))
+            if (decode && node != null) {
+                field = textCastIfNeeded(field, node.type)
+            }
+            fields.add(field.`as`(alias))
+            types.add(node)
+        }
+        return InlinedProjection(fields, types)
+    }
+
+    private fun textCastIfNeeded(field: Field<*>, type: String): Field<*> =
+        if (dialect != SQLDialect.DUCKDB && type in TEXT_CAST_TYPES) DSL.cast(field, org.jooq.impl.SQLDataType.VARCHAR) else field
+
+    private fun readInlinedDataInternal(
+        tableId: Long,
+        schemaVersion: Long,
+        snapshotId: Long,
+        columns: List<DucklakeColumn>,
+        decode: Boolean,
     ): List<List<Any?>> {
         if (columns.isEmpty()) {
             return emptyList()
@@ -1973,25 +2040,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, snapshotId)
             ?: return emptyList()
 
-        val sourceColumnsById: Map<Long, DucklakeColumn> = getTableColumns(tableId, sourceSchemaSnapshot)
-            .associateBy { it.columnId }
-
-        val projected: MutableList<Field<*>> = ArrayList(columns.size)
-        for (index in columns.indices) {
-            val alias = "c$index"
-            val sourceColumn = sourceColumnsById[columns[index].columnId]
-            projected.add(
-                if (sourceColumn == null) {
-                    DSL.inline(null as Any?).`as`(alias)
-                }
-                else {
-                    DSL.field(DSL.quotedName(sourceColumn.columnName)).`as`(alias)
-                },
-            )
-        }
+        val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
+        val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
+        val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columns.map { it.columnId }, "c", decode)
 
         return try {
-            val result = dsl.select(projected)
+            val result = dsl.select(projection.fields)
                 .from(inlined.table)
                 .where(inlined.activeAt(snapshotId))
                 .orderBy(DSL.field(DSL.name("row_id")))
@@ -2002,7 +2056,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             for (rec in result) {
                 val row: MutableList<Any?> = ArrayList(columnCount)
                 for (i in 0 until columnCount) {
-                    row.add(rec.get(i))
+                    val raw = rec.get(i)
+                    val node = projection.types[i]
+                    row.add(if (decode && node != null) InlinedValues.decode(raw, node) else raw)
                 }
                 rows.add(row)
             }
@@ -4687,6 +4743,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // (`ducklake_max_retry_count` / `retry_wait_ms` / `retry_backoff` in
         // src/storage/ducklake_transaction.cpp), so behavior under contention matches
         // what callers familiar with upstream expect.
+        /** Inlined types whose native JDBC mapping loses information on text-backed backends (see [textCastIfNeeded]). */
+        private val TEXT_CAST_TYPES: Set<String> = setOf("time", "time_ns", "timetz", "interval")
         private const val LEAK_DETECTION_THRESHOLD_MS: Long = 120_000
         private const val MAX_RETRY_COUNT = 10
         private const val INITIAL_RETRY_WAIT_MS: Long = 100

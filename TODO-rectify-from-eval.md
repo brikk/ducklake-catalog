@@ -470,7 +470,20 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   No `>=`/ASC lower-bound variant (upstream `SnapshotBound::LOWER_BOUND`).
 
 ### R-D4 · DRIFT · Inlined value typing per backend not normalised
-- [ ] **Status:** open
+- [x] **Status:** RESOLVED. `InlinedValues.decode(raw, InlinedTypeNode)` normalises the backend's PHYSICAL values
+  (PG: BYTEA text, DuckDB-text temporals/wide ints/nested, narrowed ints; DuckDB: native driver objects incl.
+  `DuckDBStruct` via reflection) to one canonical Java type per DuckLake type (table in the KDoc): ranged ints,
+  `BigInteger` for uint64/int128/uint128, `LocalDate/LocalTime/OffsetTime/LocalDateTime/OffsetDateTime(UTC)`,
+  `DucklakeInterval(months, days, micros)` from DuckDB or PG spelling, `ByteArray` blobs (incl. `\xHH` text),
+  structured `LinkedHashMap`/`List` for nested via a DuckDB nested-text parser. New API:
+  `readInlinedDataDecoded` / `getInlinedChangesBetweenDecoded` (raw variants unchanged for Trino's own converter);
+  `time`/`timetz`/`interval` are read as text on non-DuckDB backends so micros/offsets survive `java.sql.Time`.
+  Found and worked around an upstream defect: DuckDB's postgres writer renders a non-native nested leaf (e.g. a DATE
+  in a struct) as `CAST('…' AS VARCHAR)` inside the struct text and then cannot read the row back itself (INTERNAL
+  error); the decoder unwraps the literal. Tests: `TestJdbcDucklakeCatalogInlinedValueDecoding` (every inlinable type
+  written by DuckDB on PG and on a DuckDB file → identical canonical values), `TestInlinedValues`.
+  **trino-ducklake follow-up:** switch to the decoded variants and retire `DucklakeInlinedValueConverter`'s
+  raw-form handling.
 - `readInlinedData` / `getInlinedChangesBetween` return raw JDBC values. On Postgres upstream stores VARCHAR/BLOB as
   `BYTEA`, DATE/TIMESTAMP*/UBIGINT/HUGEINT/nested as `VARCHAR` text, TINYINT→SMALLINT
   (`postgres_metadata_manager.cpp:14-79`) and casts back in the SELECT (`CastColumnToTarget`,

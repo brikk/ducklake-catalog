@@ -183,4 +183,7 @@ open class DucklakeInvalidOperationException(message: String) : DucklakeExceptio
  * name, a `list` column without exactly one child, a NULL where the spec requires a value). Not
  * retryable and not the caller's fault; surfaces the corruption instead of guessing.
  */
-open class DucklakeCatalogCorruptionException(message: String) : DucklakeException(message)
+open class DucklakeCatalogCorruptionException : DucklakeException {
+    constructor(message: String) : super(message)
+    constructor(message: String, cause: Throwable?) : super(message, cause)
+}

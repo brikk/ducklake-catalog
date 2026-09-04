@@ -379,6 +379,15 @@ interface DucklakeCatalog : AutoCloseable {
         columnIds: List<Long>,
     ): List<DucklakeInlinedChangeRow>
 
+    /** [getInlinedChangesBetween] with [DucklakeInlinedChangeRow.values] decoded as in [readInlinedDataDecoded]. */
+    fun getInlinedChangesBetweenDecoded(
+        tableId: Long,
+        schemaVersion: Long,
+        startSnapshot: Long,
+        endSnapshot: Long,
+        columnIds: List<Long>,
+    ): List<DucklakeInlinedChangeRow>
+
     /**
      * Inlined DELETEs of data-file rows (`ducklake_inlined_delete_<tableId>`) with
      * `begin_snapshot ∈ [start,end]` — the change-feed delete side for small DELETEs DuckDB records
@@ -395,9 +404,22 @@ interface DucklakeCatalog : AutoCloseable {
     /**
      * Read inlined data rows for a table at a given snapshot.
      * Queries ducklake_inlined_data_{tableId}_{schemaVersion} with snapshot filtering.
-     * Returns raw JDBC values for each row, one List per row, ordered by column.
+     * Returns RAW JDBC values for each row, one List per row, ordered by column — i.e. the
+     * backend's PHYSICAL representation (on PostgreSQL `varchar` arrives as `byte[]`, temporals and
+     * nested values as DuckDB text, `time` as `java.sql.Time`, …; see [InlinedValues]). Prefer
+     * [readInlinedDataDecoded], which normalises them; this form is kept for consumers that carry
+     * their own converter.
      */
     fun readInlinedData(tableId: Long, schemaVersion: Long, snapshotId: Long, columns: List<DucklakeColumn>): List<List<Any?>>
+
+    /**
+     * [readInlinedData] with every value decoded to its canonical Java representation per DuckLake
+     * type — the table in [InlinedValues] — independent of the metadata backend. `time` / `timetz` /
+     * `interval` are read as text on backends whose drivers would otherwise truncate them, so
+     * microseconds and zone offsets survive. Nested values are fully structured
+     * (`LinkedHashMap` / `List`) using the column tree of the row's schema version.
+     */
+    fun readInlinedDataDecoded(tableId: Long, schemaVersion: Long, snapshotId: Long, columns: List<DucklakeColumn>): List<List<Any?>>
 
     /**
      * Per-row `begin_snapshot` for the inlined rows live at [snapshotId], ordered by `row_id`
