@@ -546,6 +546,11 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   `conn.rollback()` sites go through `rollbackQuietly`, which attaches a failing rollback as a suppressed exception
   instead of letting it replace the original. `TestConcurrentCommitOnLocalDuckDb` (schema-id collision + dueling
   `ducklake_table_stats` UPDATE) fails pre-fix with the opaque `RuntimeException("Failed to …")`, passes post-fix.
+  **Addendum (Q-5):** the snapshot-PK collision itself was still broken on EVERY backend — `insertSnapshotRow`
+  read the current snapshot on the already-aborted transaction, that read threw and the duplicate-key cause was
+  lost, so the collision surfaced as an opaque `DucklakeException`. Diagnostics now come from a pooled connection
+  (`snapshotConflictFromAnotherConnection`). `TestConcurrentSnapshotPkCollision` (PG + local DuckDB) parks the
+  loser AFTER all conflict checks (`ConcurrentWriterHarness.ParkPoint.BEFORE_SNAPSHOT_INSERT`).
 - `isDuplicateKeyViolation` (`JdbcDucklakeCatalog.kt:4255-4281`) matches PG `23505`, SQLite 19, MySQL 1062 only.
   DuckDB JDBC 1.5.5 (`SQLState=null`, `errorCode=0`) emits: same-connection dup → `Constraint Error: Duplicate key
   "id: 1" violates primary key constraint.`; concurrent writers → `commit()` throws `TransactionContext Error:
@@ -787,9 +792,9 @@ set (mm.cpp:4549-4584); NaN handling in pruning (mm.cpp:1239-1255); partition tr
   readInlinedRowIds, removeScheduledFileRows, renameSchema, renameTable, renameView, resolveSchemaVersionSnapshot,
   setColumnComment, setFieldType, setTableComment, truncateTable`. The entire inlined-data read path (R-B5, C-B4,
   R-D4) and all of expire/GC (C-B5, R-D5) are untested here (coverage may exist in trino-ducklake — confirm).
-- `ConcurrentWriterHarness` parks the loser *before* mutations so only the lineage-check path is exercised; the
-  snapshot-PK-collision classification (C-B1/C-B2) is never hit on any backend. Add a harness mode that parks
-  *after* the snapshot INSERT.
+- [x] `ConcurrentWriterHarness.ParkPoint.BEFORE_SNAPSHOT_INSERT` parks the loser after every conflict check, right
+  before the `ducklake_snapshot` INSERT; `TestConcurrentSnapshotPkCollision` runs it on PG and local DuckDB — and
+  found the collision path broken (see C-B1 addendum).
 - **Add a DuckDB-oracle interop test**: library writes (schema, table with nested cols, view, add/drop column,
   insert, delete, add_files w/ name map, comments) → DuckDB `ATTACH 'ducklake:postgres:...'` → `SELECT` /
   `information_schema` / `ducklake_table_info`. Would have caught W-B1, W-B3, W-B4, W-B5, W-D5 outright.

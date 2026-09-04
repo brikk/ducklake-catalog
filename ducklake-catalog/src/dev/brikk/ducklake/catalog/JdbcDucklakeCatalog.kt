@@ -2368,6 +2368,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     internal var beforeWriteTransactionAction: Runnable = Runnable {}
 
     /**
+     * Test seam: invoked once per attempt after every conflict check has passed and immediately
+     * before the `ducklake_snapshot` INSERT. Parking a writer here (while a competitor commits)
+     * makes both writers pass their lineage checks and race on the snapshot primary key — the
+     * collision the retry loop must classify as a retryable [TransactionConflictException]
+     * (TODO C-B1/C-B2). No-op in production.
+     */
+    @Volatile
+    internal var beforeSnapshotInsertAction: Runnable = Runnable {}
+
+    /**
      * Executes a write operation within an atomic snapshot transaction.
      * Handles connection management, snapshot creation, change tracking,
      * and commit/rollback. The caller provides a callback that performs
@@ -2476,6 +2486,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     }
 
                     // 4. Create new snapshot row (with final allocated IDs)
+                    beforeSnapshotInsertAction.run()
                     insertSnapshotRow(txDsl, tx, operationDescription)
 
                     // 5. ducklake_schema_versions: one row per table created/altered in this commit
@@ -2508,8 +2519,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     // genuinely unexpected failures are wrapped.
                     findDucklakeException(e)?.let { throw it }
                     if (isMetadataPrimaryKeyConflict(e)) {
-                        val currentSnapshot = readLatestSnapshotId(txDsl)
-                        throw transactionConflictException(txDsl, baseSnapshotId, currentSnapshot, operationDescription, e)
+                        throw snapshotConflictFromAnotherConnection(baseSnapshotId, operationDescription, e)
                     }
                     throw DucklakeException("Failed to $operationDescription", e)
                 }
@@ -2552,11 +2562,28 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         catch (e: DataAccessException) {
             val cause = findSqlException(e)
             if (cause != null && isDuplicateKeyViolation(cause)) {
-                val currentSnapshotId = readLatestSnapshotId(ctx)
-                throw transactionConflictException(ctx, tx.getCurrentSnapshotId(), currentSnapshotId, operationDescription, e)
+                // The duplicate key has ABORTED this transaction (PostgreSQL: "current transaction is
+                // aborted"; DuckDB: "please ROLLBACK"), so the diagnostics must come from another
+                // connection — a read on `ctx` would throw and lose the duplicate-key cause, turning
+                // this retryable conflict into an opaque failure.
+                throw snapshotConflictFromAnotherConnection(tx.getCurrentSnapshotId(), operationDescription, e)
             }
             throw e
         }
+    }
+
+    /**
+     * A [TransactionConflictException] for a snapshot-id collision, with the current snapshot and the
+     * intervening-changes summary read on a POOLED connection (the transaction that collided is
+     * aborted and cannot run queries any more).
+     */
+    private fun snapshotConflictFromAnotherConnection(
+        expectedSnapshotId: Long,
+        operationDescription: String,
+        cause: Throwable,
+    ): TransactionConflictException {
+        val currentSnapshotId = readLatestSnapshotId(pooledDsl)
+        return transactionConflictException(pooledDsl, expectedSnapshotId, currentSnapshotId, operationDescription, cause)
     }
 
     private fun transactionConflictException(

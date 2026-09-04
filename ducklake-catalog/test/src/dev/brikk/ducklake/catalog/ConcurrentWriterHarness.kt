@@ -22,10 +22,18 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Test fixture that interleaves two writers against the same catalog by parking
- * the "loser" attempt at [JdbcDucklakeCatalog.beforeWriteTransactionAction]
- * before any of its mutations run, then committing the "winner" on the main
- * thread, then releasing the loser whose first attempt fails the lineage check
- * and retries.
+ * the "loser" attempt at a [ParkPoint] — by default
+ * [JdbcDucklakeCatalog.beforeWriteTransactionAction], before any of its mutations
+ * run — then committing the "winner" on the main thread, then releasing the loser
+ * whose first attempt fails and retries.
+ *
+ * [ParkPoint.BEFORE_MUTATIONS] exercises the lineage-check path (the loser holds
+ * no row locks while parked). [ParkPoint.BEFORE_SNAPSHOT_INSERT] parks the loser
+ * AFTER its mutations and after every conflict check has passed, so both writers
+ * race on the `ducklake_snapshot` primary key and the loser's collision must be
+ * classified as a retryable conflict; pick winner/loser operations that do not
+ * touch the same rows or allocate from the same id counter, or the winner blocks
+ * on the parked loser's uncommitted rows.
  *
  * Determinism comes from latches, not sleeps. The hook only parks the loser's
  * *first* attempt — retries proceed unimpeded so the loser can actually
@@ -50,6 +58,8 @@ object ConcurrentWriterHarness {
     @JvmRecord
     data class Result(val loserAttemptCount: Int, val loserException: Throwable?)
 
+    enum class ParkPoint { BEFORE_MUTATIONS, BEFORE_SNAPSHOT_INSERT }
+
     @JvmStatic
     @JvmOverloads
     @Throws(InterruptedException::class)
@@ -58,31 +68,16 @@ object ConcurrentWriterHarness {
         winnerOp: Runnable,
         loserOp: Runnable,
         phaseTimeoutSeconds: Long = DEFAULT_PHASE_TIMEOUT_SECONDS,
+        parkPoint: ParkPoint = ParkPoint.BEFORE_MUTATIONS,
     ): Result {
         val loserHookCalls = AtomicInteger()
         val loserPaused = CountDownLatch(1)
         val winnerCommitted = CountDownLatch(1)
 
-        catalog.beforeWriteTransactionAction = Runnable {
-            if (Thread.currentThread().name != LOSER_THREAD_NAME) {
-                return@Runnable
-            }
-            // Only park the first attempt; later retries proceed.
-            if (loserHookCalls.getAndIncrement() != 0) {
-                return@Runnable
-            }
-            loserPaused.countDown()
-            try {
-                if (!winnerCommitted.await(phaseTimeoutSeconds, TimeUnit.SECONDS)) {
-                    throw IllegalStateException(
-                        "winner did not signal commit within ${phaseTimeoutSeconds}s",
-                    )
-                }
-            }
-            catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw RuntimeException(e)
-            }
+        val hook = parkingHook(loserHookCalls, loserPaused, winnerCommitted, phaseTimeoutSeconds)
+        when (parkPoint) {
+            ParkPoint.BEFORE_MUTATIONS -> catalog.beforeWriteTransactionAction = hook
+            ParkPoint.BEFORE_SNAPSHOT_INSERT -> catalog.beforeSnapshotInsertAction = hook
         }
 
         val loserExecutor = Executors.newSingleThreadExecutor { runnable ->
@@ -94,7 +89,7 @@ object ConcurrentWriterHarness {
 
             if (!loserPaused.await(phaseTimeoutSeconds, TimeUnit.SECONDS)) {
                 throw AssertionError(
-                    "loser thread did not reach the pre-write hook within ${phaseTimeoutSeconds}s",
+                    "loser thread did not reach the $parkPoint hook within ${phaseTimeoutSeconds}s",
                 )
             }
 
@@ -122,7 +117,35 @@ object ConcurrentWriterHarness {
         finally {
             loserExecutor.shutdownNow()
             catalog.beforeWriteTransactionAction = Runnable {}
+            catalog.beforeSnapshotInsertAction = Runnable {}
         }
         return Result(loserHookCalls.get(), loserException)
     }
+
+    /** Parks the loser thread's FIRST pass through a seam until the winner has committed; no-op elsewhere. */
+    private fun parkingHook(
+        loserHookCalls: AtomicInteger,
+        loserPaused: CountDownLatch,
+        winnerCommitted: CountDownLatch,
+        phaseTimeoutSeconds: Long,
+    ): Runnable =
+        Runnable {
+            if (Thread.currentThread().name != LOSER_THREAD_NAME) {
+                return@Runnable
+            }
+            // Only park the first attempt; later retries proceed.
+            if (loserHookCalls.getAndIncrement() != 0) {
+                return@Runnable
+            }
+            loserPaused.countDown()
+            try {
+                if (!winnerCommitted.await(phaseTimeoutSeconds, TimeUnit.SECONDS)) {
+                    throw IllegalStateException("winner did not signal commit within ${phaseTimeoutSeconds}s")
+                }
+            }
+            catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw RuntimeException(e)
+            }
+        }
 }
