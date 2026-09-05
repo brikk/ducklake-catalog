@@ -223,28 +223,23 @@ object DucklakeStatTypes {
     }
 
     /**
-     * Folds per-file `(min, max)` bounds into one global bound with upstream's exact semantics
-     * (`DuckLakeColumnStats::MergeStats`, `ducklake_stats.cpp`):
-     *  - a file with NEITHER bound (all values NULL) contributes nothing;
-     *  - the first file with any bound seeds the accumulator;
+     * Folds per-file bounds using upstream's count-aware `AnyValid` / `MergeStats` semantics:
+     *  - a file proven to contain no non-NULL values contributes nothing;
+     *  - the first potentially non-NULL contribution seeds the accumulator, even without bounds;
      *  - afterwards a missing or unparseable bound on either side makes that bound UNKNOWN, and
      *    unknown never recovers — later files cannot resurrect a bound some earlier file lacked;
      *  - [ComparisonClass.UNCOMPARABLE] types never yield a bound.
      *
-     * Seeding from an existing persisted row: a stored row with NULL bounds is indistinguishable from
-     * "no data yet" (upstream's `LoadStats` computes `any_valid` from the stored bounds the same way),
-     * so [seed] treats `(null, null)` as empty — parity with what a DuckDB writer would do on top of
-     * such a row.
+     * A persisted global row has no counts. Unlike upstream's `FromGlobalStats`, [seed] must treat
+     * absent bounds as unknown, not proof of all-NULL data; otherwise later files resurrect them.
      */
     class BoundsAccumulator(private val canonicalType: String?) {
-        private val comparable: Boolean = comparisonClass(canonicalType) != ComparisonClass.UNCOMPARABLE
-        private var anyValid: Boolean = false
+        internal var hasValues: Boolean = false
+            private set
         var min: String? = null
             private set
         var max: String? = null
             private set
-        private var hasMin: Boolean = false
-        private var hasMax: Boolean = false
 
         /** Start from an already-persisted global bound (see the class comment). */
         fun seed(existingMin: String?, existingMax: String?): BoundsAccumulator {
@@ -252,51 +247,28 @@ object DucklakeStatTypes {
             return this
         }
 
-        fun merge(fileMin: String?, fileMax: String?) {
-            if (!comparable) {
+        /** Without counts, an absent bound is unknown; this overload cannot prove all-NULL data. */
+        fun merge(fileMin: String?, fileMax: String?) = merge(fileMin, fileMax, null, null)
+
+        /** [valueCount] counts NON-NULL values, not total rows. Both counts must support the proof. */
+        fun merge(fileMin: String?, fileMax: String?, valueCount: Long?, nullCount: Long?) {
+            if (valueCount == 0L && nullCount != null && nullCount >= 0L) {
                 return
             }
-            val newHasMin = fileMin != null
-            val newHasMax = fileMax != null
-            if (!newHasMin && !newHasMax) {
-                return // all NULL in this file — nothing to say about bounds
-            }
-            if (!anyValid) {
-                anyValid = true
-                hasMin = newHasMin
-                min = fileMin
-                hasMax = newHasMax
-                max = fileMax
+            val validMin = fileMin?.takeIf { parseStat(canonicalType, it) != null }
+            val validMax = fileMax?.takeIf { parseStat(canonicalType, it) != null }
+            if (!hasValues) {
+                hasValues = true
+                min = validMin
+                max = validMax
                 return
             }
-            if (!newHasMin) {
-                hasMin = false
-                min = null
-            }
-            else if (hasMin) {
-                val c = compareOrNull(min!!, fileMin!!, canonicalType)
-                if (c == null) {
-                    hasMin = false
-                    min = null
-                }
-                else if (c > 0) {
-                    min = fileMin
-                }
-            }
-            if (!newHasMax) {
-                hasMax = false
-                max = null
-            }
-            else if (hasMax) {
-                val c = compareOrNull(max!!, fileMax!!, canonicalType)
-                if (c == null) {
-                    hasMax = false
-                    max = null
-                }
-                else if (c < 0) {
-                    max = fileMax
-                }
-            }
+            min = if (min != null && validMin != null) {
+                compareOrNull(min!!, validMin, canonicalType)?.let { if (it > 0) validMin else min }
+            } else null
+            max = if (max != null && validMax != null) {
+                compareOrNull(max!!, validMax, canonicalType)?.let { if (it < 0) validMax else max }
+            } else null
         }
     }
 

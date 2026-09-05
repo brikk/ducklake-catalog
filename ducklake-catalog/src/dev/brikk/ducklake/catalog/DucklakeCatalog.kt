@@ -239,7 +239,10 @@ interface DucklakeCatalog : AutoCloseable {
     /**
      * Get aggregated column statistics across all active data files.
      * Min/max values are compared using typed comparison (numeric, not lexicographic)
-     * based on column types resolved internally.
+     * based on column types resolved internally. Missing statistics rows in nonempty files make
+     * that column's counts and bounds unknown, including older files without an added column's
+     * statistics; absence is not proof of an all-NULL value or a particular default. Empty files
+     * are neutral. Columns with no statistics rows in any active file are omitted.
      */
     fun getColumnStats(tableId: Long, snapshotId: Long): List<DucklakeColumnStats>
 
@@ -249,9 +252,10 @@ interface DucklakeCatalog : AutoCloseable {
      *
      * DuckLake maintains [DucklakeTableStats] (`ducklake_table_stats`) and the per-column
      * aggregates (`ducklake_table_column_stats`) incrementally on every write. Incremental
-     * maintenance only ever *widens* a column's min/max (it merges each new file's bounds in)
-     * and never narrows them after a DELETE or file expiry, so the cached bounds can drift
-     * loose over a table's lifetime. This forces a full refresh:
+     * maintenance widens reliable bounds and removes global column-stat rows when bounds become
+     * unreliable. Removed rows are not recreated by later incremental inserts into an initialized
+     * table: their new files cannot prove coverage of earlier data. A full refresh can restore them
+     * when the active file statistics are complete, and tighten bounds left loose after DELETE/expiry:
      *  - `record_count` is recomputed as the GROSS row count — Σ `record_count` of the active data
      *    files plus every row still present in the table's inlined-data tables (deleted or not).
      *    That is upstream's definition: DuckDB folds `SELECT MIN/MAX` to the cached bounds exactly
@@ -260,13 +264,18 @@ interface DucklakeCatalog : AutoCloseable {
      *  - `file_size_bytes` is recomputed from the active data files.
      *  - the per-column aggregates are rebuilt from the authoritative per-file stats
      *    (`ducklake_file_column_stats`) of the currently-active data files, tightening any bounds
-     *    that incremental maintenance left stale — UNLESS the table has live inlined rows, whose
-     *    values are in no per-file stats; the existing bounds are then left as they are.
+     *    that incremental maintenance left stale. Columns with missing coverage or incomplete bounds
+     *    are omitted rather than published as partial global statistics. UNLESS the table has live
+     *    inlined rows, whose values are in no per-file stats; the existing bounds are then left as they are.
+     *
+     * Native DuckDB operations that require global column statistics, such as `SET NOT NULL`, may
+     * refuse a column while its row is absent. A rebuild helps only when complete statistics exist;
+     * publishing ambiguous NULL bounds merely to retain that operation would permit wrong query results.
      *
      * These are mutable, non-snapshot-versioned side tables, so this runs in a plain catalog
      * transaction and does NOT mint a new snapshot or record a `changes_made` entry (there is
-     * no stats change-type in the DuckLake vocabulary). The refreshed values are advisory
-     * planner hints; run `ANALYZE` while the table is quiescent for an exact result.
+     * no stats change-type in the DuckLake vocabulary). Global bounds can drive optimizer rewrites;
+     * run `ANALYZE` while the table is quiescent for an exact result.
      */
     fun analyzeTable(tableId: Long)
 

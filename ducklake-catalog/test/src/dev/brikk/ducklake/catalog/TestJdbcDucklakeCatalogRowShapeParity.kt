@@ -168,7 +168,10 @@ class TestJdbcDucklakeCatalogRowShapeParity {
             listOf(
                 DucklakeWriteFragment(
                     "f/b.parquet", 100L, 0L, 1L,
-                    listOf(DucklakeFileColumnStats(cols.getValue("x").columnId, 8L, 1L, 0L, "3", "3", false)),
+                    listOf(
+                        DucklakeFileColumnStats(cols.getValue("x").columnId, 8L, 1L, 0L, "3", "3", false),
+                        DucklakeFileColumnStats(cols.getValue("s").columnId, 8L, 1L, 0L, "c", "c", false),
+                    ),
                 ),
             ),
         )

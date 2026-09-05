@@ -139,7 +139,7 @@ internal class TestDucklakeStatTypes {
     fun boundsAccumulatorFollowsUpstreamMergeStats() {
         // All-NULL file contributes nothing; first bounded file seeds.
         val acc = DucklakeStatTypes.BoundsAccumulator("int64")
-        acc.merge(null, null)
+        acc.merge(null, null, 0L, 3L)
         assertThat(acc.min).isNull()
         acc.merge("10", "20")
         assertThat(acc.min).isEqualTo("10")
@@ -149,7 +149,7 @@ internal class TestDucklakeStatTypes {
         assertThat(acc.min).isEqualTo("9")
         assertThat(acc.max).isEqualTo("100")
         // A later all-NULL file still contributes nothing.
-        acc.merge(null, null)
+        acc.merge(null, null, 0L, 2L)
         assertThat(acc.min).isEqualTo("9")
         // A file with a max but no min poisons min — and it never comes back.
         acc.merge(null, "5")
@@ -164,14 +164,83 @@ internal class TestDucklakeStatTypes {
         acc2.merge("not-a-number", "3")
         assertThat(acc2.min).isNull()
         assertThat(acc2.max).isEqualTo("3")
-        // Seeding from a stored row with NULL bounds behaves like "no data yet" (upstream LoadStats).
+        // A stored row has no counts, so NULL bounds cannot prove the existing column is all NULL.
         val seeded = DucklakeStatTypes.BoundsAccumulator("int64").seed(null, null)
         seeded.merge("4", "6")
-        assertThat(seeded.min).isEqualTo("4")
+        assertThat(seeded.min).isNull()
         val seeded2 = DucklakeStatTypes.BoundsAccumulator("int64").seed("0", "50")
         seeded2.merge(null, "60")
         assertThat(seeded2.min).isNull()
         assertThat(seeded2.max).isEqualTo("60")
+    }
+
+    @Test
+    fun nonNullCountEqualToNullCountDoesNotMeanAllNull() {
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc.merge(null, null, 1L, 1L)
+        acc.merge("4", "6", 2L, 0L)
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isNull()
+    }
+
+    @Test
+    fun incompleteCountsCannotProveAllNull() {
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc.merge(null, null, 0L, null)
+        acc.merge("4", "6", 2L, 0L)
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isNull()
+    }
+
+    @Test
+    fun boundsAccumulatorUnknownFirstAbsorbsKnownBounds() {
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc.merge(null, null)
+        acc.merge("10", "20")
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isNull()
+    }
+
+    @Test
+    fun boundsAccumulatorUnknownAfterKnownAbsorbsBounds() {
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc.merge("10", "20")
+        acc.merge(null, null)
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isNull()
+        acc.merge("1", "100")
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isNull()
+    }
+
+    @Test
+    fun boundsAccumulatorUnknownSeedDoesNotRecover() {
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64").seed(null, null)
+        acc.merge("4", "6")
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isNull()
+    }
+
+    @Test
+    fun boundsAccumulatorValidatesFirstMalformedMinimum() {
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc.merge("not-a-number", "20")
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isEqualTo("20")
+        acc.merge("1", "100")
+        assertThat(acc.min).isNull()
+        assertThat(acc.max).isEqualTo("100")
+    }
+
+    @Test
+    fun boundsAccumulatorValidatesFirstMalformedMaximum() {
+        val acc = DucklakeStatTypes.BoundsAccumulator("int64")
+        acc.merge("10", "not-a-number")
+        assertThat(acc.max).isNull()
+        assertThat(acc.min).isEqualTo("10")
+        acc.merge("1", "100")
+        assertThat(acc.max).isNull()
+        assertThat(acc.min).isEqualTo("1")
     }
 
     @Test

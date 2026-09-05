@@ -14,9 +14,12 @@
 package dev.brikk.ducklake.catalog
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
+import java.sql.Connection
 import java.sql.DriverManager
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -109,7 +112,247 @@ class TestJdbcDucklakeCatalogUnknownFileStats {
         sql(
             "SELECT contains_null::text, contains_nan::text, min_value, max_value FROM ducklake_table_column_stats " +
                 "WHERE table_id = $tableId AND column_id = $columnId",
-        ) { rs -> rs.next(); (1..4).map { rs.getString(it) } }
+        ) { rs -> if (rs.next()) (1..4).map { rs.getString(it) } else emptyList() }
+
+    private fun <T> withOracle(block: (Connection) -> T): T =
+        DriverManager.getConnection("jdbc:duckdb:").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres")
+                statement.execute("ATTACH '${isolated.duckDbAttachUri.replace("'", "''")}' AS lake " +
+                    "(DATA_PATH '${isolated.dataDir.toAbsolutePath()}')")
+            }
+            block(connection)
+        }
+
+    private fun oracleLongs(query: String): List<Long> = withOracle { connection ->
+        connection.createStatement().use { statement ->
+            statement.executeQuery(query).use { result ->
+                generateSequence { if (result.next()) result.getLong(1) else null }.toList()
+            }
+        }
+    }
+
+    private fun knownX(cols: Cols, value: Int?) = DucklakeFileColumnStats(
+        cols.x, 8L, if (value == null) 0L else 1L, if (value == null) 1L else 0L,
+        value?.toString(), value?.toString(), false,
+    )
+
+    private fun actualFragment(
+        cols: Cols,
+        name: String,
+        value: Int?,
+        xStats: DucklakeFileColumnStats?,
+        empty: Boolean = false,
+    ): DucklakeWriteFragment {
+        val c = catalog!!
+        val snapshot = c.currentSnapshotId
+        val table = c.getTable("test_schema", cols.tableName, snapshot)!!
+        val schema = c.getSchema("test_schema", snapshot)!!
+        val path = isolated.dataDir.resolve(schema.path).resolve(table.path).resolve(name)
+        Files.createDirectories(path.parent)
+        DriverManager.getConnection("jdbc:duckdb:").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("COPY (SELECT ${value ?: "NULL"}::DOUBLE AS x, 'v' AS s${if (empty) " WHERE FALSE" else ""}) " +
+                    "TO '${path.toAbsolutePath().toString().replace("'", "''")}' " +
+                    "(FORMAT PARQUET, FIELD_IDS {x: ${cols.x}, s: ${cols.s}})")
+            }
+        }
+        val count = if (empty) 0L else 1L
+        return DucklakeWriteFragment(name, Files.size(path), 0L, count,
+            listOfNotNull(xStats, DucklakeFileColumnStats(cols.s, count, count, 0L, "v", "v", false)))
+    }
+
+    private fun assertUnknownX(cols: Cols, values: List<Long>, unknownCounts: Boolean) {
+        val table = "lake.test_schema.${cols.tableName}"
+        assertThat(oracleLongs("SELECT x FROM $table ORDER BY x")).containsExactlyElementsOf(values.sorted())
+        assertThat(oracleLongs("SELECT max(x) FROM $table")).containsExactly(values.max())
+        assertThat(oracleLongs("SELECT min(x) FROM $table")).containsExactly(values.min())
+        assertThat(tableStats(cols.tableId, cols.x)).`as`("unsafe global row must be absent, not reloadable as empty").isEmpty()
+        val stats = catalog!!.getColumnStats(cols.tableId, catalog!!.currentSnapshotId).single { it.columnId == cols.x }
+        assertThat(stats.minValue).isNull()
+        assertThat(stats.maxValue).isNull()
+        if (unknownCounts) {
+            assertThat(stats.totalValueCount).isNull()
+            assertThat(stats.totalNullCount).isNull()
+        }
+        else {
+            assertThat(stats.totalValueCount).isEqualTo(values.size.toLong())
+            assertThat(stats.totalNullCount).isZero()
+        }
+    }
+
+    @Test
+    fun unknownBoundsNeverRecoverFromLaterKnownFiles() {
+        assertUnknownContributions(missingRow = false)
+    }
+
+    @Test
+    fun missingStatisticsRowsNeverRecoverFromLaterKnownFiles() {
+        assertUnknownContributions(missingRow = true)
+    }
+
+    @Test
+    fun unknownCountsAndBoundsAreNotAllNull() {
+        assertUnknownContributions(missingRow = false, unknownCounts = true)
+    }
+
+    private fun assertUnknownContributions(missingRow: Boolean, unknownCounts: Boolean = false) {
+        for (unknownFirst in listOf(false, true)) {
+            for (sameBatch in listOf(false, true)) {
+                val cols = newTable()
+                val c = catalog!!
+                val known = actualFragment(cols, "known.parquet", 1, knownX(cols, 1))
+                val unknownStats = if (missingRow) null else knownX(cols, 100).copy(
+                    minValue = null, maxValue = null,
+                    valueCount = if (unknownCounts) null else 1L, nullCount = if (unknownCounts) null else 0L,
+                )
+                val unknown = actualFragment(cols, "unknown.parquet", 100, unknownStats)
+                val fragments = if (unknownFirst) listOf(unknown, known) else listOf(known, unknown)
+                if (sameBatch) c.commitInsert(cols.tableId, fragments)
+                else fragments.forEach { c.commitInsert(cols.tableId, listOf(it)) }
+                assertUnknownX(cols, listOf(1L, 100L), missingRow || unknownCounts)
+
+                c.commitInsert(cols.tableId, listOf(actualFragment(cols, "later.parquet", 2, knownX(cols, 2))))
+                assertUnknownX(cols, listOf(1L, 2L, 100L), missingRow || unknownCounts)
+                c.analyzeTable(cols.tableId)
+                assertUnknownX(cols, listOf(1L, 2L, 100L), missingRow || unknownCounts)
+            }
+        }
+    }
+
+    @Test
+    fun aFileWithNoStatisticsRowsStillParticipatesInCoverage() {
+        val cols = newTable()
+        val c = catalog!!
+        val unknown = actualFragment(cols, "no-stats.parquet", 100, null).copy(columnStats = emptyList())
+        c.commitInsert(cols.tableId, listOf(unknown))
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "known.parquet", 1, knownX(cols, 1))))
+        assertUnknownX(cols, listOf(1L, 100L), unknownCounts = true)
+        assertThat(tableStats(cols.tableId, cols.s)).isEmpty()
+        c.analyzeTable(cols.tableId)
+        assertUnknownX(cols, listOf(1L, 100L), unknownCounts = true)
+        assertThat(tableStats(cols.tableId, cols.s)).isEmpty()
+    }
+
+    @Test
+    fun nulBoundsAreNormalizedBeforeGlobalInsertAndUpdate() {
+        for (knownFirst in listOf(false, true)) {
+            val cols = newTable()
+            val c = catalog!!
+            if (knownFirst) c.commitInsert(cols.tableId, listOf(knownFragment("known.parquet", cols)))
+            val fragment = knownFragment("nul.parquet", cols)
+            val nul = fragment.copy(columnStats = fragment.columnStats.map {
+                if (it.columnId == cols.s) it.copy(minValue = "\u0000a", maxValue = "z\u0000") else it
+            })
+            c.commitInsert(cols.tableId, listOf(nul))
+            assertThat(tableStats(cols.tableId, cols.s)).isEmpty()
+            c.commitInsert(cols.tableId, listOf(knownFragment("later.parquet", cols)))
+            assertThat(tableStats(cols.tableId, cols.s)).isEmpty()
+            c.analyzeTable(cols.tableId)
+            assertThat(tableStats(cols.tableId, cols.s)).isEmpty()
+        }
+    }
+
+    @Test
+    fun suppressedGlobalBoundsStayAbsentAfterNativeDuckDbInsert() {
+        val cols = newTable()
+        val c = catalog!!
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "known.parquet", 1, knownX(cols, 1))))
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "unknown.parquet", 100,
+            knownX(cols, 100).copy(minValue = null, maxValue = null))))
+        withOracle { connection ->
+            connection.createStatement().use { it.execute("INSERT INTO lake.test_schema.${cols.tableName} VALUES (2, 'v')") }
+        }
+        assertThat(tableStats(cols.tableId, cols.x)).isEmpty()
+        assertThat(oracleLongs("SELECT max(x) FROM lake.test_schema.${cols.tableName}")).containsExactly(100L)
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "later.parquet", 3, knownX(cols, 3))))
+        assertThat(tableStats(cols.tableId, cols.x)).isEmpty()
+        assertThat(oracleLongs("SELECT x FROM lake.test_schema.${cols.tableName} ORDER BY x")).containsExactly(1L, 2L, 3L, 100L)
+        assertThat(oracleLongs("SELECT max(x) FROM lake.test_schema.${cols.tableName}")).containsExactly(100L)
+    }
+
+    @Test
+    fun allNullAndEmptyFilesDoNotPoisonReadBounds() {
+        for (nullFirst in listOf(false, true)) {
+            val cols = newTable()
+            val c = catalog!!
+            val known = actualFragment(cols, "known.parquet", 1, knownX(cols, 1))
+            val allNull = actualFragment(cols, "null.parquet", null, knownX(cols, null))
+            (if (nullFirst) listOf(allNull, known) else listOf(known, allNull)).forEach { c.commitInsert(cols.tableId, listOf(it)) }
+            c.commitInsert(cols.tableId, listOf(actualFragment(cols, "empty.parquet", null, null, empty = true)))
+            val stats = c.getColumnStats(cols.tableId, c.currentSnapshotId).single { it.columnId == cols.x }
+            assertThat(stats.minValue).isEqualTo("1")
+            assertThat(stats.maxValue).isEqualTo("1")
+            assertThat(stats.totalValueCount).isEqualTo(1L)
+            assertThat(stats.totalNullCount).isEqualTo(1L)
+            c.analyzeTable(cols.tableId)
+            assertThat(tableStats(cols.tableId, cols.x)).containsExactly("true", "false", "1", "1")
+            assertThat(oracleLongs("SELECT max(x) FROM lake.test_schema.${cols.tableName}")).containsExactly(1L)
+        }
+    }
+
+    @Test
+    fun analyzeDoesNotIgnoreInitialDefaultsInOlderFiles() {
+        val cols = newTable()
+        val c = catalog!!
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "old.parquet", 1, knownX(cols, 1))))
+        withOracle { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE lake.test_schema.${cols.tableName} ADD COLUMN d INTEGER DEFAULT 100")
+                statement.execute("INSERT INTO lake.test_schema.${cols.tableName} VALUES (2, 'v', 1)")
+                statement.execute("CALL ducklake_flush_inlined_data('lake', schema_name => 'test_schema', table_name => '${cols.tableName}')")
+            }
+        }
+        val columnId = c.getTableColumns(cols.tableId, c.currentSnapshotId).single { it.columnName == "d" }.columnId
+        assertThat(oracleLongs("SELECT d FROM lake.test_schema.${cols.tableName} ORDER BY d")).containsExactly(1L, 100L)
+
+        c.analyzeTable(cols.tableId)
+
+        assertThat(oracleLongs("SELECT max(d) FROM lake.test_schema.${cols.tableName}")).containsExactly(100L)
+        assertThat(tableStats(cols.tableId, columnId)).isEmpty()
+        val stats = c.getColumnStats(cols.tableId, c.currentSnapshotId).single { it.columnId == columnId }
+        assertThat(stats.totalValueCount).isNull()
+        assertThat(stats.minValue).isNull()
+        assertThat(stats.maxValue).isNull()
+    }
+
+    @Test
+    fun analyzeRestoresBoundsOnlyAfterUnknownFilesAreRetired() {
+        val cols = newTable()
+        val c = catalog!!
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "known.parquet", 1, knownX(cols, 1))))
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "unknown.parquet", 100, null)))
+        val beforeTruncate = c.currentSnapshotId
+        assertUnknownX(cols, listOf(1L, 100L), unknownCounts = true)
+        assertThatThrownBy {
+            withOracle { connection ->
+                connection.createStatement().use { it.execute("ALTER TABLE lake.test_schema.${cols.tableName} ALTER COLUMN x SET NOT NULL") }
+            }
+        }.hasMessageContaining("no column stats are available")
+        c.truncateTable("test_schema", cols.tableName)
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "new.parquet", 2, knownX(cols, 2))))
+        c.analyzeTable(cols.tableId)
+        assertThat(tableStats(cols.tableId, cols.x)).containsExactly("false", "false", "2", "2")
+        assertThat(oracleLongs("SELECT max(x) FROM lake.test_schema.${cols.tableName}")).containsExactly(2L)
+        val oldStats = c.getColumnStats(cols.tableId, beforeTruncate).single { it.columnId == cols.x }
+        assertThat(oldStats.minValue).isNull()
+        assertThat(oldStats.maxValue).isNull()
+        withOracle { connection ->
+            connection.createStatement().use { it.execute("ALTER TABLE lake.test_schema.${cols.tableName} ALTER COLUMN x SET NOT NULL") }
+        }
+    }
+
+    @Test
+    fun oneSidedGlobalBoundsAreSuppressed() {
+        for (missingMin in listOf(false, true)) {
+            val cols = newTable()
+            val stats = knownX(cols, 100).let { if (missingMin) it.copy(minValue = null) else it.copy(maxValue = null) }
+            catalog!!.commitInsert(cols.tableId, listOf(actualFragment(cols, "one-sided.parquet", 100, stats)))
+            assertThat(tableStats(cols.tableId, cols.x)).isEmpty()
+            assertThat(oracleLongs("SELECT min(x) FROM lake.test_schema.${cols.tableName}")).containsExactly(100L)
+            assertThat(oracleLongs("SELECT max(x) FROM lake.test_schema.${cols.tableName}")).containsExactly(100L)
+        }
+    }
 
     @Test
     fun unknownCountsAndNanAreStoredAsNullAndKeepBounds() {
@@ -180,14 +423,11 @@ class TestJdbcDucklakeCatalogUnknownFileStats {
             ),
         )
         assertThat(tableStats(cols.tableId, cols.x))
-            .`as`(
-                "NaN in a later file: contains_nan TRUE; the file has no bounds so it is skipped by the merge " +
-                    "(upstream MergeStats !AnyValid) — its NaN-excluding 9.0 must NOT become the table max",
-            )
-            .containsExactly("true", "true", "0.5", "3.5")
+            .`as`("NaN is non-NULL data with unavailable bounds: do not retain or resurrect an incomplete global range")
+            .isEmpty()
         assertThat(tableStats(cols.tableId, cols.s)).containsExactly("false", null, "a", "z")
         catalog!!.analyzeTable(cols.tableId)
-        assertThat(tableStats(cols.tableId, cols.x)).`as`("rebuild from file rows agrees").containsExactly("true", "true", "0.5", "3.5")
+        assertThat(tableStats(cols.tableId, cols.x)).`as`("rebuild from file rows agrees").isEmpty()
         assertThat(tableStats(cols.tableId, cols.s)).containsExactly("false", null, "a", "z")
     }
 

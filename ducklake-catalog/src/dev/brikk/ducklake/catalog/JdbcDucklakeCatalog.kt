@@ -1367,67 +1367,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             ?.let { toDucklakeTableStats(it) }
     }
 
-    override fun getColumnStats(tableId: Long, snapshotId: Long): List<DucklakeColumnStats> {
-        // All column rows (nested leaves included) — per-file stats are keyed by leaf column_id.
-        val columnTypes: Map<Long, String> = loadColumnTypes(dsl, tableId)
-
-        val countAccumulators: MutableMap<Long, LongArray> = mutableMapOf() // [valueCount, nullCount, sizeBytes]
-        val unknownCounts: MutableSet<Long> = mutableSetOf() // columns with a file lacking counts (upstream MergeStats)
-        val bounds: MutableMap<Long, DucklakeStatTypes.BoundsAccumulator> = mutableMapOf()
-
-        val colstats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
-        val file = DUCKLAKE_DATA_FILE.`as`("file")
-        // Multi-table JOIN — routed through `metadata` for Quack compatibility.
-        metadata.fetch(
-            dsl,
-            dsl.select(
-                colstats.COLUMN_ID,
-                colstats.VALUE_COUNT,
-                colstats.NULL_COUNT,
-                colstats.COLUMN_SIZE_BYTES,
-                colstats.MIN_VALUE,
-                colstats.MAX_VALUE,
-            )
-                .from(colstats)
-                .innerJoin(file)
-                .on(colstats.DATA_FILE_ID.eq(file.DATA_FILE_ID))
-                .where(colstats.TABLE_ID.eq(tableId))
-                .and(file.TABLE_ID.eq(tableId))
-                .and(activeAt(file, snapshotId)),
-        ) { r ->
-            val columnId = orZero(r.get(colstats.COLUMN_ID))
-            val counts = countAccumulators.getOrPut(columnId) { LongArray(3) }
-            val valueCount = r.get(colstats.VALUE_COUNT)
-            val nullCount = r.get(colstats.NULL_COUNT)
-            if (valueCount == null || nullCount == null) {
-                unknownCounts.add(columnId)
-            }
-            counts[0] += orZero(valueCount)
-            counts[1] += orZero(nullCount)
-            counts[2] += orZero(r.get(colstats.COLUMN_SIZE_BYTES))
-
-            // Upstream MergeStats semantics: a file lacking a bound makes the global bound unknown.
-            bounds.getOrPut(columnId) { DucklakeStatTypes.BoundsAccumulator(columnTypes[columnId]) }
-                .merge(r.get(colstats.MIN_VALUE), r.get(colstats.MAX_VALUE))
-            null
+    override fun getColumnStats(tableId: Long, snapshotId: Long): List<DucklakeColumnStats> =
+        aggregateFileColumnStats(dsl, tableId, snapshotId).map { (columnId, stats) ->
+            DucklakeColumnStats(columnId, stats.valueCount, stats.nullCount, stats.sizeBytes, stats.minValue, stats.maxValue)
         }
-
-        val result: MutableList<DucklakeColumnStats> = mutableListOf()
-        for ((columnId, counts) in countAccumulators) {
-            result.add(
-                DucklakeColumnStats(
-                    columnId,
-                    if (columnId in unknownCounts) null else counts[0],
-                    if (columnId in unknownCounts) null else counts[1],
-                    counts[2],
-                    bounds[columnId]?.min,
-                    bounds[columnId]?.max,
-                ),
-            )
-        }
-
-        return result
-    }
 
     @Deprecated("record_count is the gross row count and is recomputed from the catalog; use analyzeTable(tableId)")
     override fun analyzeTable(tableId: Long, rowCount: Long) {
@@ -1583,7 +1526,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /**
      * Fold the active data files' per-file column stats (`ducklake_file_column_stats`) into one
      * `ducklake_table_column_stats` row per column, using typed (numeric, not lexicographic)
-     * min/max comparison. A column with no active per-file stats produces no row.
+     * min/max comparison. Missing coverage or unreliable bounds suppress the global row; a later
+     * upstream INSERT can otherwise mistake NULL bounds for an empty column and resurrect them.
      */
     private fun aggregateActiveColumnStats(
         ctx: DSLContext,
@@ -1591,56 +1535,63 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         snapshotId: Long,
     ): List<DucklakeTableColumnStatsRecord> {
         val tabcolst = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tabcolst")
+        return aggregateFileColumnStats(ctx, tableId, snapshotId).filterValues { it.canPublish }.map { (columnId, stats) ->
+            ctx.newRecord(tabcolst).apply {
+                setTableId(tableId)
+                setColumnId(columnId)
+                setContainsNull(stats.containsNull)
+                setContainsNan(stats.containsNan)
+                setMinValue(stats.minValue)
+                setMaxValue(stats.maxValue)
+            }
+        }
+    }
+
+    /** Track file coverage in the same query as the stats: an omitted row is not an all-NULL column. */
+    private fun aggregateFileColumnStats(ctx: DSLContext, tableId: Long, snapshotId: Long): Map<Long, AggregatedColumnStats> {
+        val columnTypes: Map<Long, String> = loadColumnTypes(ctx, tableId)
         val colstats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        // Column types drive the typed min/max fold. Per-file stats are keyed by LEAF column_id
-        // (nested struct/list/map children included), so the type map must cover every
-        // ducklake_column row, not just the top-level columns getTableColumns returns — a leaf
-        // without a type would fall back to a lexical compare ("9" > "10").
-        val columnTypes: Map<Long, String> = loadColumnTypes(ctx, tableId)
-
-        val seenColumns: MutableSet<Long> = linkedSetOf()
-        val containsNull: MutableMap<Long, TriStateFlag> = mutableMapOf()
-        val containsNan: MutableMap<Long, TriStateFlag> = mutableMapOf()
-        val bounds: MutableMap<Long, DucklakeStatTypes.BoundsAccumulator> = mutableMapOf()
-        // Multi-table JOIN — routed through `metadata` for Quack compatibility.
+        val nonemptyFiles = mutableSetOf<Long>()
+        val coveredFiles = mutableMapOf<Long, MutableSet<Long>>()
+        val aggregates = linkedMapOf<Long, AggregatedColumnStats>()
         metadata.fetch(
             ctx,
             ctx.select(
+                file.DATA_FILE_ID,
+                file.RECORD_COUNT,
                 colstats.COLUMN_ID,
+                colstats.COLUMN_SIZE_BYTES,
+                colstats.VALUE_COUNT,
                 colstats.NULL_COUNT,
                 colstats.CONTAINS_NAN,
                 colstats.MIN_VALUE,
                 colstats.MAX_VALUE,
             )
-                .from(colstats)
-                .innerJoin(file)
-                .on(colstats.DATA_FILE_ID.eq(file.DATA_FILE_ID))
-                .where(colstats.TABLE_ID.eq(tableId))
-                .and(file.TABLE_ID.eq(tableId))
+                .from(file)
+                .leftJoin(colstats)
+                .on(colstats.DATA_FILE_ID.eq(file.DATA_FILE_ID).and(colstats.TABLE_ID.eq(tableId)))
+                .where(file.TABLE_ID.eq(tableId))
                 .and(activeAt(file, snapshotId)),
         ) { r ->
-            val columnId = orZero(r.get(colstats.COLUMN_ID))
-            seenColumns.add(columnId)
-            // Upstream MergeStats: a file without the statistic makes the table-level flag unknown.
-            containsNull.getOrPut(columnId) { TriStateFlag() }.merge(r.get(colstats.NULL_COUNT)?.let { it > 0 })
-            containsNan.getOrPut(columnId) { TriStateFlag() }.merge(r.get(colstats.CONTAINS_NAN))
-            // Upstream MergeStats semantics: a file lacking a bound makes the global bound unknown.
-            bounds.getOrPut(columnId) { DucklakeStatTypes.BoundsAccumulator(columnTypes[columnId]) }
-                .merge(r.get(colstats.MIN_VALUE), r.get(colstats.MAX_VALUE))
+            val fileId = orZero(r.get(file.DATA_FILE_ID))
+            val recordCount = r.get(file.RECORD_COUNT)
+            if (recordCount != 0L) nonemptyFiles.add(fileId)
+            r.get(colstats.COLUMN_ID)?.let { columnId ->
+                coveredFiles.getOrPut(columnId) { mutableSetOf() }.add(fileId)
+                aggregates.getOrPut(columnId) { AggregatedColumnStats(columnTypes[columnId]) }.merge(
+                    DucklakeFileColumnStats(columnId, orZero(r.get(colstats.COLUMN_SIZE_BYTES)),
+                        r.get(colstats.VALUE_COUNT), r.get(colstats.NULL_COUNT), r.get(colstats.MIN_VALUE),
+                        r.get(colstats.MAX_VALUE), r.get(colstats.CONTAINS_NAN)),
+                    recordCount,
+                )
+            }
             null
         }
-
-        return seenColumns.map { columnId ->
-            ctx.newRecord(tabcolst).apply {
-                setTableId(tableId)
-                setColumnId(columnId)
-                setContainsNull(containsNull.getValue(columnId).value)
-                setContainsNan(globalContainsNan(columnTypes[columnId], containsNan.getValue(columnId).value))
-                setMinValue(bounds[columnId]?.min)
-                setMaxValue(bounds[columnId]?.max)
-            }
+        for ((columnId, stats) in aggregates) {
+            if (!coveredFiles.getValue(columnId).containsAll(nonemptyFiles)) stats.merge(null, null)
         }
+        return aggregates
     }
 
     override fun getPartitionSpecs(tableId: Long, snapshotId: Long): List<DucklakePartitionSpec> {
@@ -4349,6 +4300,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val existingStats: DucklakeTableStatsRecord? = ctx.selectFrom(tabstats)
             .where(tabstats.TABLE_ID.eq(tableId))
             .fetchOne()
+        val initializeColumnStats = existingStats == null && !ctx.fetchExists(
+            ctx.selectOne().from(file).where(file.TABLE_ID.eq(tableId)).and(activeAt(file, tx.getCurrentSnapshotId())),
+        ) && !hasInlinedTables(ctx, tableId)
 
         var runningRowId: Long = preservedRowIdStart ?: (if (existingStats == null) 0L else orZero(existingStats.nextRowId))
         var totalRecords: Long = 0
@@ -4514,67 +4468,48 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .execute()
         }
 
-        // Upsert ducklake_table_column_stats: aggregate min/max/null across all fragments per column.
-        // Column types drive numeric-aware min/max comparison: stats are stored as text, so a
-        // lexical merge silently corrupts numeric bounds ("12" < "8", "100" < "20"), which for
-        // HUGEINT/large-DECIMAL can even leave min > max. Matches the extension's
-        // DuckLakeColumnStats::MergeStats (RequiresValueComparison -> typed compare).
-        // (columnTypes was loaded once near the top of this method and is reused here.)
-        val columnAggregates: MutableMap<Long, AggregatedColumnStats> = linkedMapOf()
+        // Include stored columns even when the new files omit their statistics. Otherwise their
+        // old bounds would silently describe only a subset of the resulting table.
+        val existingColumnStats = loadExistingColumnStats(tx, tableId)
+        val columnIds = existingColumnStats.keys + fragments.flatMap { it.columnStats.map { stats -> stats.columnId } }
+        val columnAggregates = columnIds.associateWith { AggregatedColumnStats(columnTypes[it]) }
         for (fragment in fragments) {
-            for (colStats in fragment.columnStats) {
-                columnAggregates
-                    .getOrPut(colStats.columnId) { AggregatedColumnStats(columnTypes[colStats.columnId]) }
-                    .merge(colStats)
+            val statsByColumn = fragment.columnStats.groupBy { it.columnId }
+            for ((columnId, aggregate) in columnAggregates) {
+                val contributions = statsByColumn[columnId]
+                if (contributions == null) aggregate.merge(null, fragment.recordCount)
+                else contributions.forEach { aggregate.merge(it, fragment.recordCount) }
             }
         }
 
-        val existingColumnStats: Map<Long, ExistingColumnStat> =
-            loadExistingColumnStats(tx, tableId, columnAggregates.keys)
         val insertRecords: MutableList<DucklakeTableColumnStatsRecord> = mutableListOf()
         for ((columnId, agg) in columnAggregates) {
             val existing = existingColumnStats[columnId]
             if (existing != null) {
-                // Type-aware min/max merge, done in Java (NOT in SQL): the stats columns are
-                // VARCHAR, so a SQL `min_value < ?` comparison orders text-encoded numbers
-                // lexically and picks the wrong extreme — for wide numerics (HUGEINT /
-                // DECIMAL(38,x)) it can even store min > max. DucklakeStatTypes parses numerics
-                // to BigDecimal (and leaves text/temporal lexical), matching the extension's
-                // RequiresValueComparison path. Resolve the merged value here, then write it.
-                //
-                // contains_null / contains_nan: the original `col = (col OR ?)` is a no-op
-                // when the aggregated flag is false (FALSE→FALSE, TRUE→TRUE, NULL→NULL in
-                // Postgres), so we only emit the SET when the flag is true — in which case
-                // the new value is unconditionally true. This sidesteps the missing
-                // `Field<Boolean>.or(Field<Boolean>)` overload in jOOQ.
-                val columnType: String? = columnTypes[columnId]
-                // Seed with the stored global bound, then fold the commit's aggregate in with
-                // upstream MergeStats semantics: an aggregate that has SOME bound but not this one
-                // makes the stored bound unknown; an aggregate with no bounds at all (all-NULL
-                // files) leaves it alone.
-                val merged = DucklakeStatTypes.BoundsAccumulator(columnType).seed(existing.minValue, existing.maxValue)
-                if (agg.anyBound) {
-                    merged.merge(agg.minValue, agg.maxValue)
+                agg.mergeExisting(existing)
+                val key = tabcolst.TABLE_ID.eq(tableId).and(tabcolst.COLUMN_ID.eq(columnId))
+                if (!agg.canPublish) {
+                    // NULL bounds reload as empty in upstream FromGlobalStats. Omit the row so
+                    // neither a native INSERT nor a later JVM INSERT can reseed it from new data.
+                    metadata.execute(ctx, ctx.deleteFrom(tabcolst).where(key))
                 }
-                val mergedMin = merged.min
-                val mergedMax = merged.max
-                metadata.execute(
-                    ctx,
-                    ctx.update(tabcolst)
-                        .set(tabcolst.MIN_VALUE, DSL.`val`(mergedMin, tabcolst.MIN_VALUE.dataType))
-                        .set(tabcolst.MAX_VALUE, DSL.`val`(mergedMax, tabcolst.MAX_VALUE.dataType))
-                        .set(tabcolst.CONTAINS_NULL, mergedFlag(tabcolst.CONTAINS_NULL, agg.containsNull))
-                        .set(tabcolst.CONTAINS_NAN, mergedFlag(tabcolst.CONTAINS_NAN, agg.containsNan))
-                        .where(tabcolst.TABLE_ID.eq(tableId))
-                        .and(tabcolst.COLUMN_ID.eq(columnId)),
-                )
+                else {
+                    metadata.execute(ctx, ctx.update(tabcolst)
+                        .set(tabcolst.MIN_VALUE, agg.minValue)
+                        .set(tabcolst.MAX_VALUE, agg.maxValue)
+                        .set(tabcolst.CONTAINS_NULL, agg.containsNull)
+                        .set(tabcolst.CONTAINS_NAN, agg.containsNan)
+                        .where(key))
+                }
             }
-            else {
+            else if (initializeColumnStats && agg.canPublish) {
+                // Only the first table insert proves this batch covers all prior data. For an
+                // initialized table, ANALYZE/rewrite must prove full coverage before recreating a row.
                 val r = ctx.newRecord(tabcolst)
                 r.setTableId(tableId)
                 r.setColumnId(columnId)
                 r.setContainsNull(agg.containsNull)
-                r.setContainsNan(globalContainsNan(columnTypes[columnId], agg.containsNan))
+                r.setContainsNan(agg.containsNan)
                 r.setMinValue(agg.minValue)
                 r.setMaxValue(agg.maxValue)
                 insertRecords.add(r)
@@ -5112,9 +5047,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    // Existing table-level column-stat bounds loaded for the incremental merge.
-    private data class ExistingColumnStat(val minValue: String?, val maxValue: String?)
-
     /**
      * Upstream `MergeStats` for a boolean statistic: any file that does not carry it makes the
      * merged value unknown (`null`), otherwise it is the OR of the files' values.
@@ -5141,30 +5073,45 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         /** Table-level `contains_null` for this commit's files; `null` when a file lacks a null count. */
         val containsNull: Boolean? get() = nullFlag.value
         /** Table-level `contains_nan` for this commit's files; `null` when a file lacks the flag. */
-        val containsNan: Boolean? get() = nanFlag.value
+        val containsNan: Boolean? get() = globalContainsNan(columnType, nanFlag.value)
         private val bounds = DucklakeStatTypes.BoundsAccumulator(columnType)
         val minValue: String? get() = bounds.min
         val maxValue: String? get() = bounds.max
-        /** True once some file contributed a bound (upstream `any_valid`). */
-        var anyBound: Boolean = false
+        /** Global numeric stats must not expose a one-sided bound or an unknown-as-empty row. */
+        val canPublish: Boolean get() = !bounds.hasValues || (minValue != null && maxValue != null)
+        var valueCount: Long? = 0L
+            private set
+        var nullCount: Long? = 0L
+            private set
+        var sizeBytes: Long = 0L
             private set
 
-        fun merge(stats: DucklakeFileColumnStats) {
-            nullFlag.merge(if (stats.hasCounts) stats.nullCount!! > 0 else null)
+        fun mergeExisting(stats: DucklakeTableColumnStatsRecord) {
+            nullFlag.merge(stats.containsNull)
             nanFlag.merge(stats.containsNan)
-            // A float file containing NaN has NO bounds (its NaN-excluding max is not an upper
-            // bound) — exactly what the per-file row stores and what upstream feeds MergeStats
-            // (ducklake_transaction_state.cpp `!(is_float && contains_nan)`); such a file is then
-            // skipped by the merge rather than poisoning the table-level bounds.
-            val nanFile = DucklakeStatTypes.isFloatType(columnType) && stats.containsNan == true
-            val fileMin = if (nanFile) null else stats.minValue
-            val fileMax = if (nanFile) null else stats.maxValue
-            // Type-aware and NULL-poisoning (upstream MergeStats): numeric/temporal/boolean compare
-            // as values, and a file lacking ONE bound makes that aggregate bound unknown.
-            if (fileMin != null || fileMax != null) {
-                anyBound = true
+            bounds.merge(statText(stats.minValue), statText(stats.maxValue))
+        }
+
+        fun merge(stats: DucklakeFileColumnStats?, recordCount: Long?) {
+            sizeBytes += stats?.columnSizeBytes ?: 0L
+            if (recordCount == 0L) return
+            val countsKnown = stats?.hasCounts == true && stats.valueCount!! >= 0L && stats.nullCount!! >= 0L
+            val values = if (countsKnown) stats.valueCount else null
+            val nulls = if (countsKnown) stats.nullCount else null
+            if (countsKnown) {
+                valueCount = valueCount?.plus(stats.valueCount)
+                nullCount = nullCount?.plus(stats.nullCount)
             }
-            bounds.merge(fileMin, fileMax)
+            else {
+                valueCount = null
+                nullCount = null
+            }
+            nullFlag.merge(nulls?.let { it > 0 })
+            nanFlag.merge(stats?.containsNan)
+            val nanFile = DucklakeStatTypes.isFloatType(columnType) && stats?.containsNan == true
+            val fileMin = if (nanFile) null else statText(stats?.minValue)
+            val fileMax = if (nanFile) null else statText(stats?.maxValue)
+            bounds.merge(fileMin, fileMax, values, nulls)
         }
     }
 
@@ -5393,18 +5340,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 else -> containsNan // TRUE / FALSE / NULL (some file did not report it)
             }
 
-        /**
-         * Incremental upstream `MergeStats` for a stored boolean flag: `null` from the commit makes
-         * it unknown; TRUE from the commit makes it TRUE unless it is already unknown (NULL stays
-         * NULL — the files that made it unknown are still active); FALSE leaves it as it is.
-         */
-        private fun mergedFlag(stored: Field<Boolean?>, fromCommit: Boolean?): Field<Boolean?> =
-            when (fromCommit) {
-                null -> DSL.inline(null, stored.dataType)
-                true -> DSL.`when`(stored.isNull, DSL.inline(null, stored.dataType)).otherwise(DSL.inline(true))
-                false -> stored
-            }
-
         /** The first [DucklakeException] in the cause chain (typed conflicts, not-found, ...), if any. */
         private fun findDucklakeException(throwable: Throwable): DucklakeException? {
             var current: Throwable? = throwable
@@ -5540,27 +5475,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 "ducklake_data_file.row_id_start is NULL for data_file_id ${dataFileId ?: "unknown"}",
             )
 
-        // Existing table-level column stat bounds, keyed by column_id, for the numeric-aware
-        // merge in applyInsertFragments. Presence in the map == the row exists (UPDATE path);
-        // absence == first stats for that column (INSERT path).
+        // Read every existing column so a new file with an omitted statistics row invalidates it.
         private fun loadExistingColumnStats(
             tx: DucklakeWriteTransaction,
             tableId: Long,
-            candidateColumnIds: Set<Long>,
-        ): Map<Long, ExistingColumnStat> {
-            if (candidateColumnIds.isEmpty()) {
-                return emptyMap()
-            }
+        ): Map<Long, DucklakeTableColumnStatsRecord> {
             val tabcolst = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tabcolst")
-            return tx.dsl().select(tabcolst.COLUMN_ID, tabcolst.MIN_VALUE, tabcolst.MAX_VALUE)
-                .from(tabcolst)
+            return tx.dsl().selectFrom(tabcolst)
                 .where(tabcolst.TABLE_ID.eq(tableId))
-                .and(tabcolst.COLUMN_ID.`in`(candidateColumnIds))
                 .fetch()
                 .asSequence()
                 .mapNotNull { r ->
                     val id = r.get(tabcolst.COLUMN_ID) ?: return@mapNotNull null
-                    id to ExistingColumnStat(r.get(tabcolst.MIN_VALUE), r.get(tabcolst.MAX_VALUE))
+                    id to r
                 }
                 .toMap()
         }
