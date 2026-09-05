@@ -1191,6 +1191,23 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         return ctx.select(meta.VALUE).from(meta).where(meta.KEY.eq("data_path")).fetchOne(meta.VALUE)
     }
 
+    override fun listScheduledFileBatch(olderThan: Instant, limit: Int): List<DucklakeScheduledFileEntry> =
+        JdbcDucklakeCleanupQueries(dsl, metadata).listScheduledFileBatch(olderThan, limit)
+
+    override fun getCleanupDataPath(): String? = JdbcDucklakeCleanupQueries(dsl, metadata).getCleanupDataPath()
+
+    override fun listRetainedFileReferencePage(
+        kind: DucklakeFileKind,
+        afterFileId: Long?,
+        limit: Int,
+    ): List<DucklakeRetainedFileReference> =
+        JdbcDucklakeCleanupQueries(dsl, metadata).listRetainedFileReferencePage(kind, afterFileId, limit)
+
+    override fun removeSelectedScheduledFiles(entries: Collection<DucklakeScheduledFileEntry>) {
+        requireNotInReadSession("remove selected scheduled files")
+        JdbcDucklakeCleanupQueries(dsl, metadata).removeSelectedScheduledFiles(entries)
+    }
+
     override fun listFilesScheduledForDeletion(olderThan: Instant): List<DucklakeScheduledFile> {
         val sched = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.`as`("sched")
         return dsl.select(sched.DATA_FILE_ID, sched.PATH, sched.PATH_IS_RELATIVE).from(sched)

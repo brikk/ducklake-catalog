@@ -194,6 +194,41 @@ interface DucklakeCatalog : AutoCloseable {
     fun removeScheduledFileRows(dataFileIds: Collection<Long>)
 
     /**
+     * One bounded batch with schedule_start strictly before [olderThan], oldest first. Returns raw
+     * queue identities for exact cancellation; this is not a cursor over a changing queue.
+     * [limit] must be in 1..[DucklakeCleanupLimits.MAX_BATCH_SIZE].
+     */
+    fun listScheduledFileBatch(olderThan: java.time.Instant, limit: Int): List<DucklakeScheduledFileEntry>
+
+    /**
+     * Bounded catalog-root lookup for cleanup, with the same key/scope selection as [getDataPath].
+     * Returns null for an absent or null root; rejects duplicate roots and paths exceeding
+     * [DucklakeCleanupLimits.MAX_PATH_LENGTH]. Call only when a scheduled batch needs its root.
+     * Honors [readSession] and does not normalize the stored path.
+     */
+    fun getCleanupDataPath(): String?
+
+    /**
+     * Keyset page of all remaining data or delete references, including historical/dropped owners,
+     * but never the deletion queue. Ordered by file ID, strictly after [afterFileId] if supplied.
+     * Resolves only this page's latest table/schema hierarchy; does not normalize paths.
+     * [limit] must be in 1..[DucklakeCleanupLimits.MAX_BATCH_SIZE]. Use [readSession] for a pinned view.
+     */
+    fun listRetainedFileReferencePage(
+        kind: DucklakeFileKind,
+        afterFileId: Long?,
+        limit: Int,
+    ): List<DucklakeRetainedFileReference>
+
+    /**
+     * Removes only the exact raw id/path/relative/timestamp tuples selected by the caller, including
+     * identical duplicates. At most [DucklakeCleanupLimits.MAX_BATCH_SIZE] entries, in small mutation
+     * chunks; not atomic across chunks. Forbidden inside [readSession]. This does not lock owners or
+     * coordinate concurrent file registration with physical cleanup.
+     */
+    fun removeSelectedScheduledFiles(entries: Collection<DucklakeScheduledFileEntry>)
+
+    /**
      * Get the `file_format` of the most recent active data file for this table at the given
      * snapshot. Used by INSERT (and the insert leg of MERGE/UPDATE) to inherit the format of the
      * existing data when neither a session property nor a statement-level override is in play.

@@ -100,6 +100,29 @@ repositories {
 // then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.9.0-SNAPSHOT
 ```
 
+## Bounded Cleanup API
+
+The `fix/rv04-bounded-cleanup` development branch uses `0.9.0-rv04-SNAPSHOT` to keep locally
+published artifacts separate from concurrent `0.9.0-SNAPSHOT` work. It adds:
+
+- `listScheduledFileBatch(cutoff, limit)`: at most 1024 selected raw queue tuples, including
+  their timestamps for exact acknowledgement. Identical tuples describe equivalent requests.
+- `listRetainedFileReferencePage(kind, afterFileId, limit)`: SQL-limited, ascending keyset pages
+  of data or delete references, with page-local latest table/schema hierarchy. Includes retired
+  and dropped owners; excludes the deletion queue.
+- `getCleanupDataPath()`: bounded catalog-root projection, including duplicate detection.
+- `removeSelectedScheduledFiles(entries)`: exact raw tuple equality, independent of supported
+  path collations, in chunks of 64 predicates. At most 1024 input entries; not atomic across chunks.
+
+Path fields are limited to 16,384 characters, with SQL overflow sentinels so oversized metadata
+is not first materialized in full. Consumers should plan within `readSession`, cap total inspected
+references, and perform mutations afterward. These methods do not acquire ownership locks or
+coordinate simultaneous import/deletion. Old APIs remain available for existing consumers;
+new bulk maintenance must not use their unbounded fetches as a paging fallback.
+
+This feature snapshot is locally verified, not a public release. Release the APIs and update
+consumers to matching published artifacts before deployment.
+
 ## Building
 
 Multi-module Gradle build. The toolchain is pinned in [`mise.toml`](mise.toml) / [`.sdkmanrc`](.sdkmanrc)
