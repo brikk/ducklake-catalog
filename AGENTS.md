@@ -6,6 +6,9 @@
 - Include the commit SHA and verification results in the completion report.
 - Do not push unless the user explicitly requests it; permission to commit is not permission to push.
 - If verification is incomplete or failing, report that instead of treating the fix as complete.
+- Bulk maintenance APIs must bound SQL result pages and transferred path values;
+  consumers must enforce reasonable traversal budgets before destructive side effects.
+  Never fetch an unbounded catalog and apply an in-memory limit afterward.
 
 ## Commit identity (Buzz agents)
 
