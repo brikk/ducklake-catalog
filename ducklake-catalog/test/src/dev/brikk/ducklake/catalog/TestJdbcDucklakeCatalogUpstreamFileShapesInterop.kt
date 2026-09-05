@@ -143,6 +143,35 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         )
     }
 
+    /** One physical inlined table/schema version per file; [oldColumn] is absent after DROP. */
+    private fun writeVersionedFlushFile(
+        dir: Path,
+        name: String,
+        rows: List<List<Any?>>,
+        idColumn: DucklakeColumn,
+        oldColumn: DucklakeColumn?,
+    ) {
+        val select = rows.joinToString(" UNION ALL ") { row ->
+            val old = oldColumn?.let { ", ${(row[3] as Number).toInt()}::INTEGER AS old_value" }.orEmpty()
+            "SELECT ${(row[2] as Number).toInt()}::INTEGER AS id$old, " +
+                "${(row[0] as Number).toLong()}::BIGINT AS _ducklake_internal_row_id, " +
+                "${(row[1] as Number).toLong()}::BIGINT AS _ducklake_internal_snapshot_id"
+        }
+        val oldFieldId = oldColumn?.let { ", old_value: ${it.columnId}" }.orEmpty()
+        val fieldIds = "{id: ${idColumn.columnId}$oldFieldId, _ducklake_internal_row_id: $ROW_ID_FIELD_ID, " +
+            "_ducklake_internal_snapshot_id: $SNAPSHOT_ID_FIELD_ID}"
+        scratch(
+            "COPY ($select ORDER BY _ducklake_internal_row_id) TO ${q(dir.resolve(name).toString())} " +
+                "(FORMAT PARQUET, FIELD_IDS $fieldIds)",
+        )
+    }
+
+    private fun versionedFlushFragment(dir: Path, name: String, rows: Long, idColumn: Long) =
+        DucklakeWriteFragment(
+            name, Files.size(dir.resolve(name)), 0L, rows,
+            listOf(DucklakeFileColumnStats(idColumn, rows * 4, rows, 0L, "1", "4", false)),
+        )
+
     @Test
     fun secondDeleteConsolidatesIntoOneBackDatedRowAndDuckDbTimeTravelsThroughIt() {
         withDuckDb { c ->
@@ -257,11 +286,10 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
             table.tableId,
             listOf(
                 FlushedInlinedFile(
-                    fragment, sA, sB,
+                    fragment, sA, sB, minRowId,
                     DucklakeDeleteFragment(0L, "flushed-deletes.parquet", 1, deleteSize, 0, 1, "parquet", sC, sC),
                 ),
             ),
-            minRowId,
         )
         val sF = catalog.currentSnapshotId
         val registered = catalog.getDataFiles(table.tableId, sF).single()
@@ -280,6 +308,96 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
             .containsExactly(*inlinedRows.filter { it[2] == null }.map { (it[0] as Number).toLong() }.toTypedArray())
         assertThat(catalog.getLiveRowCount(table.tableId, sF)).isEqualTo(4L)
         assertThat(catalog.getTableStats(table.tableId)!!.recordCount).`as`("gross unchanged by a flush").isEqualTo(5L)
+    }
+
+    @Test
+    fun flushUsesDistinctRowIdRangesPerSchemaVersionAndPreservesDroppedFields() {
+        withDuckDb { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE TABLE lake.test_schema.fl_versions (id INTEGER, old_value INTEGER)")
+                statement.execute("INSERT INTO lake.test_schema.fl_versions VALUES (1, 10), (2, 20)")
+            }
+        }
+        val oldSnapshot = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "fl_versions", oldSnapshot)!!
+        val oldColumns = catalog.getTableColumns(table.tableId, oldSnapshot).associateBy { it.columnName }
+        catalog.dropColumn(table.tableId, oldColumns.getValue("old_value").columnId)
+        val droppedSnapshot = catalog.currentSnapshotId
+        withDuckDb { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("INSERT INTO lake.test_schema.fl_versions VALUES (3), (4)")
+            }
+        }
+        val newSnapshot = catalog.currentSnapshotId
+        val newColumns = catalog.getTableColumns(table.tableId, newSnapshot).associateBy { it.columnName }
+        val versions = catalog.getInlinedDataInfos(table.tableId, newSnapshot).sortedBy { it.schemaVersion }
+
+        val oldRows = pg(
+            "SELECT row_id, begin_snapshot, id, old_value FROM ducklake_inlined_data_${table.tableId}_${versions[0].schemaVersion} " +
+                "ORDER BY row_id",
+        )
+        val newRows = pg(
+            "SELECT row_id, begin_snapshot, id FROM ducklake_inlined_data_${table.tableId}_${versions[1].schemaVersion} " +
+                "ORDER BY row_id",
+        )
+        val oldRowStart = (oldRows.first()[0] as Number).toLong()
+        val newRowStart = (newRows.first()[0] as Number).toLong()
+        assertThat(newRowStart).isGreaterThan(oldRowStart)
+
+        val dir = tableDir(table, newSnapshot).also { Files.createDirectories(it) }
+        writeVersionedFlushFile(dir, "old-schema.parquet", oldRows, oldColumns.getValue("id"), oldColumns.getValue("old_value"))
+        writeVersionedFlushFile(dir, "new-schema.parquet", newRows, newColumns.getValue("id"), null)
+        val flushFiles = listOf(
+                FlushedInlinedFile(
+                    versionedFlushFragment(dir, "old-schema.parquet", oldRows.size.toLong(), oldColumns.getValue("id").columnId),
+                    oldSnapshot,
+                    oldSnapshot,
+                    oldRowStart,
+                ),
+                FlushedInlinedFile(
+                    versionedFlushFragment(dir, "new-schema.parquet", newRows.size.toLong(), newColumns.getValue("id").columnId),
+                    newSnapshot,
+                    newSnapshot,
+                    newRowStart,
+                ),
+            )
+        val beforeFlush = catalog.currentSnapshotId
+        @Suppress("DEPRECATION")
+        assertThatThrownBy { catalog.flushInlinedDataWithSnapshots(table.tableId, flushFiles, oldRowStart) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("row-id ranges overlap")
+        assertThat(catalog.currentSnapshotId).isEqualTo(beforeFlush)
+        catalog.flushInlinedDataWithSnapshots(
+            table.tableId,
+            flushFiles,
+        )
+        assertVersionedFlush(table, versions, oldSnapshot, droppedSnapshot, oldRowStart, newRowStart)
+    }
+
+    private fun assertVersionedFlush(
+        table: DucklakeTable,
+        versions: List<DucklakeInlinedDataInfo>,
+        oldSnapshot: Long,
+        droppedSnapshot: Long,
+        oldRowStart: Long,
+        newRowStart: Long,
+    ) {
+        assertThat(versions).hasSize(2)
+        val files = catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).sortedBy { it.rowIdStart }
+        assertThat(files.map { it.rowIdStart }).containsExactly(oldRowStart, newRowStart)
+        assertThat(files[0].rowIdStart + files[0].recordCount).isLessThanOrEqualTo(files[1].rowIdStart)
+        versions.forEach { version ->
+            assertThat(pg("SELECT count(*) FROM ducklake_inlined_data_${table.tableId}_${version.schemaVersion}").single()[0])
+                .isEqualTo(0L)
+        }
+
+        assertThat(duck("SELECT old_value FROM lake.test_schema.fl_versions AT (VERSION => $oldSnapshot) ORDER BY id"))
+            .containsExactly(10L, 20L)
+        assertThat(duck("SELECT id FROM lake.test_schema.fl_versions AT (VERSION => $droppedSnapshot) ORDER BY id"))
+            .containsExactly(1L, 2L)
+        assertThat(duck("SELECT id FROM lake.test_schema.fl_versions ORDER BY id")).containsExactly(1L, 2L, 3L, 4L)
+        assertThat(duck("SELECT rowid FROM lake.test_schema.fl_versions ORDER BY rowid"))
+            .containsExactly(oldRowStart, oldRowStart + 1, newRowStart, newRowStart + 1)
     }
 
     @Test

@@ -50,6 +50,8 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
   upstream `column_order = column_id`. Commit `90927e3`.
 - [ ] **Connector-only follow-ups:** TR-1, TR-2, TR-4, TR-6/TR-7, TR-9, TR-10, TR-11, TR-12 and
   adoption of the new P-H1/P-M1 API remain in the Trino repository; they are not catalog changes.
+  TR-4's catalog API is corrected on 0.8.0-SNAPSHOT: each `FlushedInlinedFile` carries its own
+  `rowIdStart`, preserving disjoint row-id ranges and one physical file per historical schema.
 
 ---
 

@@ -560,11 +560,24 @@ interface DucklakeCatalog : AutoCloseable {
      * `begin_snapshot <=` the base snapshot are then physically DELETED from the inlined tables, as
      * upstream does — their history lives on in the back-dated files.
      *
-     * [preservedRowIdStart] as in [flushInlinedData]. No schema-version bump; recorded as
-     * `inline_flush`. Prefer this over the 2-arg form: it keeps `$snapshot_id` exact on flushed rows
-     * and matches what DuckDB itself writes.
+     * Each entry has its own [FlushedInlinedFile.rowIdStart]: one file is written per physical
+     * inlined table/schema version, and their row-id ranges must not overlap. Combining schema
+     * versions loses dropped historical fields after the inlined rows are physically removed and
+     * breaks old-schema time travel. No schema-version bump; recorded as `inline_flush`.
      */
-    fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>, preservedRowIdStart: Long)
+    fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>)
+
+    /**
+     * Compatibility overload from 0.7.1. A single row-id start is only correct for one output file;
+     * callers flushing several schema-version files must use [flushInlinedDataWithSnapshots] and
+     * provide each [FlushedInlinedFile.rowIdStart].
+     */
+    @Deprecated("Use per-file FlushedInlinedFile.rowIdStart")
+    fun flushInlinedDataWithSnapshots(
+        tableId: Long,
+        files: List<FlushedInlinedFile>,
+        preservedRowIdStart: Long,
+    ) = flushInlinedDataWithSnapshots(tableId, files.map { it.copy(rowIdStart = preservedRowIdStart) })
 
     /**
      * Rename a table within its schema. End-snapshots the current `ducklake_table` row and

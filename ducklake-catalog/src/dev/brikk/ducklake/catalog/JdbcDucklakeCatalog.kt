@@ -3354,8 +3354,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    override fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>, preservedRowIdStart: Long) {
+    override fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>) {
         requireFileWritesSupported()
+        validateFlushedRowIdRanges(files)
         for (f in files) {
             require(f.deleteFragment == null || f.deleteFragment.hasEmbeddedSnapshots) {
                 "flushInlinedDataWithSnapshots: delete fragment for ${f.fragment.path} must carry embedded snapshot ids"
@@ -3369,7 +3370,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 // Register the materialised file, then back-date it: begin = MIN embedded insert
                 // snapshot, partial_max = MAX — what upstream's insert path derives from the written
                 // file's _ducklake_internal_snapshot_id stats (ducklake_insert.cpp).
-                applyInsertFragments(tx, tableId, listOf(flushed.fragment), InsertMode.FLUSH, preservedRowIdStart)
+                applyInsertFragments(tx, tableId, listOf(flushed.fragment), InsertMode.FLUSH, flushed.rowIdStart)
                 val dataFileId: Long = ctx.select(file.DATA_FILE_ID).from(file)
                     .where(file.TABLE_ID.eq(tableId))
                     .and(file.PATH.eq(flushed.fragment.path))
@@ -3392,6 +3393,23 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // Upstream DeleteFlushedInlinedData: the rows now live in the back-dated files.
             deleteFlushedInlinedRows(ctx, tableId, tx.getCurrentSnapshotId())
             tx.recordChange(WriteChange.FlushedInlinedData(tableId))
+        }
+    }
+
+    /** Prevent the old one-global-start bug from producing overlapping fallback row-id ranges. */
+    private fun validateFlushedRowIdRanges(files: List<FlushedInlinedFile>) {
+        val ordered = files.sortedBy { it.rowIdStart }
+        ordered.forEach { file ->
+            require(file.rowIdStart >= 0) { "flush: negative row_id_start for ${file.fragment.path}" }
+            require(file.fragment.recordCount <= Long.MAX_VALUE - file.rowIdStart) {
+                "flush: row-id range overflows for ${file.fragment.path}"
+            }
+        }
+        ordered.zipWithNext().forEach { (left, right) ->
+            val leftEnd = left.rowIdStart + left.fragment.recordCount
+            require(right.rowIdStart >= leftEnd) {
+                "flush: row-id ranges overlap for ${left.fragment.path} and ${right.fragment.path}"
+            }
         }
     }
 
