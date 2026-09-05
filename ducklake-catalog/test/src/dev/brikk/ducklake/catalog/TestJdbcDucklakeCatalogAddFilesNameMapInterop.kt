@@ -126,6 +126,82 @@ class TestJdbcDucklakeCatalogAddFilesNameMapInterop {
             DucklakeNameMap(listOf(DucklakeNameMapEntry("ID", idCol), DucklakeNameMapEntry("NAME", nameCol))),
         )
 
+    private fun nestedNameMap(columns: Map<String, DucklakeColumn>) =
+        DucklakeNameMap(
+            listOf(
+                DucklakeNameMapEntry("IDENT", columns.getValue("id").columnId),
+                DucklakeNameMapEntry(
+                    "PAYLOAD_SOURCE", columns.getValue("payload").columnId,
+                    listOf(
+                        DucklakeNameMapEntry("InnerValue", columns.getValue("inner_value").columnId),
+                        DucklakeNameMapEntry(
+                            "NestedSource", columns.getValue("nested").columnId,
+                            listOf(DucklakeNameMapEntry("DeepValue", columns.getValue("deep_value").columnId)),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    @Test
+    fun nestedNameMapReturnsEveryLevelAndDuckDbMapsRecursively() {
+        val payload = TableColumnSpec(
+            "payload", "struct", true,
+            listOf(
+                TableColumnSpec.leaf("inner_value", "int32", true),
+                TableColumnSpec(
+                    "nested", "struct", true,
+                    listOf(TableColumnSpec.leaf("deep_value", "int32", true)),
+                ),
+            ),
+        )
+        catalog.createTable(
+            "test_schema", "nested_nm",
+            listOf(TableColumnSpec.leaf("id", "int32", true), payload),
+            null, null,
+        )
+        val snapshot = catalog.currentSnapshotId
+        val schema = catalog.getSchema("test_schema", snapshot)!!
+        val table = catalog.getTable("test_schema", "nested_nm", snapshot)!!
+        val columns = catalog.getAllColumnsWithParentage(table.tableId, snapshot).associateBy { it.columnName }
+        val dir = Files.createDirectories(isolated.dataDir.resolve(schema.path).resolve(table.path))
+        val file = dir.resolve("nested-different-names.parquet")
+        writeParquet(
+            file,
+            "1::INTEGER AS \"IDENT\", " +
+                "{'InnerValue': 10, 'NestedSource': {'DeepValue': 100}} AS \"PAYLOAD_SOURCE\" " +
+                "UNION ALL SELECT 2, {'InnerValue': 20, 'NestedSource': {'DeepValue': 200}}",
+        )
+        val nameMap = nestedNameMap(columns)
+        catalog.commitAddFiles(
+            table.tableId,
+            listOf(
+                DucklakeWriteFragment(
+                    file.toString(), false, "parquet", Files.size(file), 0L, 2L,
+                    emptyList(), emptyMap(), null, nameMap,
+                ),
+            ),
+        )
+        val added = catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).single()
+        val mapping = catalog.getNameMaps(setOf(added.mappingId!!)).getValue(added.mappingId!!)
+        assertThat(mapping).containsExactlyInAnyOrderEntriesOf(
+            mapOf(
+                columns.getValue("id").columnId to "IDENT",
+                columns.getValue("payload").columnId to "PAYLOAD_SOURCE",
+                columns.getValue("inner_value").columnId to "InnerValue",
+                columns.getValue("nested").columnId to "NestedSource",
+                columns.getValue("deep_value").columnId to "DeepValue",
+            ),
+        )
+        openDuckDb().use { connection ->
+            assertThat(
+                connection.longs(
+                    "SELECT sum(payload.inner_value), sum(payload.nested.deep_value) FROM lake.test_schema.nested_nm",
+                ),
+            ).containsExactly(30L, 300L)
+        }
+    }
+
     @Test
     fun mappingIdsComeFromTheFileIdSpaceAndAreVisibleToACachedDuckDbSession() {
         openDuckDb().use { c ->

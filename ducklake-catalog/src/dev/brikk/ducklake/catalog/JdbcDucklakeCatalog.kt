@@ -1766,9 +1766,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         dsl.select(nm.MAPPING_ID, nm.TARGET_FIELD_ID, nm.SOURCE_NAME)
             .from(nm)
             .where(nm.MAPPING_ID.`in`(mappingIds))
-            // Top-level entries only — nested struct/list/map source-name resolution
-            // is handled by Trino's reader once we descend into a matched group field.
-            .and(nm.PARENT_COLUMN.isNull)
+            // Every nesting level: upstream reconstructs parent/child entries and maps recursively
+            // by target_field_id. This flattened API preserves the same information because target
+            // field ids are global and callers already have getAllColumnsWithParentage().
             // Exclude hive partition entries — those have no parquet column to find.
             .and(nm.IS_PARTITION.isFalse.or(nm.IS_PARTITION.isNull))
             .forEach { r ->

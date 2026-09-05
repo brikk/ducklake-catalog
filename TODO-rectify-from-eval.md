@@ -48,6 +48,10 @@ C-B3, W-B2, W-B3 (wrong results / data loss) → C-B1, C-B2, R-B5, C-B5 (backend
 - [x] **E-L5 / E-L8 / E-L11 / T-L2:** database clock for snapshots/scheduled files; NULL
   `row_id_start` fails as corruption; file reads order by `data_file_id`; new column rows use
   upstream `column_order = column_id`. Commit `90927e3`.
+- [x] **R-H3 (catalog half):** `getNameMaps()` returns every non-partition entry, including nested
+  STRUCT/LIST/MAP rows. Upstream loads all rows, rebuilds the tree through `parent_column`, then maps
+  recursively by `target_field_id`; the flattened API is equivalent when paired with
+  `getAllColumnsWithParentage`. Included in 0.8.0.
 - [ ] **Connector-only follow-ups:** TR-1, TR-2, TR-4, TR-6/TR-7, TR-9, TR-10, TR-11, TR-12 and
   adoption of the new P-H1/P-M1 API remain in the Trino repository; they are not catalog changes.
   TR-4's catalog API is corrected on 0.8.0-SNAPSHOT: each `FlushedInlinedFile` carries its own

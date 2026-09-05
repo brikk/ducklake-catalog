@@ -292,9 +292,11 @@ interface DucklakeCatalog : AutoCloseable {
     fun getSortKeys(tableId: Long, snapshotId: Long): List<DucklakeSortKey>
 
     /**
-     * Load the top-level entries of one or more name maps. Returns a map keyed by
+     * Load every non-partition entry of one or more name maps, flattened across all nested levels.
+     * Returns a map keyed by
      * `mapping_id` where each value maps `target_field_id → source_name`
-     * for non-hive-partition entries whose `parent_column` is NULL. Used by the
+     * for top-level and nested STRUCT/LIST/MAP fields. Target field ids are globally sufficient to
+     * reconstruct the hierarchy when combined with [getAllColumnsWithParentage]. Used by the
      * read path to find the parquet column corresponding to a table field id when the
      * file's column names don't match the table's (e.g. case-difference, registered
      * via `add_files`). Returns an empty map for the empty input set.
