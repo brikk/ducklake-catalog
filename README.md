@@ -21,7 +21,7 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 ## Using it as a dependency
 
-Latest release: **0.7.0** (`main` is `0.8.0-SNAPSHOT`)
+Latest release: **0.7.1** (`main` is `0.8.0-SNAPSHOT`)
 
 ### Gradle (Kotlin DSL)
 
@@ -31,16 +31,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.7.0")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.7.1")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.7.0"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.7.1"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.7.0")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.7.1")
 
     // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
-    implementation("dev.brikk.ducklake:slt-format:0.7.0")
+    implementation("dev.brikk.ducklake:slt-format:0.7.1")
 }
 ```
 
@@ -51,10 +51,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.7.0'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.7.0')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.7.0'
-    implementation 'dev.brikk.ducklake:slt-format:0.7.0'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.7.1'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.7.1')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.7.1'
+    implementation 'dev.brikk.ducklake:slt-format:0.7.1'
 }
 ```
 
@@ -64,14 +64,14 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.7.0</version>
+  <version>0.7.1</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.7.0</version>
+  <version>0.7.1</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
 </dependency>
@@ -80,7 +80,7 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>slt-format</artifactId>
-  <version>0.7.0</version>
+  <version>0.7.1</version>
 </dependency>
 ```
 
