@@ -20,9 +20,9 @@ package dev.brikk.ducklake.catalog
  *
  * Port of upstream `DuckLakeTransactionState::CheckForConflicts` (ducklake v1.5,
  * `src/storage/ducklake_transaction_state.cpp`, the loops following the created-table name
- * check). Keep this file in lock-step with upstream — the matrix entries are the spec. The one
- * deliberate deviation is documented on [checkFlushedInlinedData] (stricter, because this
- * library's flush end-snapshots ALL live inlined rows rather than exactly the ones it read).
+ * check). Keep the upstream entries in sync; the deliberately stricter flush checks are
+ * documented on [checkFlushedInlinedData]. Flush payloads are materialized before the metadata
+ * transaction, and this library records TRUNCATE's inlined deletions as `deleted_from_table`.
  *
  * Complements [LogicalConflictCheck] (which is state-based, per-call args):
  * this check catches dueling-name commits (two concurrent
@@ -224,15 +224,14 @@ internal object ConflictMatrix {
         )
     }
 
-    // upstream: `for (table_id : changes.tables_flushed_inlined)` = dropped, deleted_inlined,
-    // flushed_inlined. DELIBERATELY STRICTER here: upstream's flush deletes exactly the inlined
-    // rows it materialised, whereas this library's flush end-snapshots EVERY live inlined row at
-    // commit — so a concurrent inlined INSERT would have its rows end-snapshotted without ever
-    // being written to the data file (lost), and a concurrent ALTER changes the schema the
-    // materialised file was written against. Conflict on those too.
+    // Upstream checks dropped/deleted_inlined/flushed_inlined. Also guard pre-materialized
+    // payloads against ALTER and inlined INSERT, and against deleted_from_table: our TRUNCATE
+    // end-snapshots inlined rows but records that kind. Accepting an older flush would resurrect
+    // those rows and erase their deletion history. This also protects already-committed TRUNCATEs.
     private fun checkFlushedInlinedData(c: WriteChange.FlushedInlinedData, other: InterveningChanges) {
         conflictIfMember(c.tableId, other.droppedTables, "flush inlined data", "dropped it")
         conflictIfMember(c.tableId, other.alteredTables, "flush inlined data", "altered it")
+        conflictIfMember(c.tableId, other.tablesDeletedFrom, "flush inlined data", "deleted from it")
         conflictIfMember(c.tableId, other.tablesFlushedInlined, "flush inlined data", "flushed it")
         conflictIfMember(c.tableId, other.tablesInsertedInlined, "flush inlined data", "inlined-inserted into it")
         conflictIfMember(c.tableId, other.tablesDeletedInlined, "flush inlined data", "inlined-deleted from it")

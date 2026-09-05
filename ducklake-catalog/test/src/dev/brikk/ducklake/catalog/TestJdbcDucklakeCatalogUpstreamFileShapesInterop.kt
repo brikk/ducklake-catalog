@@ -508,6 +508,60 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
     }
 
     @Test
+    fun flushRejectsATruncateCommittedAfterMaterializationPreservingHistory() {
+        withDuckDb { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE TABLE lake.test_schema.flush_truncate (id INTEGER, v VARCHAR)")
+                statement.execute("INSERT INTO lake.test_schema.flush_truncate VALUES (1, 'a'), (2, 'b')")
+            }
+        }
+        val readSnapshot = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "flush_truncate", readSnapshot)!!
+        val columns = catalog.getTableColumns(table.tableId, readSnapshot).associateBy { it.columnName }
+        val schemaVersion = catalog.getInlinedDataInfos(table.tableId, readSnapshot).single().schemaVersion
+        val inlinedQuery = "SELECT row_id, begin_snapshot, end_snapshot, id, convert_from(v, 'UTF8') AS v " +
+            "FROM ducklake_inlined_data_${table.tableId}_$schemaVersion ORDER BY row_id"
+        val inlinedRows = pg(inlinedQuery)
+        assertThat(inlinedRows).hasSize(2)
+        assertThat(catalog.getDataFiles(table.tableId, readSnapshot)).isEmpty()
+        val dir = tableDir(table, readSnapshot).also { Files.createDirectories(it) }
+        writeFlushedDataFile(dir, inlinedRows, columns)
+        val fragment = DucklakeWriteFragment(
+            "flushed.parquet", Files.size(dir.resolve("flushed.parquet")), 0L, 2L,
+            listOf(
+                DucklakeFileColumnStats(columns.getValue("id").columnId, 8L, 2L, 0L, "1", "2", false),
+                DucklakeFileColumnStats(columns.getValue("v").columnId, 2L, 2L, 0L, "a", "b", false),
+            ),
+        )
+        val files = listOf(FlushedInlinedFile(fragment, readSnapshot, readSnapshot, (inlinedRows.first()[0] as Number).toLong()))
+
+        catalog.truncateTable("test_schema", "flush_truncate")
+        val truncateSnapshot = catalog.currentSnapshotId
+        val truncatedRows = pg(inlinedQuery)
+        val truncatedStats = catalog.getTableStats(table.tableId)
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_truncate")).isEmpty()
+        assertThat(pg("SELECT changes_made FROM ducklake_snapshot_changes WHERE snapshot_id = $truncateSnapshot").single()[0])
+            .isEqualTo("deleted_from_table:${table.tableId}")
+
+        assertThatThrownBy {
+            catalog.flushInlinedDataWithSnapshots(table.tableId, files, emptyList(), readSnapshot)
+        }.isInstanceOf(LogicalConflictException::class.java)
+            .hasMessageContaining("deleted from it")
+            .satisfies({ e -> assertThat((e as TransactionConflictException).retryable()).isFalse() })
+
+        assertThat(catalog.currentSnapshotId).isEqualTo(truncateSnapshot)
+        assertThat(catalog.getDataFiles(table.tableId, truncateSnapshot)).isEmpty()
+        assertThat(catalog.getTableStats(table.tableId)).isEqualTo(truncatedStats)
+        assertThat(pg(inlinedQuery)).isEqualTo(truncatedRows)
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_truncate")).isEmpty()
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_truncate AT (VERSION => $truncateSnapshot)")).isEmpty()
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_truncate AT (VERSION => $readSnapshot) ORDER BY id"))
+            .containsExactly(1L, 2L)
+        assertThat(duck("SELECT rowid FROM lake.test_schema.flush_truncate AT (VERSION => $readSnapshot) ORDER BY rowid"))
+            .containsExactlyElementsOf(inlinedRows.map { (it[0] as Number).toLong() })
+    }
+
+    @Test
     fun rewritePreservesRowIdsAndDoesNotAdvanceTheAllocator() {
         catalog.createSchema("rw")
         catalog.createTable("rw", "t", listOf(TableColumnSpec.leaf("id", "int32", true)), null, null)

@@ -571,9 +571,9 @@ interface DucklakeCatalog : AutoCloseable {
      * inlined deletions through [readSnapshotId]. Each replacement must merge those inlined
      * positions with the file's active delete file; the catalog supersedes/schedules that old file
      * and drains matching `ducklake_inlined_delete_<tableId>` rows. Rows newer than the caller's
-     * snapshot are never drained. Any conflicting inlined insert/delete, table alteration/flush, or
-     * newer active delete file committed after [readSnapshotId] aborts the operation so the caller
-     * can rematerialize from a fresh read.
+     * snapshot are never drained. Any conflicting inlined insert/delete, table deletion (including
+     * TRUNCATE), alteration/flush, or newer active delete file committed after [readSnapshotId]
+     * aborts the operation so the caller can rematerialize from a fresh read.
      */
     fun flushInlinedDataWithSnapshots(
         tableId: Long,

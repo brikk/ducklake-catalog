@@ -93,7 +93,8 @@ class TestConflictMatrix {
         // Stricter than upstream (documented on ConflictMatrix.checkFlushedInlinedData).
         conflicts(flush, "altered_table:7")
         conflicts(flush, "inlined_insert:7")
-        noConflict(flush, "inserted_into_table:7", "deleted_from_table:7")
+        conflicts(flush, "deleted_from_table:7") // Includes TRUNCATE of inlined rows.
+        noConflict(flush, "inserted_into_table:7", "deleted_from_table:8")
     }
 
     @Test
