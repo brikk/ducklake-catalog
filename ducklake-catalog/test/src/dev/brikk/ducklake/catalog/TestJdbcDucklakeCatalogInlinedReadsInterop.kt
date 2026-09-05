@@ -103,6 +103,22 @@ class TestJdbcDucklakeCatalogInlinedReadsInterop {
         val changes = catalog.getInlinedChangesBetween(table.tableId, sv, snapshot - 1, snapshot, columns.map { it.columnId })
         assertThat(changes).`as`("3 inserts + 1 delete touch the window").hasSize(3)
         assertThat(changes.count { it.endSnapshot == snapshot }).isEqualTo(1)
+        val rawById = changes.associateBy { (it.values[0] as Number).toInt() }
+        assertThat(rawById.getValue(1).endSnapshot).`as`("live raw row").isNull()
+        assertThat(rawById.getValue(2).endSnapshot).`as`("deleted raw row").isEqualTo(snapshot)
+        assertThat(rawById.getValue(3).endSnapshot).`as`("live raw row").isNull()
+
+        val decoded = catalog.getInlinedChangesBetweenDecoded(
+            table.tableId,
+            sv,
+            snapshot - 1,
+            snapshot,
+            columns.map { it.columnId },
+        )
+        val decodedById = decoded.associateBy { it.values[0] as Int }
+        assertThat(decodedById.getValue(1).endSnapshot).`as`("live decoded row").isNull()
+        assertThat(decodedById.getValue(2).endSnapshot).`as`("deleted decoded row").isEqualTo(snapshot)
+        assertThat(decodedById.getValue(3).endSnapshot).`as`("live decoded row").isNull()
     }
 
     @Test

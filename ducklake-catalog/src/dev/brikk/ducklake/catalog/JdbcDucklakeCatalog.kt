@@ -2011,7 +2011,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     DucklakeInlinedChangeRow(
                         orZero(rec.get(0, Long::class.java)),
                         orZero(rec.get(1, Long::class.java)),
-                        rec.get(2, Long::class.java),
+                        // Boxed Long is required: primitive `long` maps SQL NULL to 0, which makes
+                        // every live inlined row look deleted at snapshot zero.
+                        rec.get(2, Long::class.javaObjectType),
                         values,
                     )
                 }
