@@ -265,8 +265,9 @@ interface DucklakeCatalog : AutoCloseable {
      *  - the per-column aggregates are rebuilt from the authoritative per-file stats
      *    (`ducklake_file_column_stats`) of the currently-active data files, tightening any bounds
      *    that incremental maintenance left stale. Columns with missing coverage or incomplete bounds
-     *    are omitted rather than published as partial global statistics. UNLESS the table has live
-     *    inlined rows, whose values are in no per-file stats; the existing bounds are then left as they are.
+     *    are omitted rather than published as partial global statistics. While live inlined rows
+     *    remain, all global column-stat rows are removed because their values are not in per-file
+     *    statistics. Empty or deleted-only inlined tables do not prevent a file-based rebuild.
      *
      * Native DuckDB operations that require global column statistics, such as `SET NOT NULL`, may
      * refuse a column while its row is absent. A rebuild helps only when complete statistics exist;
@@ -807,7 +808,9 @@ interface DucklakeCatalog : AutoCloseable {
      * compaction allocates no new row ids. `ducklake_table_stats` is brought in line with the new
      * file set: gross `record_count` and `file_size_bytes` change by (Σmerged − Σretired) — the
      * retired sources' deleted rows leave the gross count here — and the per-column global bounds
-     * are rebuilt from the surviving files' per-file stats (upstream `RecomputeGlobalStatsAfterRewrite`). The retired source/delete files are NOT physically
+     * are rebuilt from the surviving files' per-file stats (upstream `RecomputeGlobalStatsAfterRewrite`).
+     * If live inlined rows remain, all global column-stat rows are removed instead of publishing
+     * incomplete bounds or retaining stale extrema that DuckDB might now treat as exact. The retired source/delete files are NOT physically
      * removed here; time-travel still resolves them via `[begin,end)` liveness until
      * `expire_snapshots` → `cleanup_old_files` reclaims them.
      *

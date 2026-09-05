@@ -1388,17 +1388,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val ctx = forConnection(conn)
             metadata.begin(ctx)
             try {
-                val snapshotId = readLatestSnapshotId(ctx)
-                recomputeTableStats(ctx, tableId, snapshotId)
-                // The per-file aggregate covers Parquet rows only. While the table has LIVE inlined
-                // rows (DuckDB data inlining) those rows' values are not in any per-file stats, so
-                // rebuilding the global bounds from them would produce bounds that are too tight —
-                // and with no deletes outstanding DuckDB would treat them as exact. Leave the
-                // incrementally-widened values alone in that case (upstream's
-                // RecomputeGlobalStatsAfterRewrite bails the same way when it cannot fold inlined data).
-                if (!hasLiveInlinedRows(tableId, snapshotId)) {
-                    recomputeTableColumnStats(ctx, tableId, snapshotId)
-                }
+                val snap = DUCKLAKE_SNAPSHOT
+                val snapshot = ctx.selectFrom(snap).orderBy(snap.SNAPSHOT_ID.desc()).limit(1).fetchOne()
+                    ?: throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
+                val snapshotId = snapshot.snapshotId
+                val schemaVersion = orZero(snapshot.schemaVersion)
+                recomputeTableStats(ctx, tableId, snapshotId, schemaVersion)
+                recomputeTableColumnStats(ctx, tableId, snapshotId, schemaVersion)
                 metadata.commit(ctx, conn)
             }
             catch (e: Exception) {
@@ -1408,8 +1404,24 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    private fun hasLiveInlinedRows(tableId: Long, snapshotId: Long): Boolean =
-        getInlinedDataInfos(tableId, snapshotId).any { it.hasLiveRows }
+    private fun hasLiveInlinedRows(ctx: DSLContext, tableId: Long, snapshotId: Long, schemaVersion: Long): Boolean =
+        inlinedTablesForStats(ctx, tableId, schemaVersion).any { inlined ->
+            dynamicTableExists(ctx, inlined.name) &&
+                ctx.fetchExists(ctx.selectOne().from(inlined.table).where(inlined.activeAt(snapshotId)))
+        }
+
+    /** A rewrite's new snapshot row does not exist yet, so its schema ceiling must come from the transaction. */
+    private fun inlinedTablesForStats(ctx: DSLContext, tableId: Long, schemaVersion: Long): List<InlinedDataTable> {
+        if (!dynamicTableExists(ctx, "ducklake_inlined_data_tables")) return emptyList()
+        val inlined = DUCKLAKE_INLINED_DATA_TABLES
+        return ctx.selectDistinct(inlined.SCHEMA_VERSION).from(inlined)
+            .where(inlined.TABLE_ID.eq(tableId))
+            .and(inlined.SCHEMA_VERSION.le(schemaVersion))
+            .orderBy(inlined.SCHEMA_VERSION)
+            .fetch(inlined.SCHEMA_VERSION)
+            .filterNotNull()
+            .map { InlinedDataTable.of(tableId, it) }
+    }
 
     /**
      * `ducklake_table_stats`: recompute `record_count` as the GROSS row count — every row of every
@@ -1419,7 +1431,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * row-id allocator high-water mark). No PK/UNIQUE on table_id → explicit probe + INSERT-or-UPDATE
      * (matches the write path).
      */
-    private fun recomputeTableStats(ctx: DSLContext, tableId: Long, snapshotId: Long) {
+    private fun recomputeTableStats(ctx: DSLContext, tableId: Long, snapshotId: Long, schemaVersion: Long) {
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         var grossRecordCount = 0L
@@ -1433,7 +1445,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 grossRecordCount += orZero(r.get(file.RECORD_COUNT))
                 totalFileSize += orZero(r.get(file.FILE_SIZE_BYTES))
             }
-        grossRecordCount += countGrossInlinedRows(tableId, snapshotId)
+        grossRecordCount += countGrossInlinedRows(ctx, tableId, snapshotId, schemaVersion)
 
         val existing: DucklakeTableStatsRecord? = ctx.selectFrom(tabstats)
             .where(tabstats.TABLE_ID.eq(tableId))
@@ -1462,16 +1474,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * S`, deleted or not). Flushed rows have been physically removed and are counted through the
      * Parquet file they were flushed into instead.
      */
-    private fun countGrossInlinedRows(tableId: Long, snapshotId: Long): Long =
-        getInlinedDataInfos(tableId, snapshotId).sumOf { info ->
-            val inlined = InlinedDataTable.of(tableId, info.schemaVersion)
-            try {
-                dsl.fetchCount(DSL.selectOne().from(inlined.table).where(inlined.beginSnapshot.le(snapshotId))).toLong()
+    private fun countGrossInlinedRows(ctx: DSLContext, tableId: Long, snapshotId: Long, schemaVersion: Long): Long =
+        inlinedTablesForStats(ctx, tableId, schemaVersion).sumOf { inlined ->
+            if (dynamicTableExists(ctx, inlined.name)) {
+                ctx.fetchCount(ctx.selectOne().from(inlined.table).where(inlined.beginSnapshot.le(snapshotId))).toLong()
             }
-            catch (e: DataAccessException) {
-                rethrowUnlessMissingTable(e, inlined.name, "count gross inlined rows")
-                0L
-            }
+            else 0L
         }
 
     override fun getLiveRowCount(tableId: Long, snapshotId: Long): Long {
@@ -1507,12 +1515,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     /**
      * `ducklake_table_column_stats`: full replace with aggregates freshly recomputed from the
-     * active data files' authoritative per-file stats. Tightens any min/max that incremental
-     * maintenance left stale after a delete.
+     * active data files' authoritative per-file stats. Live inlined values are not covered, so
+     * suppress all global rows rather than publishing file-only bounds or retaining stale extrema.
      */
-    private fun recomputeTableColumnStats(ctx: DSLContext, tableId: Long, snapshotId: Long) {
+    private fun recomputeTableColumnStats(ctx: DSLContext, tableId: Long, snapshotId: Long, schemaVersion: Long) {
         val tabcolst = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tabcolst")
-        val rows = aggregateActiveColumnStats(ctx, tableId, snapshotId)
+        val rows = if (hasLiveInlinedRows(ctx, tableId, snapshotId, schemaVersion)) emptyList()
+        else aggregateActiveColumnStats(ctx, tableId, snapshotId)
         // DELETE routed through `metadata` for Quack (matches dropTable's metadata-table delete).
         metadata.execute(
             ctx,
@@ -1788,7 +1797,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     // DataAccessException means the catalog metadata points to a dropped/
                     // non-materialized table (skip it, as the old existsAsTable filter did);
                     // otherwise the boolean tells whether any rows are live at this snapshot.
-                    // Carrying hasLiveRows here lets split planning / hasLiveInlinedRows avoid
+                    // Carrying hasLiveRows here lets split planning avoid
                     // the redundant second per-table probe they used to make.
                     val hasLiveRows: Boolean = try {
                         dsl.fetchExists(
@@ -4891,8 +4900,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * `file_size_bytes` drops by the retired bytes. Then the per-column global stats are rebuilt from
      * the surviving files' per-file stats — the retired sources may have held the only rows at a
      * bound, and a rewrite that dropped their deleted rows can leave `record_count == net`, at which
-     * point DuckDB trusts those bounds as exact. Mirrors upstream
-     * `RecomputeGlobalStatsAfterRewrite`. GREATEST(0, …) defends against underflow if stats were
+     * point DuckDB trusts those bounds as exact. With live inlined rows, suppress global column
+     * stats instead: unlike upstream RecomputeGlobalStatsAfterRewrite, this client cannot fold
+     * their values into the file aggregate. GREATEST(0, …) defends against underflow if stats were
      * ever inconsistent with the file ledger.
      */
     private fun netRewriteStats(tx: DucklakeWriteTransaction, tableId: Long, retired: RetiredSourceStats) {
@@ -4908,7 +4918,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             )
             .where(tabstats.TABLE_ID.eq(tableId))
             )
-        recomputeTableColumnStats(tx.dsl(), tableId, tx.getNewSnapshotId())
+        recomputeTableColumnStats(tx.dsl(), tableId, tx.getNewSnapshotId(), tx.getSchemaVersion())
     }
 
     /**
