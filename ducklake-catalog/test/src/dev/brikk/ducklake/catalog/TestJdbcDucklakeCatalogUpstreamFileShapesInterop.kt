@@ -101,6 +101,15 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { st -> st.execute(sql) } }
     }
 
+    private fun parquetLongs(path: Path, column: String): List<Long> =
+        DriverManager.getConnection("jdbc:duckdb:").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT $column FROM read_parquet(${q(path.toString())})").use { result ->
+                    generateSequence { if (result.next()) result.getLong(1) else null }.toList()
+                }
+            }
+        }
+
     private fun q(s: String) = "'" + s.replace("'", "''") + "'"
 
     private fun tableDir(table: DucklakeTable, snapshot: Long): Path {
@@ -290,6 +299,8 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
                     DucklakeDeleteFragment(0L, "flushed-deletes.parquet", 1, deleteSize, 0, 1, "parquet", sC, sC),
                 ),
             ),
+            emptyList(),
+            sC,
         )
         val sF = catalog.currentSnapshotId
         val registered = catalog.getDataFiles(table.tableId, sF).single()
@@ -342,7 +353,6 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         )
         val oldRowStart = (oldRows.first()[0] as Number).toLong()
         val newRowStart = (newRows.first()[0] as Number).toLong()
-        assertThat(newRowStart).isGreaterThan(oldRowStart)
 
         val dir = tableDir(table, newSnapshot).also { Files.createDirectories(it) }
         writeVersionedFlushFile(dir, "old-schema.parquet", oldRows, oldColumns.getValue("id"), oldColumns.getValue("old_value"))
@@ -361,17 +371,23 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
                     newRowStart,
                 ),
             )
-        val beforeFlush = catalog.currentSnapshotId
-        @Suppress("DEPRECATION")
-        assertThatThrownBy { catalog.flushInlinedDataWithSnapshots(table.tableId, flushFiles, oldRowStart) }
-            .isInstanceOf(IllegalArgumentException::class.java)
-            .hasMessageContaining("row-id ranges overlap")
-        assertThat(catalog.currentSnapshotId).isEqualTo(beforeFlush)
+        assertLegacyGlobalStartRejected(table.tableId, flushFiles, oldRowStart)
         catalog.flushInlinedDataWithSnapshots(
             table.tableId,
             flushFiles,
+            emptyList(),
+            newSnapshot,
         )
         assertVersionedFlush(table, versions, oldSnapshot, droppedSnapshot, oldRowStart, newRowStart)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun assertLegacyGlobalStartRejected(tableId: Long, files: List<FlushedInlinedFile>, rowIdStart: Long) {
+        val before = catalog.currentSnapshotId
+        assertThatThrownBy { catalog.flushInlinedDataWithSnapshots(tableId, files, rowIdStart) }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessageContaining("row-id ranges overlap")
+        assertThat(catalog.currentSnapshotId).isEqualTo(before)
     }
 
     private fun assertVersionedFlush(
@@ -383,6 +399,7 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         newRowStart: Long,
     ) {
         assertThat(versions).hasSize(2)
+        assertThat(newRowStart).isGreaterThan(oldRowStart)
         val files = catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).sortedBy { it.rowIdStart }
         assertThat(files.map { it.rowIdStart }).containsExactly(oldRowStart, newRowStart)
         assertThat(files[0].rowIdStart + files[0].recordCount).isLessThanOrEqualTo(files[1].rowIdStart)
@@ -398,6 +415,96 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         assertThat(duck("SELECT id FROM lake.test_schema.fl_versions ORDER BY id")).containsExactly(1L, 2L, 3L, 4L)
         assertThat(duck("SELECT rowid FROM lake.test_schema.fl_versions ORDER BY rowid"))
             .containsExactly(oldRowStart, oldRowStart + 1, newRowStart, newRowStart + 1)
+    }
+
+    @Test
+    fun flushDrainsInlinedFileDeletesIntoTaggedReplacementsAndSchedulesSupersededFiles() {
+        withDuckDb { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE TABLE lake.test_schema.flush_deletes (id INTEGER)")
+                statement.execute("INSERT INTO lake.test_schema.flush_deletes VALUES (1), (2), (3), (4)")
+                statement.execute(
+                    "CALL ducklake_flush_inlined_data('lake', schema_name => 'test_schema', table_name => 'flush_deletes')",
+                )
+            }
+        }
+        val base = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "flush_deletes", base)!!
+        val dataFile = catalog.getDataFiles(table.tableId, base).single()
+        val dir = tableDir(table, base)
+        val dataPath = dir.resolve(dataFile.path)
+        val ids = parquetLongs(dataPath, "id")
+        val pos1 = ids.indexOf(1L).toLong()
+        val pos3 = ids.indexOf(3L).toLong()
+
+        withDuckDb { it.createStatement().use { st -> st.execute("DELETE FROM lake.test_schema.flush_deletes WHERE id = 1") } }
+        val delete1 = catalog.currentSnapshotId
+        val size1 = writeTaggedDeleteFile(dir, "flushed-file-del-1.parquet", dataPath.toString(), mapOf(pos1 to delete1))
+        catalog.flushInlinedDataWithSnapshots(
+            table.tableId,
+            emptyList(),
+            listOf(DucklakeDeleteFragment(dataFile.dataFileId, "flushed-file-del-1.parquet", 1, size1, 0, 1, "parquet", delete1, delete1)),
+            delete1,
+        )
+        assertThat(pg("SELECT count(*) FROM ducklake_inlined_delete_${table.tableId}").single()[0]).isEqualTo(0L)
+
+        withDuckDb { it.createStatement().use { st -> st.execute("DELETE FROM lake.test_schema.flush_deletes WHERE id = 3") } }
+        val delete2 = catalog.currentSnapshotId
+        val size2 = writeTaggedDeleteFile(
+            dir,
+            "flushed-file-del-2.parquet",
+            dataPath.toString(),
+            mapOf(pos1 to delete1, pos3 to delete2),
+        )
+        catalog.flushInlinedDataWithSnapshots(
+            table.tableId,
+            emptyList(),
+            listOf(DucklakeDeleteFragment(dataFile.dataFileId, "flushed-file-del-2.parquet", 2, size2, 0, 1, "parquet", delete1, delete2)),
+            delete2,
+        )
+        assertFlushedFileDeletes(table, dataFile, base, delete1, delete2)
+    }
+
+    private fun assertFlushedFileDeletes(
+        table: DucklakeTable,
+        dataFile: DucklakeDataFile,
+        base: Long,
+        delete1: Long,
+        delete2: Long,
+    ) {
+        assertThat(pg("SELECT count(*) FROM ducklake_inlined_delete_${table.tableId}").single()[0]).isEqualTo(0L)
+        val active = catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).single()
+        assertThat(active.deleteFilePath).isEqualTo("flushed-file-del-2.parquet")
+        assertThat(active.deleteFilePartialMax).isEqualTo(delete2)
+        assertThat(pg("SELECT path FROM ducklake_files_scheduled_for_deletion").map { it[0].toString() })
+            .anyMatch { it.endsWith("flushed-file-del-1.parquet") }
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_deletes AT (VERSION => $base) ORDER BY id"))
+            .containsExactly(1L, 2L, 3L, 4L)
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_deletes AT (VERSION => $delete1) ORDER BY id"))
+            .containsExactly(2L, 3L, 4L)
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_deletes ORDER BY id")).containsExactly(2L, 4L)
+        assertThat(active.dataFileId).isEqualTo(dataFile.dataFileId)
+    }
+
+    @Test
+    fun flushRejectsAnInlinedChangeCommittedAfterTheCallerReadSnapshot() {
+        withDuckDb { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE TABLE lake.test_schema.flush_stale (id INTEGER)")
+                statement.execute("INSERT INTO lake.test_schema.flush_stale VALUES (1), (2)")
+            }
+        }
+        val readSnapshot = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "flush_stale", readSnapshot)!!
+        withDuckDb { it.createStatement().use { statement -> statement.execute("INSERT INTO lake.test_schema.flush_stale VALUES (3)") } }
+        val beforeAttempt = catalog.currentSnapshotId
+
+        assertThatThrownBy {
+            catalog.flushInlinedDataWithSnapshots(table.tableId, emptyList(), emptyList(), readSnapshot)
+        }.isInstanceOf(TransactionConflictException::class.java)
+            .hasMessageContaining("inlined-inserted")
+        assertThat(catalog.currentSnapshotId).isEqualTo(beforeAttempt)
+        assertThat(duck("SELECT id FROM lake.test_schema.flush_stale ORDER BY id")).containsExactly(1L, 2L, 3L)
     }
 
     @Test

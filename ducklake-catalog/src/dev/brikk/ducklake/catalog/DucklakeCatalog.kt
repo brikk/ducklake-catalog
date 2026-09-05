@@ -564,8 +564,26 @@ interface DucklakeCatalog : AutoCloseable {
      * inlined table/schema version, and their row-id ranges must not overlap. Combining schema
      * versions loses dropped historical fields after the inlined rows are physically removed and
      * breaks old-schema time travel. No schema-version bump; recorded as `inline_flush`.
+     *
+     * [existingFileDeletes] contains one snapshot-tagged replacement per existing data file with
+     * inlined deletions through [readSnapshotId]. Each replacement must merge those inlined
+     * positions with the file's active delete file; the catalog supersedes/schedules that old file
+     * and drains matching `ducklake_inlined_delete_<tableId>` rows. Rows newer than the caller's
+     * snapshot are never drained. Any conflicting inlined insert/delete, table alteration/flush, or
+     * newer active delete file committed after [readSnapshotId] aborts the operation so the caller
+     * can rematerialize from a fresh read.
      */
-    fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>)
+    fun flushInlinedDataWithSnapshots(
+        tableId: Long,
+        files: List<FlushedInlinedFile>,
+        existingFileDeletes: List<DucklakeDeleteFragment>,
+        readSnapshotId: Long,
+    )
+
+    /** Compatibility overload from the unreleased 0.8 snapshot; it cannot drain file deletes safely. */
+    @Deprecated("Pass existingFileDeletes and the caller's readSnapshotId")
+    fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>) =
+        flushInlinedDataWithSnapshots(tableId, files, emptyList(), currentSnapshotId)
 
     /**
      * Compatibility overload from 0.7.1. A single row-id start is only correct for one output file;

@@ -3354,7 +3354,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    override fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>) {
+    override fun flushInlinedDataWithSnapshots(
+        tableId: Long,
+        files: List<FlushedInlinedFile>,
+        existingFileDeletes: List<DucklakeDeleteFragment>,
+        readSnapshotId: Long,
+    ) {
         requireFileWritesSupported()
         validateFlushedRowIdRanges(files)
         for (f in files) {
@@ -3363,9 +3368,28 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
             require(f.beginSnapshot <= f.partialMax) { "flushInlinedDataWithSnapshots: begin > partial_max for ${f.fragment.path}" }
         }
+        existingFileDeletes.forEach { deletion ->
+            require(deletion.hasEmbeddedSnapshots) {
+                "flushInlinedDataWithSnapshots: existing-file delete ${deletion.path} must carry embedded snapshot ids"
+            }
+            require(deletion.embeddedSnapshotMax!! <= readSnapshotId) {
+                "flushInlinedDataWithSnapshots: delete ${deletion.path} contains a snapshot newer than read snapshot $readSnapshotId"
+            }
+        }
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         executeWriteTransaction("flush inlined data (with snapshots) for table $tableId") { tx ->
             val ctx = tx.dsl()
+            require(readSnapshotId <= tx.getCurrentSnapshotId()) {
+                "flushInlinedDataWithSnapshots: read snapshot $readSnapshotId is newer than current snapshot ${tx.getCurrentSnapshotId()}"
+            }
+            val flushChange = WriteChange.FlushedInlinedData(tableId)
+            if (tx.getCurrentSnapshotId() > readSnapshotId) {
+                // The materialised files/deletes describe readSnapshotId. Re-run the upstream
+                // conflict matrix across the caller's read→commit gap, not merely this attempt's
+                // transaction start (which is after materialisation).
+                runConflictMatrix(ctx, listOf(flushChange), readSnapshotId, tx.getCurrentSnapshotId())
+            }
+            validateFlushedInlinedDeleteCoverage(ctx, tableId, existingFileDeletes, readSnapshotId)
             for (flushed in files) {
                 // Register the materialised file, then back-date it: begin = MIN embedded insert
                 // snapshot, partial_max = MAX — what upstream's insert path derives from the written
@@ -3390,10 +3414,67 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     insertDeleteFileRows(tx, tableId, listOf(del.copy(dataFileId = dataFileId)), requireCommitSnapshotMatch = false)
                 }
             }
+            if (existingFileDeletes.isNotEmpty()) {
+                val touched = referencedDataFileIds(existingFileDeletes)
+                assertNoDeleteNewerThanRead(ctx, touched, readSnapshotId)
+                replaceDeleteFiles(tx, tableId, existingFileDeletes, requireCommitSnapshotMatch = false)
+            }
             // Upstream DeleteFlushedInlinedData: the rows now live in the back-dated files.
-            deleteFlushedInlinedRows(ctx, tableId, tx.getCurrentSnapshotId())
-            tx.recordChange(WriteChange.FlushedInlinedData(tableId))
+            deleteFlushedInlinedRows(ctx, tableId, readSnapshotId)
+            deleteFlushedInlinedFileDeletes(ctx, tableId, readSnapshotId)
+            tx.recordChange(flushChange)
         }
+    }
+
+    /**
+     * Every inlined file deletion through the caller's read snapshot must be represented by one
+     * tagged replacement file. The caller merges these positions with the active delete file;
+     * [insertDeleteFileRows] then schedules/removes that superseded file atomically.
+     */
+    private fun validateFlushedInlinedDeleteCoverage(
+        ctx: DSLContext,
+        tableId: Long,
+        replacements: List<DucklakeDeleteFragment>,
+        readSnapshotId: Long,
+    ) {
+        val name = "ducklake_inlined_delete_$tableId"
+        val table = DSL.table(DSL.name(name))
+        val fileId = DSL.field(DSL.name("file_id"), Long::class.javaObjectType)
+        val begin = DSL.field(DSL.name("begin_snapshot"), Long::class.javaObjectType)
+        val expected = if (dynamicTableExists(ctx, name)) {
+            metadata.fetch(ctx, ctx.selectDistinct(fileId).from(table).where(begin.le(readSnapshotId)))
+                .mapNotNull { it.get(fileId) }.toSet()
+        }
+        else emptySet()
+        val supplied = replacements.mapTo(linkedSetOf()) { it.dataFileId }
+        require(supplied == expected) {
+            "flushInlinedDataWithSnapshots: existingFileDeletes cover data_file_ids $supplied, expected $expected " +
+                "through read snapshot $readSnapshotId"
+        }
+    }
+
+    /** Upstream drains only delete rows that were included in the caller's materialisation. */
+    private fun deleteFlushedInlinedFileDeletes(ctx: DSLContext, tableId: Long, readSnapshotId: Long) {
+        val name = "ducklake_inlined_delete_$tableId"
+        if (!dynamicTableExists(ctx, name)) {
+            return
+        }
+        val table = DSL.table(DSL.name(name))
+        val begin = DSL.field(DSL.name("begin_snapshot"), Long::class.javaObjectType)
+        metadata.execute(ctx, ctx.deleteFrom(table).where(begin.le(readSnapshotId)))
+    }
+
+    private fun dynamicTableExists(ctx: DSLContext, tableName: String): Boolean {
+        // Raw qualified names: this catalog's jOOQ settings intentionally strip generated schema
+        // qualifiers, which must not turn `information_schema.tables` into plain `tables` here.
+        val tables = DSL.table(DSL.sql("information_schema.tables"))
+        val name = DSL.field(DSL.sql("table_name"), String::class.java)
+        return metadata.fetchOne(
+            ctx,
+            ctx.selectOne().from(tables)
+                .where(DSL.lower(name).eq(tableName.lowercase(Locale.ENGLISH)))
+                .limit(1),
+        ) != null
     }
 
     /** Prevent the old one-global-start bug from producing overlapping fallback row-id ranges. */
@@ -4886,10 +4967,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         readSnapshotId: Long,
     ) {
         val ctx = tx.dsl()
-        val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
         val touchedDataFileIds: Set<Long> = deleteFragments.mapTo(HashSet()) { it.dataFileId }
         assertNoDeleteNewerThanRead(ctx, touchedDataFileIds, readSnapshotId)
+        replaceDeleteFiles(tx, tableId, deleteFragments, requireCommitSnapshotMatch = true)
+    }
 
+    private fun replaceDeleteFiles(
+        tx: DucklakeWriteTransaction,
+        tableId: Long,
+        deleteFragments: List<DucklakeDeleteFragment>,
+        requireCommitSnapshotMatch: Boolean,
+    ) {
+        val ctx = tx.dsl()
+        val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
         // DuckLake's invariant is <=1 active delete file per data_file_id per snapshot; the sink
         // unions the prior-active positions with this commit's new positions into the new file, so
         // superseding the prior is correct PROVIDED the prior is the one the caller unioned (the
@@ -4925,7 +5015,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .and(delfile.END_SNAPSHOT.isNull)
                 )
         }
-        insertDeleteFileRows(tx, tableId, deleteFragments, requireCommitSnapshotMatch = true)
+        insertDeleteFileRows(tx, tableId, deleteFragments, requireCommitSnapshotMatch)
     }
 
     /**
