@@ -1,5 +1,12 @@
 # Agent Guide
 
+## Verified Fixes
+
+- After completing and fully verifying a requested fix, commit its intended changes before reporting completion.
+- Include the commit SHA and verification results in the completion report.
+- Do not push unless the user explicitly requests it; permission to commit is not permission to push.
+- If verification is incomplete or failing, report that instead of treating the fix as complete.
+
 ## Commit identity (Buzz agents)
 
 When you (a Buzz agent) commit on someone's behalf, attribute the commit to the

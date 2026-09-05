@@ -837,10 +837,12 @@ interface DucklakeCatalog : AutoCloseable {
      *
      * Multiple merged files cover partitioned tables (one+ per partition) and size-bounded output.
      * Contract: every source must be NON-partial (`partial_max IS NULL`) so each source's rows share
-     * one origin snapshot (its begin), and the merged files together must hold exactly the live source
-     * rows (stats adjusted as in [rewriteDataFiles]). Validated up front (active-source + no-newer-delete since
-     * [readSnapshotId]); a concurrent commit touching a source aborts non-retryably. No-op if either
-     * argument is empty.
+     * one origin snapshot (its begin), and have NO delete-file history or inlined deletions. The merged
+     * files must preserve every source row; live-only output from a delete-bearing source would erase
+     * pre-delete history. Use [rewriteDataFiles] to apply deletes while retaining historical sources.
+     * Active-source, non-partial, and delete-free eligibility are checked before mutations on every
+     * attempt. Ineligible sources are rejected without retry; a delete file committed after
+     * [readSnapshotId] is a non-retryable logical conflict. No-op if either argument is empty.
      */
     fun rewriteDataFilesPartial(
         tableId: Long,

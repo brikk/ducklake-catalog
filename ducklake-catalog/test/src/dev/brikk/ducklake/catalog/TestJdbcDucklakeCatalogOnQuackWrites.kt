@@ -129,6 +129,24 @@ class TestJdbcDucklakeCatalogOnQuackWrites {
     }
 
     @Test
+    fun partialRewriteWithoutInlinedDeletesWorksOnQuack() {
+        c.createSchema("partial")
+        val (tableId, columns) = createTable("partial", "t")
+        val fragment = DucklakeWriteFragment("source.parquet", 100L, 0L, 2L,
+            listOf(stats(columns.getValue("id"), "1", "2")))
+        c.commitInsert(tableId, listOf(fragment))
+        val before = c.currentSnapshotId
+        val source = c.getDataFiles(tableId, before).single()
+
+        c.rewriteDataFilesPartial(tableId, setOf(source.dataFileId),
+            listOf(PartialMergedFile(fragment.copy(path = "merged.parquet"), before, before)), before)
+
+        assertThat(c.currentSnapshotId).isEqualTo(before + 1)
+        assertThat(c.getDataFiles(tableId, before).single().path).isEqualTo("merged.parquet")
+        assertThat(c.getDataFilesByIds(tableId, listOf(source.dataFileId))).isEmpty()
+    }
+
+    @Test
     fun viewsAnalyzeExpireAndReadSessionWorkOnQuack() {
         c.createSchema("m")
         val (tableId, cols) = createTable("m", "t")

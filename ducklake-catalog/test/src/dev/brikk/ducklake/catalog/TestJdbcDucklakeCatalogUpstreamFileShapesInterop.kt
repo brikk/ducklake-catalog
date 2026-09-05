@@ -562,6 +562,151 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
     }
 
     @Test
+    fun partialRewriteRejectsCommittedDeleteFilesAndPreservesHistory() {
+        val table = createPartialRewriteSource("partial_deleted")
+        val insertedSnapshot = catalog.currentSnapshotId
+        val source = catalog.getDataFiles(table.tableId, insertedSnapshot).single()
+        val dir = tableDir(table, insertedSnapshot)
+        val deleteSnapshot = insertedSnapshot + 1
+        val deleteSize = writeTaggedDeleteFile(
+            dir, "source-delete.parquet", dir.resolve(source.path).toString(), mapOf(1L to deleteSnapshot),
+        )
+        catalog.commitDelete(
+            table.tableId,
+            listOf(DucklakeDeleteFragment(source.dataFileId, "source-delete.parquet", 1, deleteSize, 0, 1,
+                "parquet", deleteSnapshot, deleteSnapshot)),
+            insertedSnapshot,
+        )
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_deleted ORDER BY id")).containsExactly(1L)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_deleted AT (VERSION => $insertedSnapshot) ORDER BY id"))
+            .containsExactly(1L, 2L)
+        val merged = materializePartialRewrite(table, source)
+
+        assertPartialRewriteRejected(table.tableId, source.dataFileId, merged, "delete-file history")
+
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_deleted ORDER BY id")).containsExactly(1L)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_deleted AT (VERSION => $insertedSnapshot) ORDER BY id"))
+            .containsExactly(1L, 2L)
+        // The ordinary rewrite may apply deletes: it retains the original files for older snapshots.
+        catalog.rewriteDataFiles(table.tableId, setOf(source.dataFileId), listOf(merged.fragment), deleteSnapshot)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_deleted ORDER BY id")).containsExactly(1L)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_deleted AT (VERSION => $deleteSnapshot) ORDER BY id"))
+            .containsExactly(1L)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_deleted AT (VERSION => $insertedSnapshot) ORDER BY id"))
+            .containsExactly(1L, 2L)
+    }
+
+    @Test
+    fun partialRewriteRejectsInlinedDeletesAndPreservesHistory() {
+        val table = createPartialRewriteSource("partial_inline_deleted")
+        val insertedSnapshot = catalog.currentSnapshotId
+        val source = catalog.getDataFiles(table.tableId, insertedSnapshot).single()
+        withDuckDb { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("DELETE FROM lake.test_schema.partial_inline_deleted WHERE id = 2")
+            }
+        }
+        val readSnapshot = catalog.currentSnapshotId
+        val inlinedDeletes = catalog.getInlinedDeletes(table.tableId, readSnapshot)
+        assertThat(inlinedDeletes).isEqualTo(mapOf(source.dataFileId to setOf(1L)))
+        assertThat(catalog.getDataFiles(table.tableId, readSnapshot).single().deleteFilePath).isNull()
+        val merged = materializePartialRewrite(table, source)
+
+        assertPartialRewriteRejected(table.tableId, source.dataFileId, merged, "inlined deletions")
+
+        assertThat(catalog.getInlinedDeletes(table.tableId, readSnapshot)).isEqualTo(inlinedDeletes)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_inline_deleted ORDER BY id")).containsExactly(1L)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_inline_deleted AT (VERSION => $readSnapshot) ORDER BY id"))
+            .containsExactly(1L)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_inline_deleted AT (VERSION => $insertedSnapshot) ORDER BY id"))
+            .containsExactly(1L, 2L)
+    }
+
+    @Test
+    fun partialRewriteIgnoresInlinedDeleteTablesOutsideTheSearchPath() {
+        val table = createPartialRewriteSource("partial_other_schema")
+        val before = catalog.currentSnapshotId
+        val source = catalog.getDataFiles(table.tableId, before).single()
+        DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE SCHEMA unrelated_partial")
+                statement.execute("CREATE TABLE unrelated_partial.ducklake_inlined_delete_${table.tableId} " +
+                    "(file_id BIGINT, row_id BIGINT, begin_snapshot BIGINT)")
+                statement.execute("INSERT INTO unrelated_partial.ducklake_inlined_delete_${table.tableId} " +
+                    "VALUES (${source.dataFileId}, 0, $before)")
+            }
+        }
+        val merged = materializePartialRewrite(table, source)
+
+        catalog.rewriteDataFilesPartial(table.tableId, setOf(source.dataFileId), listOf(merged), before)
+
+        assertThat(catalog.currentSnapshotId).isEqualTo(before + 1)
+        assertThat(catalog.getDataFiles(table.tableId, before).single().path).isEqualTo(merged.fragment.path)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_other_schema ORDER BY id")).containsExactly(1L, 2L)
+        assertThat(duck("SELECT id FROM lake.test_schema.partial_other_schema AT (VERSION => $before) ORDER BY id"))
+            .containsExactly(1L, 2L)
+    }
+
+    private fun createPartialRewriteSource(name: String): DucklakeTable {
+        catalog.createTable("test_schema", name, listOf(TableColumnSpec.leaf("id", "int32", true)), null, null)
+        val snapshot = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", name, snapshot)!!
+        val idColumn = catalog.getTableColumns(table.tableId, snapshot).single()
+        val dir = tableDir(table, snapshot).also { Files.createDirectories(it) }
+        scratch("COPY (SELECT * FROM (VALUES (1), (2)) AS t(id)) TO ${q(dir.resolve("source.parquet").toString())} " +
+            "(FORMAT PARQUET, FIELD_IDS {id: ${idColumn.columnId}})")
+        catalog.commitInsert(table.tableId, listOf(DucklakeWriteFragment(
+            "source.parquet", Files.size(dir.resolve("source.parquet")), 0L, 2L,
+            listOf(DucklakeFileColumnStats(idColumn.columnId, 8L, 2L, 0L, "1", "2", false)),
+        )))
+        assertThat(catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).single().partialMax).isNull()
+        return table
+    }
+
+    private fun materializePartialRewrite(table: DucklakeTable, source: DucklakeDataFile): PartialMergedFile {
+        val snapshot = catalog.currentSnapshotId
+        val idColumn = catalog.getTableColumns(table.tableId, snapshot).single()
+        val dir = tableDir(table, snapshot)
+        val rows = withDuckDb { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT rowid, id FROM lake.test_schema.${table.tableName} ORDER BY rowid").use { result ->
+                    generateSequence {
+                        if (result.next()) listOf(result.getLong(1), source.beginSnapshot, result.getInt(2)) else null
+                    }.toList()
+                }
+            }
+        }
+        writeVersionedFlushFile(dir, "partial.parquet", rows, idColumn, null)
+        val ids = rows.map { (it[2] as Number).toInt() }
+        val count = rows.size.toLong()
+        val fragment = DucklakeWriteFragment(
+            "partial.parquet", Files.size(dir.resolve("partial.parquet")), 0L, count,
+            listOf(DucklakeFileColumnStats(idColumn.columnId, count * 4, count, 0L, ids.min().toString(), ids.max().toString(), false)),
+        )
+        return PartialMergedFile(fragment, source.beginSnapshot, source.beginSnapshot)
+    }
+
+    private fun assertPartialRewriteRejected(tableId: Long, sourceId: Long, merged: PartialMergedFile, reason: String) {
+        val before = catalog.currentSnapshotId
+        val filesBefore = catalog.getDataFiles(tableId, before)
+        val statsBefore = catalog.getTableStats(tableId)
+        val deleteQuery = "SELECT * FROM ducklake_delete_file WHERE table_id = $tableId ORDER BY delete_file_id"
+        val deletesBefore = pg(deleteQuery)
+        val scheduledQuery = "SELECT * FROM ducklake_files_scheduled_for_deletion ORDER BY data_file_id, path"
+        val scheduledBefore = pg(scheduledQuery)
+        assertThatThrownBy {
+            catalog.rewriteDataFilesPartial(tableId, setOf(sourceId), listOf(merged), before)
+        }.isInstanceOf(DucklakeInvalidOperationException::class.java)
+            .hasMessageContaining(reason)
+            .hasMessageContaining("rewriteDataFiles")
+        assertThat(catalog.currentSnapshotId).isEqualTo(before)
+        assertThat(catalog.getDataFiles(tableId, before)).isEqualTo(filesBefore)
+        assertThat(catalog.getTableStats(tableId)).isEqualTo(statsBefore)
+        assertThat(pg(deleteQuery)).isEqualTo(deletesBefore)
+        assertThat(pg(scheduledQuery)).isEqualTo(scheduledBefore)
+    }
+
+    @Test
     fun rewritePreservesRowIdsAndDoesNotAdvanceTheAllocator() {
         catalog.createSchema("rw")
         catalog.createTable("rw", "t", listOf(TableColumnSpec.leaf("id", "int32", true)), null, null)

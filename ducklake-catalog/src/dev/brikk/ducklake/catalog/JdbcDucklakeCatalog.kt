@@ -3465,14 +3465,27 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     private fun dynamicTableExists(ctx: DSLContext, tableName: String): Boolean {
+        if (dialect == SQLDialect.POSTGRES) {
+            // Resolve exactly as the subsequent unqualified query does, across the search_path.
+            return ctx.fetchExists(ctx.selectOne().where(DSL.condition("to_regclass({0}) IS NOT NULL", DSL.`val`(tableName))))
+        }
         // Raw qualified names: this catalog's jOOQ settings intentionally strip generated schema
         // qualifiers, which must not turn `information_schema.tables` into plain `tables` here.
         val tables = DSL.table(DSL.sql("information_schema.tables"))
         val name = DSL.field(DSL.sql("table_name"), String::class.java)
+        val schema = DSL.field(DSL.sql("table_schema"), String::class.java)
+        val namespace = if (dialect == SQLDialect.MYSQL) {
+            schema.eq(DSL.field("DATABASE()", String::class.java))
+        }
+        else {
+            schema.eq(DSL.field("CURRENT_SCHEMA()", String::class.java))
+                .and(DSL.field(DSL.sql("table_catalog"), String::class.java).eq(DSL.field("CURRENT_CATALOG()", String::class.java)))
+        }
         return metadata.fetchOne(
             ctx,
             ctx.selectOne().from(tables)
                 .where(DSL.lower(name).eq(tableName.lowercase(Locale.ENGLISH)))
+                .and(namespace)
                 .limit(1),
         ) != null
     }
@@ -4722,11 +4735,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         executeWriteTransaction("partial-rewrite data files for table $tableId") { tx ->
             val ctx = tx.dsl()
-            // Up-front validation (re-checked on retry): sources still active + no deletion newer
-            // than the caller's read. Recorded only as InsertedIntoTable (the sources are DELETED,
-            // not end-snapshotted, so the DeletedFromTable active-file check would misfire).
-            assertRewriteSourcesStillPresent(tx, tableId, sourceDataFileIds)
+            // Recheck eligibility on every attempt before registering output or deleting history.
+            // Applying deletes requires the ordinary, end-snapshotting rewrite instead.
             assertNoNewerDeleteOnRewriteSources(tx, sourceDataFileIds, readSnapshotId)
+            assertPartialRewriteSourcesEligible(tx, tableId, sourceDataFileIds)
             val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
             for (merged in mergedFiles) {
@@ -4750,21 +4762,43 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    /** Abort non-retryably if any source is no longer active (a concurrent drop/compaction removed it). */
-    private fun assertRewriteSourcesStillPresent(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>) {
+    /** Partial output replaces all source history, so its sources must be active, non-partial and delete-free. */
+    private fun assertPartialRewriteSourcesEligible(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>) {
+        val ctx = tx.dsl()
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        val active: Set<Long> = tx.dsl().select(file.DATA_FILE_ID)
+        val sources = ctx.select(file.DATA_FILE_ID, file.PARTIAL_MAX)
             .from(file)
             .where(file.TABLE_ID.eq(tableId))
             .and(file.DATA_FILE_ID.`in`(sourceDataFileIds))
             .and(activeAt(file, tx.getCurrentSnapshotId()))
-            .fetchSet(file.DATA_FILE_ID)
-            .filterNotNull().toSet()
+            .fetch()
+        val active = sources.mapNotNull { it.get(file.DATA_FILE_ID) }.toSet()
         val missing = sourceDataFileIds.filterNot { it in active }
         if (missing.isNotEmpty()) {
             throw LogicalConflictException(
                 "Failed to partial-rewrite data files for table $tableId: source data_file_id(s) $missing " +
                     "are no longer active (a concurrent DROP/compaction removed them). Not retried.")
+        }
+        // Any delete-file history matters, not only the currently active delete file (upstream
+        // merge-adjacent eligibility). A live-only replacement cannot represent earlier deleted rows.
+        val deleteFile = DUCKLAKE_DELETE_FILE.`as`("del")
+        val inlinedName = "ducklake_inlined_delete_$tableId"
+        val inlinedFileId = DSL.field(DSL.name("file_id"), Long::class.javaObjectType)
+        val ineligibleReason = when {
+            sources.any { it.get(file.PARTIAL_MAX) != null } -> "sources must be non-partial (partial_max IS NULL)"
+            ctx.fetchExists(
+                ctx.selectOne().from(deleteFile).where(deleteFile.DATA_FILE_ID.`in`(sourceDataFileIds)),
+            ) -> "sources have delete-file history"
+            dynamicTableExists(ctx, inlinedName) && ctx.fetchExists(
+                ctx.selectOne().from(DSL.table(DSL.name(inlinedName))).where(inlinedFileId.`in`(sourceDataFileIds)),
+            ) -> "sources have inlined deletions"
+            else -> null
+        }
+        if (ineligibleReason != null) {
+            throw DucklakeInvalidOperationException(
+                "Cannot partial-rewrite table $tableId: $ineligibleReason. " +
+                    "Use rewriteDataFiles instead to preserve snapshot history.",
+            )
         }
     }
 

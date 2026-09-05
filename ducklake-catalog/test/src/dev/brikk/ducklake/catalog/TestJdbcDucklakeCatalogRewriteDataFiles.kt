@@ -19,6 +19,7 @@ import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_FILES_SCHEDULED
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_TABLE_STATS
 import dev.brikk.ducklake.catalog.testing.CatalogTestSupport
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -335,6 +336,31 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
         assertThat(catalog.getTableStats(tableId)!!.recordCount).isEqualTo(statsBefore.recordCount)
         val activePaths = catalog.getDataFiles(tableId, catalog.currentSnapshotId).map { it.path }
         assertThat(activePaths).contains(mergedPath).doesNotContain(pathE, pathF)
+    }
+
+    @Test
+    fun partialRewriteRejectsPartialSources() {
+        val (_, sourceId) = insertFile(2L, 100L, 600L, 601L)
+        val insertedSnapshot = catalog.currentSnapshotId
+        val firstPath = uniquePath("first_partial")
+        val first = PartialMergedFile(fragmentFor(firstPath, 2L, 90L, 600L, 601L), insertedSnapshot, insertedSnapshot)
+        catalog.rewriteDataFilesPartial(tableId, setOf(sourceId), listOf(first), insertedSnapshot)
+        val before = catalog.currentSnapshotId
+        val partialSource = catalog.getDataFiles(tableId, before).single { it.path == firstPath }
+        assertThat(partialSource.partialMax).isEqualTo(insertedSnapshot)
+        val secondPath = uniquePath("second_partial")
+        val second = first.copy(fragment = first.fragment.copy(path = secondPath))
+
+        assertThatThrownBy {
+            catalog.rewriteDataFilesPartial(tableId, setOf(partialSource.dataFileId), listOf(second), before)
+        }.isInstanceOf(DucklakeInvalidOperationException::class.java)
+            .hasMessageContaining("partial")
+            .hasMessageContaining("rewriteDataFiles")
+
+        assertThat(catalog.currentSnapshotId).isEqualTo(before)
+        assertThat(dataFileRowCount(partialSource.dataFileId)).isEqualTo(1L)
+        assertThat(scheduledForDeletion(partialSource.dataFileId)).isZero()
+        assertThat(catalog.getDataFiles(tableId, before).map { it.path }).contains(firstPath).doesNotContain(secondPath)
     }
 
     @Test

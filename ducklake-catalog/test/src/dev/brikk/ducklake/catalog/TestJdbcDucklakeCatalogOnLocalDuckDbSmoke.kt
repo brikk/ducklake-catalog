@@ -142,6 +142,34 @@ class TestJdbcDucklakeCatalogOnLocalDuckDbSmoke {
     }
 
     @Test
+    fun partialRewriteIgnoresInlinedDeleteTablesInAnotherSchema() {
+        val catalog = catalog!!
+        catalog.createTable("main", "partial_scope", listOf(TableColumnSpec.leaf("id", "int32", true)), null, null)
+        val tableId = catalog.getTable("main", "partial_scope", catalog.currentSnapshotId)!!.tableId
+        val columnId = catalog.getTableColumns(tableId, catalog.currentSnapshotId).single().columnId
+        val fragment = DucklakeWriteFragment("source.parquet", 100L, 0L, 2L,
+            listOf(DucklakeFileColumnStats(columnId, 8L, 2L, 0L, "1", "2", false)))
+        catalog.commitInsert(tableId, listOf(fragment))
+        val before = catalog.currentSnapshotId
+        val source = catalog.getDataFiles(tableId, before).single()
+        DriverManager.getConnection("jdbc:duckdb:$catalogFile").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE SCHEMA unrelated_partial")
+                statement.execute("CREATE TABLE unrelated_partial.ducklake_inlined_delete_$tableId " +
+                    "(file_id BIGINT, row_id BIGINT, begin_snapshot BIGINT)")
+                statement.execute("INSERT INTO unrelated_partial.ducklake_inlined_delete_$tableId VALUES (${source.dataFileId}, 0, $before)")
+            }
+        }
+
+        catalog.rewriteDataFilesPartial(tableId, setOf(source.dataFileId),
+            listOf(PartialMergedFile(fragment.copy(path = "merged.parquet"), before, before)), before)
+
+        assertThat(catalog.currentSnapshotId).isEqualTo(before + 1)
+        assertThat(catalog.getDataFiles(tableId, before).single().path).isEqualTo("merged.parquet")
+        assertThat(catalog.getDataFilesByIds(tableId, listOf(source.dataFileId))).isEmpty()
+    }
+
+    @Test
     fun readSessionWorksOnThisBackend() {
         val catalog = catalog!!
         val pinned = catalog.readSession(
