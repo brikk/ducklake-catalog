@@ -518,7 +518,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 orZero(r.get(file.RECORD_COUNT)),
                 orZero(r.get(file.FILE_SIZE_BYTES)),
                 orZero(r.get(dataFileFooterSize)),
-                requiredRowIdStart(r.get(file.ROW_ID_START), r.get(file.DATA_FILE_ID)),
+                r.get(file.ROW_ID_START),
                 r.get(file.PARTITION_ID),
                 r.get(deleteFilePath),
                 r.get(deleteFilePathIsRelative),
@@ -666,7 +666,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             orZero(r.recordCount),
             orZero(r.fileSizeBytes),
             orZero(r.footerSize),
-            requiredRowIdStart(r.rowIdStart, r.dataFileId),
+            r.rowIdStart,
             r.partitionId,
             null,
             null,
@@ -692,7 +692,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             CatalogFileFormat.fromStoredRequired(dataFile.fileFormat),
             orZero(dataFile.footerSize),
             orZero(dataFile.fileSizeBytes),
-            requiredRowIdStart(dataFile.rowIdStart, dataFile.dataFileId),
+            dataFile.rowIdStart,
             orZero(dataFile.recordCount),
             fullFileDelete,
             current?.path,
@@ -4299,8 +4299,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      *  - [FLUSH]: register at [preservedRowIdStart] (the flushed rows' original ids; per-row ids are
      *    embedded in the file) and leave `next_row_id` AND `record_count` alone — the rows were
      *    counted and allocated when they were inlined.
-     *  - [REWRITE]: register at [preservedRowIdStart] (smallest retired source's `row_id_start`; the
-     *    merged files embed `_ducklake_internal_row_id`), do not advance `next_row_id`, but DO add the
+     *  - [REWRITE]: register with NULL `row_id_start` (the merged files embed absolute
+     *    `_ducklake_internal_row_id` values), do not advance `next_row_id`, but DO add the
      *    merged rows to gross `record_count` — [netRewriteStats] then subtracts the retired sources.
      */
     private enum class InsertMode { INSERT, FLUSH, REWRITE }
@@ -4312,7 +4312,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         mode: InsertMode = InsertMode.INSERT,
         preservedRowIdStart: Long? = null,
     ) {
-        require(mode == InsertMode.INSERT || preservedRowIdStart != null) { "$mode requires preservedRowIdStart" }
+        require(mode != InsertMode.FLUSH || preservedRowIdStart != null) { "FLUSH requires preservedRowIdStart" }
         val ctx = tx.dsl()
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
@@ -4326,6 +4326,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val existingStats: DucklakeTableStatsRecord? = ctx.selectFrom(tabstats)
             .where(tabstats.TABLE_ID.eq(tableId))
             .fetchOne()
+        if (mode == InsertMode.REWRITE && existingStats?.nextRowId == null) {
+            throw DucklakeCatalogCorruptionException("Cannot rewrite table $tableId without its next_row_id allocator")
+        }
         val initializeColumnStats = existingStats == null && !ctx.fetchExists(
             ctx.selectOne().from(file).where(file.TABLE_ID.eq(tableId)).and(activeAt(file, tx.getCurrentSnapshotId())),
         ) && !hasInlinedTables(ctx, tableId)
@@ -4369,7 +4372,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (fragment.footerSize > 0) {
                 dataFile.setFooterSize(fragment.footerSize)
             }
-            dataFile.setRowIdStart(runningRowId)
+            dataFile.setRowIdStart(if (mode == InsertMode.REWRITE) null else runningRowId)
             fragment.partitionId?.let { dataFile.setPartitionId(it) }
             fragment.nameMap?.let { nameMap ->
                 var mappingId = nameMapToId[nameMap]
@@ -4484,7 +4487,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             metadata.execute(ctx, upd.where(tabstats.TABLE_ID.eq(tableId)))
         }
         else {
-            // No prior stats. For a flush/rewrite this is unexpected (existing rows imply stats
+            // No prior stats. For a flush this is unexpected (existing rows imply stats
             // exist), but stay safe: record the rows once and set the allocator past their ids.
             ctx.insertInto(tabstats)
                 .set(tabstats.TABLE_ID, tableId)
@@ -4667,12 +4670,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             assertNoNewerDeleteOnRewriteSources(tx, sourceDataFileIds, readSnapshotId)
             val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
-            // Register the merged file(s): begin = newSnapshotId, ordinary (no partial_max), at the
-            // retired sources' smallest row_id_start (rows carry their original ids in the embedded
-            // _ducklake_internal_row_id column — a compaction allocates no new row ids, as upstream).
+            // Register the merged file(s): begin = newSnapshotId, ordinary (no partial_max), with
+            // NULL row_id_start. Embedded absolute IDs preserve gaps and reordered source rows;
+            // the source minima cannot describe a contiguous range in these output files.
             // This also bumps table_stats record_count/file_size UP by the merged amounts and widens
             // the per-column table stats (a no-op since merged ⊆ source range).
-            applyInsertFragments(tx, tableId, fragments, InsertMode.REWRITE, retired.minRowIdStart)
+            applyInsertFragments(tx, tableId, fragments, InsertMode.REWRITE)
             endSnapshotRewriteSources(tx, tableId, sourceDataFileIds)
             netRewriteStats(tx, tableId, retired)
 
@@ -4703,7 +4706,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
             for (merged in mergedFiles) {
-                applyInsertFragments(tx, tableId, listOf(merged.fragment), InsertMode.REWRITE, retired.minRowIdStart)
+                applyInsertFragments(tx, tableId, listOf(merged.fragment), InsertMode.REWRITE)
                 // Back-date the just-registered merged file to begin = MIN row snapshot + tag it
                 // partial (partial_max = MAX row snapshot); rows newer than a time-travel read are
                 // filtered via the file's _ducklake_internal_snapshot_id column.
@@ -4861,17 +4864,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /**
-     * Gross `record_count`, `file_size_bytes` and smallest `row_id_start` of the active source files
+     * Gross `record_count` and `file_size_bytes` of the active source files
      * about to be retired.
      */
-    private data class RetiredSourceStats(val recordCount: Long, val fileSizeBytes: Long, val minRowIdStart: Long)
+    private data class RetiredSourceStats(val recordCount: Long, val fileSizeBytes: Long)
 
     private fun sumActiveSourceStats(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>): RetiredSourceStats {
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         var records = 0L
         var bytes = 0L
-        var minRowIdStart = Long.MAX_VALUE
-        tx.dsl().select(file.DATA_FILE_ID, file.RECORD_COUNT, file.FILE_SIZE_BYTES, file.ROW_ID_START)
+        tx.dsl().select(file.RECORD_COUNT, file.FILE_SIZE_BYTES)
             .from(file)
             .where(file.TABLE_ID.eq(tableId))
             .and(file.DATA_FILE_ID.`in`(sourceDataFileIds))
@@ -4880,12 +4882,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .forEach { r ->
                 records += orZero(r.get(file.RECORD_COUNT))
                 bytes += orZero(r.get(file.FILE_SIZE_BYTES))
-                minRowIdStart = minOf(
-                    minRowIdStart,
-                    requiredRowIdStart(r.get(file.ROW_ID_START), r.get(file.DATA_FILE_ID)),
-                )
             }
-        return RetiredSourceStats(records, bytes, if (minRowIdStart == Long.MAX_VALUE) 0L else minRowIdStart)
+        return RetiredSourceStats(records, bytes)
     }
 
     private fun endSnapshotRewriteSources(tx: DucklakeWriteTransaction, tableId: Long, sourceDataFileIds: Set<Long>) {
@@ -5495,12 +5493,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // with records that don't populate optional columns (e.g. file_order).
         private fun orZero(value: Long?): Long =
             value ?: 0L
-
-        /** `row_id_start` is required for stable row identity; NULL is catalog corruption, never 0. */
-        private fun requiredRowIdStart(value: Long?, dataFileId: Long?): Long =
-            value ?: throw DucklakeCatalogCorruptionException(
-                "ducklake_data_file.row_id_start is NULL for data_file_id ${dataFileId ?: "unknown"}",
-            )
 
         // Read every existing column so a new file with an omitted statistics row invalidates it.
         private fun loadExistingColumnStats(

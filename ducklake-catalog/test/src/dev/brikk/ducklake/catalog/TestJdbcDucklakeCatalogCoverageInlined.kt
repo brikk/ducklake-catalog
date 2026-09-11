@@ -243,7 +243,7 @@ class TestJdbcDucklakeCatalogCoverageInlined {
         assertThat(rows.map { it[idIndex] }).`as`("live inlined rows: 5 (6 was deleted) and 7").containsExactly(5, 7)
         assertThat(begins).`as`("each row's own insert snapshot, in row_id order").containsExactly(h.ins2, h.ins3)
         assertThat(rowIds).hasSameSizeAs(begins).isSorted()
-        assertThat(rowIds.first()).`as`("row ids continue after the 4 file rows").isEqualTo(h.file.rowIdStart + h.file.recordCount)
+        assertThat(rowIds.first()).`as`("row ids continue after the 4 file rows").isEqualTo(requireNotNull(h.file.rowIdStart) + h.file.recordCount)
 
         assertThat(catalog.readInlinedBeginSnapshots(h.tableId, h.schemaVersion, h.ins3))
             .`as`("before 6 was deleted: three live rows")

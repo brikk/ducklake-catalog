@@ -299,6 +299,21 @@ class TestJacksonWireFormat {
         assertRoundTrip(DucklakeDataFile::class.java, instance)
     }
 
+    @Test
+    fun dataFileAbsentRowIdStartRoundTripsWithoutBecomingZero() {
+        val instance = DucklakeDataFile(
+            1L, 2L, 3L, null, 5L, "rewritten.parquet", true, "parquet",
+            4L, 1024L, 200L, null, null, null, null, null, null, null,
+        )
+        val c = codec(DucklakeDataFile::class.java)
+        assertThat(c.toJson(instance)).doesNotContain("rowIdStart")
+        assertRoundTrip(c, instance)
+        assertThat(c.fromJson(c.toJson(instance)).rowIdStart).isNull()
+        val explicitNull = c.toJson(instance).replaceFirst("{", "{\"rowIdStart\":null,")
+        assertThat(c.fromJson(explicitNull).rowIdStart).isNull()
+        assertThat(c.fromJson(c.toJson(instance.copy(rowIdStart = 0))).rowIdStart).isEqualTo(0L)
+    }
+
     // --- DucklakeSnapshotChange (Optional<String> fields) ---
 
     @Test

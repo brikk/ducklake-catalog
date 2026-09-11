@@ -402,7 +402,7 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         assertThat(newRowStart).isGreaterThan(oldRowStart)
         val files = catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).sortedBy { it.rowIdStart }
         assertThat(files.map { it.rowIdStart }).containsExactly(oldRowStart, newRowStart)
-        assertThat(files[0].rowIdStart + files[0].recordCount).isLessThanOrEqualTo(files[1].rowIdStart)
+        assertThat(requireNotNull(files[0].rowIdStart) + files[0].recordCount).isLessThanOrEqualTo(requireNotNull(files[1].rowIdStart))
         versions.forEach { version ->
             assertThat(pg("SELECT count(*) FROM ducklake_inlined_data_${table.tableId}_${version.schemaVersion}").single()[0])
                 .isEqualTo(0L)
@@ -725,7 +725,7 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         catalog.rewriteDataFiles(tableId, files.map { it.dataFileId }.toSet(), listOf(frag("merged", 15)), read)
 
         val merged = catalog.getDataFiles(tableId, catalog.currentSnapshotId).single()
-        assertThat(merged.rowIdStart).`as`("registered at the smallest retired source's row_id_start").isEqualTo(0L)
+        assertThat(merged.rowIdStart).`as`("rewrite output uses embedded lineage").isNull()
         assertThat(pg("SELECT next_row_id FROM ducklake_table_stats WHERE table_id = $tableId").single()[0])
             .`as`("a compaction allocates no new row ids")
             .isEqualTo(nextRowIdBefore)

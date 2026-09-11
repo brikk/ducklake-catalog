@@ -95,11 +95,13 @@ interface DucklakeCatalog : AutoCloseable {
     fun getDataFiles(tableId: Long, snapshotId: Long): List<DucklakeDataFile>
 
     /**
-     * Data files whose rows were INSERTED in the inclusive snapshot window `[startSnapshot,
-     * endSnapshot]` — i.e. `begin_snapshot >= startSnapshot AND begin_snapshot <= endSnapshot`.
+     * Candidate data files whose row-origin ranges overlap the inclusive snapshot window
+     * `[startSnapshot, endSnapshot]`.
      * The change-feed insert side (`table_insertions` / the insert half of `table_changes`): every
-     * row of such a file was inserted at the file's `begin_snapshot`, with row identifier
-     * `row_id_start + file position`. Delete-file columns are left null (the feed reads ALL rows of
+     * ordinary file was inserted at its `begin_snapshot`; partial files are also candidates when
+     * their embedded snapshot range overlaps the window, and must be filtered per row. Row IDs
+     * follow [DucklakeDataFile.rowIdStart], including its nullable embedded-lineage case.
+     * Delete-file columns are left null (the feed reads ALL rows of
      * the file regardless of any later deletions — those are separate delete events). Ordered by
      * `begin_snapshot`, then `data_file_id` (upstream files may leave `file_order` NULL).
      */
@@ -838,8 +840,7 @@ interface DucklakeCatalog : AutoCloseable {
      * (deletes already applied) and carry each row's original DuckLake row id in an embedded
      * `_ducklake_internal_row_id` column (upstream `rewrite_data_files` always writes it, since
      * applied deletes leave gaps). Row identity is therefore PRESERVED: the merged files are
-     * registered at `row_id_start` = the smallest retired source's `row_id_start` (a fallback
-     * readers only use when the embedded column is absent) and `next_row_id` is NOT advanced — a
+     * registered with NULL `row_id_start` and `next_row_id` is NOT advanced — a
      * compaction allocates no new row ids. `ducklake_table_stats` is brought in line with the new
      * file set: gross `record_count` and `file_size_bytes` change by (Σmerged − Σretired) — the
      * retired sources' deleted rows leave the gross count here — and the per-column global bounds
@@ -883,6 +884,9 @@ interface DucklakeCatalog : AutoCloseable {
      * end-snapshotted. Mirrors upstream `DuckLakeMetadataManager::WriteMergeAdjacent`.
      *
      * Multiple merged files cover partitioned tables (one+ per partition) and size-bounded output.
+     * Outputs must also embed each row's original absolute `_ducklake_internal_row_id`; they are
+     * registered with NULL `row_id_start`, since a source minimum cannot describe arbitrary output
+     * order or gaps. Both rewrite variants require the existing `next_row_id` allocator.
      * Contract: every source must be NON-partial (`partial_max IS NULL`) so each source's rows share
      * one origin snapshot (its begin), and have NO delete-file history or inlined deletions. The merged
      * files must preserve every source row; live-only output from a delete-bearing source would erase

@@ -33,7 +33,14 @@ data class DucklakeDataFile(
     val recordCount: Long,
     val fileSizeBytes: Long,
     val footerSize: Long,
-    val rowIdStart: Long,
+    /**
+     * Optional contiguous row-ID fallback. When the Parquet schema has the reserved row-ID
+     * field, its embedded absolute IDs take precedence, even when this value is present.
+     * Otherwise a row's ID is this start plus its physical file position (before filtering).
+     * NULL is valid for rewrites with embedded lineage; it MUST NOT be replaced with zero.
+     * A reader needing row IDs must reject a file with neither source of identity.
+     */
+    val rowIdStart: Long?,
     val partitionId: Long?,
     val deleteFilePath: String?,
     val deleteFilePathIsRelative: Boolean?,
@@ -85,7 +92,7 @@ data class DucklakeDataFile(
         recordCount: Long,
         fileSizeBytes: Long,
         footerSize: Long,
-        rowIdStart: Long,
+        rowIdStart: Long?,
         partitionId: Long?,
         deleteFilePath: String?,
         deleteFilePathIsRelative: Boolean?,

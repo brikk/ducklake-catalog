@@ -236,7 +236,7 @@ class TestJdbcDucklakeCatalogCoverageFiles {
         assertThat(fileByPath(files, "b.parquet").endSnapshot).`as`("retired file still returned").isEqualTo(h.s6)
         assertThat(fileByPath(files, "a.parquet").deleteFilePath).`as`("delete-file columns left null").isNull()
         assertThat(fileByPath(files, "a.parquet").rowIdStart).isEqualTo(0L)
-        assertThat(fileByPath(files, "m.parquet").rowIdStart).`as`("rewrite keeps the retired source's row_id_start").isEqualTo(3L)
+        assertThat(fileByPath(files, "m.parquet").rowIdStart).`as`("rewrite output uses embedded lineage").isNull()
         assertThat(catalog.getDataFilesByIds(h.tableId, emptyList())).isEmpty()
         assertThat(catalog.getDataFilesByIds(h.tableId + 1_000_000, requested)).`as`("scoped to the table").isEmpty()
     }
@@ -262,21 +262,77 @@ class TestJdbcDucklakeCatalogCoverageFiles {
     }
 
     @Test
-    fun nullRowIdStartFailsLoudlyInsteadOfAliasingToZero() {
-        catalog.createTable(
-            SCHEMA, "null_row_id_start",
-            listOf(TableColumnSpec.leaf("id", "int32", true)),
-            null, null,
+    fun nativeRewritePreservesAbsentRowIdStartAcrossReadsAndChangeFeed() {
+        duckExec(
+            "CALL lake.set_option('data_inlining_row_limit', 0)",
+            "CREATE TABLE lake.$SCHEMA.embedded_row_ids AS SELECT i::INTEGER id FROM range(6) t(i)",
+            "DELETE FROM lake.$SCHEMA.embedded_row_ids WHERE id IN (1, 4)",
+            "CALL ducklake_rewrite_data_files('lake', 'embedded_row_ids', schema => '$SCHEMA', delete_threshold => 0)",
         )
-        val table = table("null_row_id_start")
-        val id = columnIds(table.tableId).getValue("id")
-        catalog.commitInsert(table.tableId, listOf(fragment("null-row-id.parquet", id, 1)))
-        pgExec("UPDATE ducklake_data_file SET row_id_start = NULL WHERE table_id = ${table.tableId}")
+        val table = table("embedded_row_ids")
+        assertThat(pgColumn("SELECT row_id_start FROM ducklake_data_file WHERE table_id = ${table.tableId} AND end_snapshot IS NULL"))
+            .containsExactly(null)
+        val file = catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).single()
+        assertThat(file.rowIdStart).isNull()
+        assertThat(catalog.getDataFilesByIds(table.tableId, listOf(file.dataFileId)).single().rowIdStart).isNull()
+        assertThat(catalog.getDataFilesAddedBetween(table.tableId, file.beginSnapshot, file.beginSnapshot).single().rowIdStart).isNull()
+        assertThat(duck("SELECT rowid, id FROM lake.$SCHEMA.embedded_row_ids ORDER BY rowid"))
+            .containsExactly(listOf("0", "0"), listOf("2", "2"), listOf("3", "3"), listOf("5", "5"))
+        val rewrittenSnapshot = catalog.currentSnapshotId
+        duckExec("DELETE FROM lake.$SCHEMA.embedded_row_ids WHERE id = 2")
+        val deletedSnapshot = catalog.currentSnapshotId
+        val deletion = catalog.getDeletionsBetween(table.tableId, deletedSnapshot, deletedSnapshot)
+            .single { it.dataFilePath == file.path && !it.fullFileDelete }
+        assertThat(deletion.rowIdStart).isNull()
+        assertThat(deletion.fullFileDelete).isFalse()
+        duckExec("TRUNCATE lake.$SCHEMA.embedded_row_ids")
+        val end = catalog.currentSnapshotId
+        assertThat(catalog.getDeletionsBetween(table.tableId, end, end).single { it.dataFilePath == file.path && it.fullFileDelete }.rowIdStart).isNull()
+        assertThat(catalog.getDataFiles(table.tableId, rewrittenSnapshot).single().rowIdStart).isNull()
+        assertThat(duck("SELECT rowid FROM lake.$SCHEMA.embedded_row_ids AT (VERSION => $rewrittenSnapshot) ORDER BY rowid"))
+            .containsExactly(listOf("0"), listOf("2"), listOf("3"), listOf("5"))
+    }
 
-        assertThatThrownBy { catalog.getDataFiles(table.tableId, catalog.currentSnapshotId) }
-            .isInstanceOf(DucklakeCatalogCorruptionException::class.java)
-            .hasMessageContaining("row_id_start")
-            .hasMessageContaining("data_file_id")
+    @Test
+    fun jvmRewritesOfEmbeddedLineageKeepGapsAndAllocator() {
+        duckExec(
+            "CALL lake.set_option('data_inlining_row_limit', 0)",
+            "CREATE TABLE lake.$SCHEMA.rewrite_lineage AS SELECT i::INTEGER id FROM range(6) t(i)",
+            "DELETE FROM lake.$SCHEMA.rewrite_lineage WHERE id IN (1, 4)",
+            "CALL ducklake_rewrite_data_files('lake', 'rewrite_lineage', schema => '$SCHEMA', delete_threshold => 0)",
+        )
+        val table = table("rewrite_lineage")
+        val dir = tableDir(table)
+        for (partial in listOf(false, true)) {
+            val read = catalog.currentSnapshotId
+            val source = catalog.getDataFiles(table.tableId, read).single()
+            assertThat(source.rowIdStart).isNull()
+            val name = "jvm-$partial.parquet"
+            val sourcePath = if (source.pathIsRelative) dir.resolve(source.path) else Path.of(source.path)
+            Files.copy(sourcePath, dir.resolve(name))
+            val output = DucklakeWriteFragment(name, source.fileSizeBytes, source.footerSize, source.recordCount, emptyList())
+            val nextRowId = "SELECT next_row_id FROM ducklake_table_stats WHERE table_id = ${table.tableId}"
+            assertThat(pgColumn(nextRowId)).containsExactly("6")
+            if (partial) {
+                catalog.rewriteDataFilesPartial(table.tableId, setOf(source.dataFileId),
+                    listOf(PartialMergedFile(output, source.beginSnapshot, source.beginSnapshot)), read)
+            } else {
+                // Without the allocator, the start cannot safely be inferred from embedded IDs.
+                pgExec("UPDATE ducklake_table_stats SET next_row_id = NULL WHERE table_id = ${table.tableId}")
+                assertThatThrownBy { catalog.rewriteDataFiles(table.tableId, setOf(source.dataFileId), listOf(output), read) }
+                    .isInstanceOf(DucklakeCatalogCorruptionException::class.java).hasMessageContaining("next_row_id")
+                assertThat(catalog.currentSnapshotId).isEqualTo(read)
+                assertThat(catalog.getDataFiles(table.tableId, read)).containsExactly(source)
+                pgExec("UPDATE ducklake_table_stats SET next_row_id = 6 WHERE table_id = ${table.tableId}")
+                catalog.rewriteDataFiles(table.tableId, setOf(source.dataFileId), listOf(output), read)
+            }
+            assertThat(catalog.getDataFiles(table.tableId, catalog.currentSnapshotId).single().rowIdStart).isNull()
+            assertThat(pgColumn(nextRowId)).containsExactly("6")
+            assertThat(duck("SELECT rowid, id FROM lake.$SCHEMA.rewrite_lineage ORDER BY rowid"))
+                .containsExactly(listOf("0", "0"), listOf("2", "2"), listOf("3", "3"), listOf("5", "5"))
+        }
+        duckExec("INSERT INTO lake.$SCHEMA.rewrite_lineage VALUES (99)")
+        assertThat(duck("SELECT rowid FROM lake.$SCHEMA.rewrite_lineage WHERE id = 99")).containsExactly(listOf("6"))
     }
 
     @Test

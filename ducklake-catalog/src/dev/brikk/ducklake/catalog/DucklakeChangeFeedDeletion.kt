@@ -53,8 +53,9 @@ package dev.brikk.ducklake.catalog
  * those, [previousDelete*] is the current file itself, so a 2-column file yields `current − previous
  * = ∅` (nothing in-window) without any special-casing, while a 3-column file is windowed per row.
  *
- * The row identifier of a deleted position `pos` is `rowIdStart + pos` — the same DuckLake `rowid`
- * vocabulary the connector's `$row_id` virtual column uses.
+ * Resolve a deleted position's row ID from the data file's embedded row-ID field when present;
+ * otherwise use `rowIdStart + pos`. [rowIdStart] may be NULL for embedded lineage, exactly as in
+ * [DucklakeDataFile.rowIdStart]. Delete-file positions are physical positions, not absolute row IDs.
  */
 @JvmRecord
 data class DucklakeChangeFeedDeletion(
@@ -65,7 +66,7 @@ data class DucklakeChangeFeedDeletion(
     val dataFileFormat: String,
     val dataFileFooterSize: Long,
     val dataFileSizeBytes: Long,
-    val rowIdStart: Long,
+    val rowIdStart: Long?,
     val recordCount: Long,
     val fullFileDelete: Boolean,
     val currentDeletePath: String?,

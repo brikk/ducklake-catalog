@@ -47,14 +47,17 @@ object GoldenComparator {
 
     fun readRows(rs: ResultSet): List<List<String?>> {
         val cols = rs.metaData.columnCount
+        val geometry = (1..cols).map { GeometryNormalizer.containsGeometry(rs.metaData.getColumnTypeName(it)) }
         val rows = mutableListOf<List<String?>>()
         while (rs.next()) {
             rows +=
                 (1..cols).map { i ->
                     try {
-                        // Always the object path: the driver's getString is DuckDB's own text for
-                        // plain LIST/STRUCT columns but Java's Map/List toString for VARIANT.
-                        renderCell(rs.getObject(i))
+                        // Geometry's object form is indistinguishable from BLOB. The typed string
+                        // API renders its WKT, including nested leaves. Keep the object path for
+                        // other types (notably VARIANT's getString uses Java Map/List.toString).
+                        if (geometry[i - 1]) rs.getString(i)?.replace("\u0000", "\\0")
+                        else renderCell(rs.getObject(i))
                     } catch (_: Exception) {
                         // e.g. the JDBC driver cannot represent TIME '24:00:00'
                         // as java.time.LocalTime; keep the record comparable.

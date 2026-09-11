@@ -23,6 +23,9 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 Latest release: **0.9.0** (`main` is `0.10.0-SNAPSHOT`)
 
+The `0.10.0` upgrade requires nullable row-ID handling in consumers; see the
+[release and migration notes](dev-docs/RELEASE-0.10.0.md).
+
 ### Gradle (Kotlin DSL)
 
 ```kotlin

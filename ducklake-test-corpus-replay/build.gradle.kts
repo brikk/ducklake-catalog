@@ -87,6 +87,10 @@ dependencies {
     // so consumers resolve them transitively.
     api(project(":slt-format"))
     implementation(libs.duckdb.jdbc)
+    // Nightly regressions exercise the published catalog model against the oracle's real PG lake.
+    testImplementation(project(":ducklake-catalog"))
+    testImplementation(testFixtures(project(":ducklake-catalog")))
+    testRuntimeOnly(libs.postgres.jdbc)
 }
 
 tasks.withType<Test> {

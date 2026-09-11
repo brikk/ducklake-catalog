@@ -381,32 +381,37 @@ class ReplayDriver(
         val label = record.label
         val outcome =
             if (label != null) {
-                labeledOutcome(record, label, actual)
+                labeledOutcome(record, label, actual.rows)
             } else {
-                goldenOutcome(record, oracle, bindings, actual)
+                goldenOutcome(record, oracle, bindings, actual.rows)
             }
         if (outcome !is RecordOutcome.Pass || engine == null || !shouldMirror(record, sql)) {
             return outcome
         }
         mirrorsThisFile++
-        return mirrorOutcome(engine, record, sql, actual)
+        return mirrorOutcome(engine, record, sql, actual, oracle.connection(record.connection))
     }
 
-    private fun executeQuerySql(conn: java.sql.Connection, sql: String): List<List<String?>> =
+    private data class QueryResult(val rows: List<List<String?>>, val types: List<String> = emptyList())
+
+    private fun executeQuerySql(conn: java.sql.Connection, sql: String): QueryResult =
         conn.createStatement().use { st ->
             // DML under a `query` directive expects the changed-row count as
             // the single-cell result — the DuckDB JDBC driver only reports it
             // via executeUpdate (execute() leaves it at -1).
             if (DML.containsMatchIn(sql)) {
-                listOf(listOf(st.executeUpdate(sql).toString()))
+                QueryResult(listOf(listOf(st.executeUpdate(sql).toString())))
             } else {
                 // Generic execute: some corpus `query` records wrap CALL/PRAGMA
                 // shapes the driver refuses via executeQuery.
                 val hasResult = st.execute(sql)
                 when {
-                    hasResult -> st.resultSet.use { rs -> GoldenComparator.readRows(rs) }
-                    st.updateCount >= 0 -> listOf(listOf(st.updateCount.toString()))
-                    else -> emptyList()
+                    hasResult -> st.resultSet.use { rs ->
+                        val types = (1..rs.metaData.columnCount).map { rs.metaData.getColumnTypeName(it) }
+                        QueryResult(GoldenComparator.readRows(rs), types)
+                    }
+                    st.updateCount >= 0 -> QueryResult(listOf(listOf(st.updateCount.toString())))
+                    else -> QueryResult(emptyList())
                 }
             }
         }
@@ -491,9 +496,12 @@ class ReplayDriver(
         engine: ReplayReadEngine,
         record: SltQuery,
         sql: String,
-        actual: List<List<String?>>,
+        actual: QueryResult,
+        connection: java.sql.Connection,
     ): RecordOutcome {
-        val result = runCatching { engine.executeQuery(sql) }
+        val result = runCatching {
+            GeometryNormalizer.normalizeRows(connection, actual.types, engine.executeQuery(sql))
+        }
         val error = result.exceptionOrNull()
         if (error is ReplayEngineSkip) {
             return RecordOutcome.Skip(record, "engine '${engine.name}': ${error.reason}")
@@ -502,7 +510,7 @@ class ReplayDriver(
             return RecordOutcome.Fail(record, "engine '${engine.name}' errored: ${firstLine(error)}")
         }
         val engineRows = result.getOrThrow().map { row -> row.map(GoldenComparator::toGoldenCell) }
-        val oracleRows = actual.map { row -> row.map(GoldenComparator::toGoldenCell) }
+        val oracleRows = actual.rows.map { row -> row.map(GoldenComparator::toGoldenCell) }
         return if (engineRows.toSortedComparable() == oracleRows.toSortedComparable()) {
             RecordOutcome.Pass(record)
         } else {

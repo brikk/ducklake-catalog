@@ -36,21 +36,9 @@ class TestIdentityControl {
         mapOf(
             "add_files/add_files_type_check_timestamp.test" to
                 "duckdb-jdbc truncates TIMESTAMP_NS to micros (1 golden row expects nanos)",
-            "geo/ducklake_geometry.test" to GEO_REASON,
-            "geo/ducklake_geometry_add_files.test" to GEO_REASON,
-            "geo/ducklake_geometry_inlining.test" to GEO_REASON,
-            "geo/ducklake_geometry_merge.test" to GEO_REASON,
-            // These three `require no_alternative_verify` (PRESENT, as upstream) and so replay now;
-            // they store GEOMETRY nested in LIST/MAP/STRUCT, which the driver hands back as WKB bytes.
-            "geo/ducklake_geometry_nested_list.test" to GEO_REASON,
-            "geo/ducklake_geometry_nested_map.test" to GEO_REASON,
-            "geo/ducklake_geometry_nested_struct.test" to GEO_REASON,
         )
 
     companion object {
-        private const val GEO_REASON =
-            "GEOMETRY over duckdb-jdbc surfaces raw WKB; golden expects WKT rendering"
-
         @JvmStatic
         @BeforeAll
         fun requireDucklakeExtension() {

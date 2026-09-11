@@ -93,7 +93,7 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
         assertRowsAndAggregates(table, listOf(-100, 1, 100, null))
         assertSuppressed(table)
         assertThat(oracle("SELECT rowid FROM ${relation(table)} WHERE id = 1"))
-            .containsExactly(listOf((source.rowIdStart + 1).toString()))
+            .containsExactly(listOf((requireNotNull(source.rowIdStart) + 1).toString()))
 
         catalog.analyzeTable(table.tableId)
         assertSuppressed(table)
@@ -152,7 +152,7 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
             "FROM read_parquet(${q(tableDir(table).resolve(output.path).toString())}) ORDER BY id"))
             .containsExactly(
                 listOf("1", source.rowIdStart.toString(), source.beginSnapshot.toString()),
-                listOf("2", (source.rowIdStart + 1).toString(), source.beginSnapshot.toString()),
+                listOf("2", (requireNotNull(source.rowIdStart) + 1).toString(), source.beginSnapshot.toString()),
             )
 
         catalog.rewriteDataFilesPartial(table.tableId, setOf(source.dataFileId),
@@ -162,7 +162,7 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
         assertThat(rewritten.path).isEqualTo(output.path)
         assertThat(rewritten.beginSnapshot).isEqualTo(source.beginSnapshot)
         assertThat(rewritten.partialMax).isEqualTo(source.beginSnapshot)
-        assertThat(rewritten.rowIdStart).isEqualTo(source.rowIdStart)
+        assertThat(rewritten.rowIdStart).isNull()
         assertThat(rewritten.recordCount).isEqualTo(2L)
         assertThat(rewritten.deleteFilePath).isNull()
         assertThat(pg("SELECT * FROM ducklake_data_file WHERE data_file_id = ${source.dataFileId}")).isEmpty()
@@ -288,7 +288,7 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
             }
             catalog.analyzeTable(table.tableId)
             assertThat(catalog.currentSnapshotId).isEqualTo(snapshot)
-            assertAccounting(table, 2L, 2L, source.rowIdStart + 2, source.fileSizeBytes)
+            assertAccounting(table, 2L, 2L, requireNotNull(source.rowIdStart) + 2, source.fileSizeBytes)
             assertThat(globalStats(table).single().takeLast(2)).containsExactly("1", "2")
         }
         finally {
@@ -359,7 +359,7 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
         partial: Boolean = false,
     ): DucklakeWriteFragment {
         val rows = oracle("SELECT rowid, id FROM ${relation(table)} AT (VERSION => $snapshot) " +
-            "WHERE rowid >= ${source.rowIdStart} AND rowid < ${source.rowIdStart + source.recordCount} ORDER BY rowid")
+            "WHERE rowid >= ${source.rowIdStart} AND rowid < ${requireNotNull(source.rowIdStart) + source.recordCount} ORDER BY rowid")
         return writeFile(table, "rewritten.parquet", rows.map { it[1]!!.toInt() }, rows.map { it[0]!!.toLong() },
             if (partial) source.beginSnapshot else null)
     }
