@@ -4,6 +4,7 @@ Applies to `dev.brikk.ducklake:ducklake-catalog`, `ducklake-test-corpus-replay`,
 `slt-format` (plus catalog test fixtures).
 
 Evidence: [Trino nightly 34577075167](https://github.com/brikk/trino-ducklake/actions/runs/34577075167).
+Fix commit: [`0b6c31b`](https://github.com/brikk/ducklake-catalog/commit/0b6c31ba5ec4dd68735eb9d2de2e688dde77f7bb).
 The catalog/replay changes address CI-02 and CI-03. CI-01 statistics coverage and
 CI-04 MAP translation are tracked by the Trino agent separately.
 
@@ -62,6 +63,10 @@ Actual Trino data-page/row-ID integration remains the consumer's verification re
 the repository regressions use independent native readers and catalog API controls.
 
 ## Verification
+
+- Pre-release [CI](https://github.com/brikk/ducklake-catalog/actions/runs/34624344010) and
+  [0.10.0-SNAPSHOT publication](https://github.com/brikk/ducklake-catalog/actions/runs/34624343883)
+  passed at the fix commit.
 
 - Before the fixes, the native rewrite regression reproduced the NULL-start exception and
   geometry regressions reproduced golden mismatches before reaching the mirror.
