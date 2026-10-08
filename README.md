@@ -145,6 +145,10 @@ only regeneration needs Docker. See [`ducklake-catalog/README.md`](ducklake-cata
 
 ## CI
 
+Upcoming DuckDB 2.0 / DuckLake format changes are tracked in the
+[October 8 compatibility assessment](dev-docs/UPSTREAM-DUCKDB-2.0-2026-10-08.md).
+This is a readiness report, not a claim of 2.0 support.
+
 `.github/workflows/ci.yml` runs `./gradlew check` (compile, detekt, `checkAbi`, all tests including
 the Testcontainers PostgreSQL/MySQL and DuckDB-oracle interop tests) on every pull request and push
 to `main`, and replays the **full** upstream DuckLake sqllogictest corpus nightly (the PR job runs
