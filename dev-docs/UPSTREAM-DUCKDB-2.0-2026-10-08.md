@@ -164,6 +164,10 @@ can affect more than binary-valued rows. Preserve BLOB/NULL semantics and all
 0.10.0 negative controls. Parser/error-golden churn elsewhere is a separate corpus
 refresh, not a reason to relax comparisons globally.
 
+**Follow-up, 2026-10-09: UP2-03 fixed/verified.** The shared renderer now emits
+explicit `lambda ...:` SQL. A strict-arrow-disabled regression and all existing
+geometry golden/mirror controls pass on the maintained JDBC lane.
+
 ### UP2-04 — nested schemas also change storage-path ancestry
 
 Current DuckLake main adds `ducklake_schema.parent_schema_id` and reconstructs a

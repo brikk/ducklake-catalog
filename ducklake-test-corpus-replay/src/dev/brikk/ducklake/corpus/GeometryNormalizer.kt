@@ -67,7 +67,7 @@ internal object GeometryNormalizer {
         override val storage = child.storage + suffix
         override val hasGeometry = child.hasGeometry
         override fun fromWkb(value: String, depth: Int): String =
-            "list_transform($value, geo_$depth -> ${child.fromWkb("geo_$depth", depth + 1)})"
+            "list_transform($value, lambda geo_$depth: ${child.fromWkb("geo_$depth", depth + 1)})"
     }
 
     private data class StructType(override val sql: String, val fields: List<Pair<String, ValueType>>) : ValueType {
@@ -86,8 +86,8 @@ internal object GeometryNormalizer {
         override val storage = "MAP(${key.storage}, ${value.storage})"
         override val hasGeometry = key.hasGeometry || value.hasGeometry
         override fun fromWkb(value: String, depth: Int): String =
-            "map(list_transform(map_keys($value), geo_k$depth -> ${key.fromWkb("geo_k$depth", depth + 1)}), " +
-                "list_transform(map_values($value), geo_v$depth -> ${this.value.fromWkb("geo_v$depth", depth + 1)}))"
+            "map(list_transform(map_keys($value), lambda geo_k$depth: ${key.fromWkb("geo_k$depth", depth + 1)}), " +
+                "list_transform(map_values($value), lambda geo_v$depth: ${this.value.fromWkb("geo_v$depth", depth + 1)}))"
     }
 
     private val ARRAY = Regex("^(.*)(\\[\\d*])$", RegexOption.DOT_MATCHES_ALL)

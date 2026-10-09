@@ -60,6 +60,31 @@ class TestGeometryComparison {
     }
 
     @Test
+    fun `geometry normalization works with legacy arrow lambdas disabled`() {
+        DriverManager.getConnection("jdbc:duckdb:").use { connection ->
+            connection.createStatement().use { it.execute("SET lambda_syntax = 'DISABLE_SINGLE_ARROW'") }
+            val expressions = listOf(
+                "['POINT(1 2)'::GEOMETRY, NULL]",
+                "[NULL, 'POINT EMPTY'::GEOMETRY]::GEOMETRY[2]",
+                "MAP(['POINT(1 2)'::GEOMETRY], ['POINT EMPTY'::GEOMETRY])",
+                "{'shapes': [MAP([1], ['POINT(1 2)'::GEOMETRY])], 'blob': '\\x01'::BLOB}",
+            )
+            for (expression in expressions) {
+                val (type, binary, wkt) = connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT $expression").use { rows ->
+                        rows.next()
+                        Triple(rows.metaData.getColumnTypeName(1), GoldenComparator.renderCell(rows.getObject(1)), rows.getString(1))
+                    }
+                }
+                for (cell in listOf(binary, wkt)) {
+                    assertThat(GeometryNormalizer.normalizeRows(connection, listOf(type), listOf(listOf(cell))))
+                        .`as`("$type, arrow syntax disabled").isEqualTo(listOf(listOf(wkt)))
+                }
+            }
+        }
+    }
+
+    @Test
     fun `nightly nested geometry fixtures pass golden and binary mirror stages`() {
         val root = Path.of("ducklake")
         for (shape in listOf("list", "map", "struct")) {
