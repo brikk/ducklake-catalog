@@ -971,7 +971,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 val tid = r.value1()
                 val sv = r.value2()
                 if (tid != null && sv != null) {
-                    names.add(InlinedDataTable.of(tid, sv).name)
+                    names.add(InlinedDataTables.tableName(tid, sv))
                 }
             }
         for (tid in deadTableIds) {
@@ -1444,7 +1444,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .orderBy(inlined.SCHEMA_VERSION)
             .fetch(inlined.SCHEMA_VERSION)
             .filterNotNull()
-            .map { InlinedDataTable.of(tableId, it) }
+            .map { inlinedDataTable(ctx, tableId, it) }
     }
 
     /**
@@ -1816,7 +1816,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .mapNotNull { r ->
                     val rowTableId = orZero(r.get(inlined.TABLE_ID))
                     val rowSchemaVersion = orZero(r.get(inlined.SCHEMA_VERSION))
-                    val inlinedTable = InlinedDataTable.of(rowTableId, rowSchemaVersion)
+                    val inlinedTable = inlinedDataTable(dsl, rowTableId, rowSchemaVersion)
                     // One EXISTS probe per schema version yields BOTH bits callers need: a
                     // DataAccessException means the catalog metadata points to a dropped/
                     // non-materialized table (skip it, as the old existsAsTable filter did);
@@ -1851,7 +1851,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun hasInlinedRows(tableId: Long, schemaVersion: Long, snapshotId: Long): Boolean {
-        val inlined = InlinedDataTable.of(tableId, schemaVersion)
+        val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
         return try {
             dsl.fetchExists(
                 DSL.selectOne()
@@ -1866,7 +1866,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun countInlinedRows(tableId: Long, schemaVersion: Long, snapshotId: Long): Long {
-        val inlined = InlinedDataTable.of(tableId, schemaVersion)
+        val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
         return try {
             dsl.fetchCount(
                 DSL.selectOne()
@@ -1965,12 +1965,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         columnIds: List<Long>,
         decode: Boolean,
     ): List<DucklakeInlinedChangeRow> {
-        val inlined = InlinedDataTable.of(tableId, schemaVersion)
+        val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
         val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, endSnapshot)
             ?: return emptyList()
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
         val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
-        val rowIdField: Field<Long> = DSL.field(DSL.name("row_id"), Long::class.java)
+        val rowIdField = inlined.rowId
         val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columnIds, "c", decode)
 
         val projected: MutableList<Field<*>> = ArrayList(columnIds.size + 3)
@@ -2108,7 +2108,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return emptyList()
         }
 
-        val inlined = InlinedDataTable.of(tableId, schemaVersion)
+        val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
 
         val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, snapshotId)
             ?: return emptyList()
@@ -2121,7 +2121,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val result = dsl.select(projection.fields)
                 .from(inlined.table)
                 .where(inlined.activeAt(snapshotId))
-                .orderBy(DSL.field(DSL.name("row_id")))
+                .orderBy(inlined.rowId)
                 .fetch()
 
             val columnCount = columns.size
@@ -2150,14 +2150,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         schemaVersion: Long,
         snapshotId: Long,
     ): List<Long> {
-        val inlined = InlinedDataTable.of(tableId, schemaVersion)
+        val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
         return try {
             // Same filter + row_id ordering as readInlinedData, so the returned begin_snapshots
             // line up positionally with that method's rows.
             dsl.select(inlined.beginSnapshot)
                 .from(inlined.table)
                 .where(inlined.activeAt(snapshotId))
-                .orderBy(DSL.field(DSL.name("row_id")))
+                .orderBy(inlined.rowId)
                 .fetch()
                 .map { it.get(inlined.beginSnapshot) }
         }
@@ -2172,8 +2172,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         schemaVersion: Long,
         snapshotId: Long,
     ): List<Long> {
-        val inlined = InlinedDataTable.of(tableId, schemaVersion)
-        val rowId: Field<Long> = DSL.field(DSL.name("row_id"), Long::class.java)
+        val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
+        val rowId = inlined.rowId
         return try {
             // Same filter + row_id ordering as readInlinedData, so the returned ids line up
             // positionally with that method's rows.
@@ -2234,24 +2234,29 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * codegen doesn't know about. Bundles the table reference with its `begin_snapshot` /
      * `end_snapshot` fields so the per-method setup dance reduces to one line.
      */
+    private fun inlinedDataTable(ctx: DSLContext, tableId: Long, schemaVersion: Long): InlinedDataTable =
+        InlinedDataTable.of(tableId, schemaVersion, InlinedDataTables.metadataColumns(globalMetadataValue("version", ctx)))
+
     private data class InlinedDataTable(
         val name: String,
         val table: Table<*>,
         val beginSnapshot: Field<Long>,
         val endSnapshot: Field<Long>,
+        val rowId: Field<Long>,
     ) {
         fun activeAt(snapshotId: Long): Condition {
             return activeAt(beginSnapshot, endSnapshot, snapshotId)
         }
 
         companion object {
-            fun of(tableId: Long, schemaVersion: Long): InlinedDataTable {
+            fun of(tableId: Long, schemaVersion: Long, columns: InlinedDataTables.MetadataColumns): InlinedDataTable {
                 val name = "ducklake_inlined_data_${tableId}_$schemaVersion"
                 return InlinedDataTable(
                     name,
                     DSL.table(DSL.name(name)),
-                    DSL.field(DSL.name("begin_snapshot"), Long::class.java),
-                    DSL.field(DSL.name("end_snapshot"), Long::class.java),
+                    DSL.field(DSL.name(columns.beginSnapshot), Long::class.java),
+                    DSL.field(DSL.name(columns.endSnapshot), Long::class.java),
+                    DSL.field(DSL.name(columns.rowId), Long::class.java),
                 )
             }
         }
@@ -2270,9 +2275,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     override fun isEncrypted(): Boolean = globalMetadataValue("encrypted")?.equals("true", ignoreCase = true) == true
 
     /** A catalog-scoped `ducklake_metadata` value (`scope IS NULL`; table/schema-scoped rows are settings). */
-    private fun globalMetadataValue(key: String): String? {
+    private fun globalMetadataValue(key: String, ctx: DSLContext = dsl): String? {
         val meta = DUCKLAKE_METADATA.`as`("meta")
-        return dsl.select(meta.VALUE)
+        return ctx.select(meta.VALUE)
             .from(meta)
             .where(meta.KEY.eq(key))
             .and(meta.SCOPE.isNull)
@@ -2665,7 +2670,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         val inlined = DUCKLAKE_INLINED_DATA_TABLES.`as`("inlined")
         val name = InlinedDataTables.tableName(tableId, tx.getSchemaVersion())
-        metadata.execute(ctx, ctx.query(InlinedDataTables.createTableSql(name, trees, dialect)))
+        val version = requireNotNull(globalMetadataValue("version", ctx))
+        metadata.execute(ctx, ctx.query(InlinedDataTables.createTableSql(name, trees, dialect, version)))
         metadata.execute(
             ctx,
             ctx.insertInto(inlined)
@@ -3528,7 +3534,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .fetch(inlinedTables.SCHEMA_VERSION)
             .filterNotNull()
         for (schemaVersion in schemaVersions) {
-            val inlined = InlinedDataTable.of(tableId, schemaVersion)
+            val inlined = inlinedDataTable(ctx, tableId, schemaVersion)
             try {
                 metadata.execute(ctx, ctx.deleteFrom(inlined.table).where(inlined.beginSnapshot.le(upToSnapshot)))
             }
@@ -3553,7 +3559,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .fetch(inlinedTables.SCHEMA_VERSION)
             .filterNotNull()
         for (schemaVersion in schemaVersions) {
-            val inlined = InlinedDataTable.of(tableId, schemaVersion)
+            val inlined = inlinedDataTable(ctx, tableId, schemaVersion)
             try {
                 metadata.execute(
                     ctx,

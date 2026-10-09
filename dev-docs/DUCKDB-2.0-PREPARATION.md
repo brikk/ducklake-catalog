@@ -7,8 +7,8 @@ publish unsupported-format writes, and commit each verified step separately.
 |---|---|---|
 | 1 | Explicit geometry lambda syntax, with golden/mirror regression coverage | Verified, `1927995` |
 | 2 | Independent pinned preview CI; preserve the released JVM lane | Verified locally, `a15dbf2`; GitHub run awaits push |
-| 3 | Fresh version guards across mutations and concurrent migration | Verified; committed separately |
-| 4 | Version-aware inline metadata-column names | Pending |
+| 3 | Fresh version guards across mutations and concurrent migration | Verified, `b7e1269` |
+| 4 | Version-aware inline metadata-column names | Verified; committed separately |
 | 5 | Matched Quack peers and transaction-recovery qualification | Pending |
 
 See [the compatibility assessment](UPSTREAM-DUCKDB-2.0-2026-10-08.md) for the full
@@ -50,3 +50,20 @@ Three migration/unsupported-mutation regressions failed before the fix and now
 pass. Full checks passed 495 JUnit tests (404 catalog, 51 SLT, 40 replay), 9,424
 corpus records, detekt and Java 17 checkAbi. Four-backend cleanup/transaction tests
 also passed. This prevents unsupported writes, not arbitrary online DDL migration.
+
+## Step 4 scope
+
+A shared descriptor selects exact known legacy versus 1.1-dev1 metadata names.
+Inline data visibility, ordering, row IDs, change-feed projections and maintenance
+helpers use it with their owned/pinned context. Inlined file-delete tables keep
+their distinct, unchanged names. DDL uses the same descriptor, but step 3 still
+refuses all 1.1 writes. Unknown layouts fail explicitly instead of guessing.
+
+The read regression uses real native-created PostgreSQL inline data, renames its
+physical metadata columns to the upstream dev layout, and keeps the JVM instance
+alive. A single-connection read session returns identical values/IDs/counts before
+and after; an old-name user-like column is not mistaken for metadata. This is
+layout-level coverage, not full 1.1 schema/type/nested-schema qualification.
+
+Full checks passed 497 JUnit tests (406 catalog, 51 SLT, 40 replay), the full
+corpus's 9,424 records, detekt and Java 17 checkAbi.

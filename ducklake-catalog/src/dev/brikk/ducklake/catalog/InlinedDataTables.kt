@@ -35,6 +35,17 @@ import org.jooq.SQLDialect
  *    `STRUCT(a T, …)`, `T[]`, `MAP(K, V)`.
  */
 internal object InlinedDataTables {
+    data class MetadataColumns(val rowId: String, val beginSnapshot: String, val endSnapshot: String)
+
+    private val LEGACY_COLUMNS = MetadataColumns("row_id", "begin_snapshot", "end_snapshot")
+    private val DEV_COLUMNS = MetadataColumns("_ducklake_row_id", "_ducklake_begin_snapshot", "_ducklake_end_snapshot")
+
+    /** Exact known layouts only; an unknown version must not bind a user column as metadata. */
+    fun metadataColumns(version: String?): MetadataColumns = when (version) {
+        "0.1", "0.2", "0.3-dev1", "0.3", "0.4-dev1", "0.4", "1.0" -> LEGACY_COLUMNS
+        "1.1-dev1" -> DEV_COLUMNS
+        else -> throw DucklakeInvalidOperationException("Unknown inlined metadata layout for catalog version $version")
+    }
     /** Upstream `DuckLakeUtil::IsInlinedSystemColumn`. */
     private val SYSTEM_COLUMNS = setOf("row_id", "begin_snapshot", "end_snapshot", "_ducklake_internal_snapshot_id", "_ducklake_internal_row_id")
 
@@ -96,9 +107,12 @@ internal object InlinedDataTables {
         }
 
     /** Upstream `InlinedTableDdlSql`: `CREATE TABLE IF NOT EXISTS <name>(row_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, <cols>)`. */
-    fun createTableSql(name: String, columns: List<InlinedTypeNode>, dialect: SQLDialect): String {
+    fun createTableSql(name: String, columns: List<InlinedTypeNode>, dialect: SQLDialect, version: String = "1.0"): String {
+        val names = metadataColumns(version)
         val columnDefs = columns.joinToString(", ") { "${quote(it.name)} ${physicalType(it, dialect)}" }
-        return "CREATE TABLE IF NOT EXISTS ${quote(name)}(row_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, $columnDefs)"
+        val userColumns = if (columnDefs.isEmpty()) "" else ", $columnDefs"
+        return "CREATE TABLE IF NOT EXISTS ${quote(name)}(${quote(names.rowId)} BIGINT, " +
+            "${quote(names.beginSnapshot)} BIGINT, ${quote(names.endSnapshot)} BIGINT$userColumns)"
     }
 
     /** Upstream `GetColumnType` for the backend behind [dialect]. */
