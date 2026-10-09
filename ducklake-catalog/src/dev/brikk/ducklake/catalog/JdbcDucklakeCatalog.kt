@@ -307,6 +307,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (sqlException == null || !isMissingCatalogSchema(sqlException)) {
             throw e
         }
+        // An actual missing-table error has already poisoned a pinned transaction. Expected
+        // absence is checked without failing SQL beforehand; a race/error must escape instead.
+        if (readSessionDsl.get() != null) throw e
         log.log(System.Logger.Level.DEBUG, "{0}: {1} does not exist ({2})", what, tableName, sqlException.message)
     }
 
@@ -1792,6 +1795,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun getInlinedDataInfos(tableId: Long, snapshotId: Long): List<DucklakeInlinedDataInfo> {
+        if (!dynamicTableExists(dsl, "ducklake_inlined_data_tables")) return emptyList()
         // A table can have multiple inlined data tables (one per schema version).
         val inlined = DUCKLAKE_INLINED_DATA_TABLES.`as`("inlined")
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
@@ -1817,10 +1821,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     val rowTableId = orZero(r.get(inlined.TABLE_ID))
                     val rowSchemaVersion = orZero(r.get(inlined.SCHEMA_VERSION))
                     val inlinedTable = inlinedDataTable(dsl, rowTableId, rowSchemaVersion)
-                    // One EXISTS probe per schema version yields BOTH bits callers need: a
-                    // DataAccessException means the catalog metadata points to a dropped/
-                    // non-materialized table (skip it, as the old existsAsTable filter did);
-                    // otherwise the boolean tells whether any rows are live at this snapshot.
+                    if (!dynamicTableExists(dsl, inlinedTable.name)) return@mapNotNull null
+                    // After the non-failing physical-table probe, EXISTS tells whether rows
+                    // are live at this snapshot. Expected absence must not abort a read session;
+                    // unexpected failures (including a concurrent disappearance) propagate there.
                     // Carrying hasLiveRows here lets split planning avoid
                     // the redundant second per-table probe they used to make.
                     val hasLiveRows: Boolean = try {
@@ -1852,6 +1856,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun hasInlinedRows(tableId: Long, schemaVersion: Long, snapshotId: Long): Boolean {
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
+        if (!dynamicTableExists(dsl, inlined.name)) return false
         return try {
             dsl.fetchExists(
                 DSL.selectOne()
@@ -1867,6 +1872,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun countInlinedRows(tableId: Long, schemaVersion: Long, snapshotId: Long): Long {
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
+        if (!dynamicTableExists(dsl, inlined.name)) return 0
         return try {
             dsl.fetchCount(
                 DSL.selectOne()
@@ -1889,6 +1895,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // No end_snapshot — once an inlined delete row exists for a snapshot, it's
         // permanent until compaction rewrites the data file.
         val inlinedDeleteName = "ducklake_inlined_delete_$tableId"
+        if (!dynamicTableExists(dsl, inlinedDeleteName)) return false
         val tab: Table<*> = DSL.table(DSL.name(inlinedDeleteName))
         val beginSnapshot: Field<Long> = DSL.field(DSL.name("begin_snapshot"), Long::class.java)
         return try {
@@ -1913,6 +1920,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // Table is created lazily by DuckDB the first time DATA_INLINING_ROW_LIMIT
         // causes a deletion to be inlined; absence is the common case.
         val inlinedDeleteName = "ducklake_inlined_delete_$tableId"
+        if (!dynamicTableExists(dsl, inlinedDeleteName)) return emptyMap()
         val tab: Table<*> = DSL.table(DSL.name(inlinedDeleteName))
         val fileId: Field<Long> = DSL.field(DSL.name("file_id"), Long::class.java)
         val rowId: Field<Long> = DSL.field(DSL.name("row_id"), Long::class.java)
@@ -1966,6 +1974,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         decode: Boolean,
     ): List<DucklakeInlinedChangeRow> {
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
+        if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
         val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, endSnapshot)
             ?: return emptyList()
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
@@ -2010,6 +2019,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun getInlinedFileDeletesBetween(tableId: Long, startSnapshot: Long, endSnapshot: Long): List<DucklakeInlinedFileDelete> {
         val inlinedDeleteName = "ducklake_inlined_delete_$tableId"
+        if (!dynamicTableExists(dsl, inlinedDeleteName)) return emptyList()
         val tab: Table<*> = DSL.table(DSL.name(inlinedDeleteName))
         val fileId: Field<Long> = DSL.field(DSL.name("file_id"), Long::class.java)
         val rowId: Field<Long> = DSL.field(DSL.name("row_id"), Long::class.java)
@@ -2110,6 +2120,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
 
+        if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
         val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, snapshotId)
             ?: return emptyList()
 
@@ -2151,6 +2162,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         snapshotId: Long,
     ): List<Long> {
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
+        if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
         return try {
             // Same filter + row_id ordering as readInlinedData, so the returned begin_snapshots
             // line up positionally with that method's rows.
@@ -2173,6 +2185,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         snapshotId: Long,
     ): List<Long> {
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
+        if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
         val rowId = inlined.rowId
         return try {
             // Same filter + row_id ordering as readInlinedData, so the returned ids line up
@@ -2295,7 +2308,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    private fun requireFileWritesSupported() = requireCatalogWritesSupported(pooledDsl, registersFiles = true)
+    private fun requireFileWritesSupported() {
+        // Reject before borrowing a pooled connection: a one-connection read session owns it.
+        requireNotInReadSession("register catalog files")
+        requireCatalogWritesSupported(pooledDsl, registersFiles = true)
+    }
 
     private fun lockedGlobalMetadataValue(ctx: DSLContext, key: String): String? {
         val meta = DUCKLAKE_METADATA
@@ -3535,6 +3552,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .filterNotNull()
         for (schemaVersion in schemaVersions) {
             val inlined = inlinedDataTable(ctx, tableId, schemaVersion)
+            if (!dynamicTableExists(ctx, inlined.name)) continue
             try {
                 metadata.execute(ctx, ctx.deleteFrom(inlined.table).where(inlined.beginSnapshot.le(upToSnapshot)))
             }
@@ -3560,6 +3578,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .filterNotNull()
         for (schemaVersion in schemaVersions) {
             val inlined = inlinedDataTable(ctx, tableId, schemaVersion)
+            if (!dynamicTableExists(ctx, inlined.name)) continue
             try {
                 metadata.execute(
                     ctx,

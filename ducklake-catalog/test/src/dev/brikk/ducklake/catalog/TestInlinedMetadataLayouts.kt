@@ -80,6 +80,8 @@ class TestInlinedMetadataLayouts {
                 .containsExactly(listOf(11), listOf(22))
             assertThat(catalog.getInlinedChangesBetweenDecoded(tableId, info.schemaVersion, inserted, inserted,
                 columns.map { it.columnId })).hasSize(2)
+            assertThatThrownBy { catalog.commitInsert(tableId, emptyList()) }
+                .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("readSession")
             Unit
         })
     }

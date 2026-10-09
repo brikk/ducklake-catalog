@@ -315,6 +315,11 @@ Sources: [file-format validation change](https://github.com/duckdb/ducklake/comm
 
 ## Recommended order and release gate
 
+**2026-10-09 execution update:** the [five-step safe preparation log](DUCKDB-2.0-PREPARATION.md)
+records the committed lambda fix, pinned native preview CI, fresh mutation guards,
+versioned inline layout descriptors, and matched-peer/recovery preparation. It also
+states the remaining JVM 2.0, protocol and 1.1-feature qualification limits explicitly.
+
 1. **Containment + small compatibility changes first:** version/migration policy,
    versioned inline-column names, new lambda SQL, and conflict-history regression.
    Planning estimate: several focused days; not verified implementation estimates.

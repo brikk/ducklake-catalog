@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/duckdb2-preview.yml'
       - 'dev-docs/probes/**'
+      - 'ducklake-catalog/**'
+      - 'ducklake-test-corpus-replay/**'
   schedule:
     - cron: '43 5 * * *'
   workflow_dispatch:
@@ -58,6 +60,11 @@ jobs:
           if [ "$BACKEND" = postgres ]; then ARGS+=(--postgres); fi
           python dev-docs/probes/duckdb2_readiness.py --temp-root "$RUNNER_TEMP/preview" "${ARGS[@]}" > preview-report.json
           python dev-docs/probes/verify_duckdb2_preview.py dev-docs/probes/duckdb2-preview-lock.json preview-report.json
+      - name: Matched native Quack peers and transaction recovery
+        if: matrix.backend == 'duckdb'
+        run: |
+          python dev-docs/probes/duckdb2_quack.py > quack-preview-report.json
+          python dev-docs/probes/verify_duckdb2_preview.py dev-docs/probes/duckdb2-preview-lock.json quack-preview-report.json quack
       - name: Upload provenance and observations, including on failure
         if: always()
         uses: actions/upload-artifact@v4
@@ -65,5 +72,6 @@ jobs:
           name: native-preview-${{ matrix.backend }}-${{ github.run_id }}
           path: |
             preview-report.json
+            quack-preview-report.json
             dev-docs/probes/duckdb2-preview-lock.json
           retention-days: 14

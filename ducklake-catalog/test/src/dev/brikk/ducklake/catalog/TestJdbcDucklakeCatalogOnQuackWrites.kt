@@ -73,6 +73,25 @@ class TestJdbcDucklakeCatalogOnQuackWrites {
     }
 
     @Test
+    fun fixtureUsesMatchedNativeClientAndServerVersions() {
+        val url = QuackBackedDuckDbCatalogUrl.parse(
+            "jdbc:duckdb:quack://${server!!.getHost()}:${server!!.getMappedPort()}?metadata_catalog=writes_meta",
+            server!!.getToken(), dataDir!!.toAbsolutePath().toString(),
+        )
+        java.sql.DriverManager.getConnection("jdbc:duckdb:").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(url.connectionInitSql())
+                val client = statement.executeQuery("SELECT version()").use { rows -> rows.next(); rows.getString(1) }
+                val remote = statement.executeQuery(
+                    "CALL system.main.quack_query_by_name('writes_meta', 'SELECT version()')",
+                ).use { rows -> rows.next(); rows.getString(1) }
+                assertThat(client).isEqualTo("v1.5.5")
+                assertThat(remote).isEqualTo(client)
+            }
+        }
+    }
+
+    @Test
     fun insertDeleteAlterAndDropAllCommitOnQuack() {
         c.createSchema("w")
         val (tableId, cols) = createTable("w", "t")

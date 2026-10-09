@@ -187,6 +187,23 @@ class TestJdbcDucklakeCatalogFileWriteGuards {
     }
 
     @Test
+    fun expectedMissingInlineTablesDoNotAbortThePinnedReadSession() {
+        openCatalog(isolated.jdbcUrl, isolated.dataDir.toString()).use { catalog ->
+            val table = catalog.getTable("test_schema", "simple_table", catalog.currentSnapshotId)!!
+            catalog.readSession(java.util.function.Supplier {
+                val snapshot = catalog.currentSnapshotId
+                assertThat(catalog.hasInlinedRows(table.tableId, Long.MAX_VALUE, snapshot)).isFalse()
+                assertThat(catalog.countInlinedRows(table.tableId, Long.MAX_VALUE, snapshot)).isZero()
+                assertThat(catalog.hasInlinedDeletes(table.tableId + 1000000, snapshot)).isFalse()
+                assertThat(catalog.getInlinedDeletes(table.tableId + 1000000, snapshot)).isEmpty()
+                assertThat(catalog.getInlinedFileDeletesBetween(table.tableId + 1000000, 0, snapshot)).isEmpty()
+                assertThat(catalog.currentSnapshotId).isEqualTo(snapshot)
+                Unit
+            })
+        }
+    }
+
+    @Test
     fun preSpec04CatalogRefusesFileWrites() {
         fun setVersion(v: String) {
             DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { c ->

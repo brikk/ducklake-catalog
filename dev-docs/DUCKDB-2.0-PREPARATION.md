@@ -8,8 +8,8 @@ publish unsupported-format writes, and commit each verified step separately.
 | 1 | Explicit geometry lambda syntax, with golden/mirror regression coverage | Verified, `1927995` |
 | 2 | Independent pinned preview CI; preserve the released JVM lane | Verified locally, `a15dbf2`; GitHub run awaits push |
 | 3 | Fresh version guards across mutations and concurrent migration | Verified, `b7e1269` |
-| 4 | Version-aware inline metadata-column names | Verified; committed separately |
-| 5 | Matched Quack peers and transaction-recovery qualification | Pending |
+| 4 | Version-aware inline metadata-column names | Verified, `494491f` |
+| 5 | Matched Quack peers and transaction-recovery qualification | Safe preparation verified; full 2.0 JVM qualification remains gated |
 
 See [the compatibility assessment](UPSTREAM-DUCKDB-2.0-2026-10-08.md) for the full
 risks and upstream provenance. No step alone certifies DuckDB 2.0 or DuckLake 1.1.
@@ -67,3 +67,28 @@ layout-level coverage, not full 1.1 schema/type/nested-schema qualification.
 
 Full checks passed 497 JUnit tests (406 catalog, 51 SLT, 40 replay), the full
 corpus's 9,424 records, detekt and Java 17 checkAbi.
+
+## Step 5 scope and qualification limits
+
+The maintained Quack fixture now uses DuckDB CLI 1.5.5 to match JDBC 1.5.5.0.
+The native preview lane runs separate client/server processes from the same locked
+2.0 package and checks both peers' core/Quack hashes. It verifies rollback of an
+uncommitted write, error-invalidated explicit transactions, rollback recovery,
+subsequent committed writes and detach, with bounded process startup/teardown.
+
+A new maintained-lane regression reproduced an already-poisoned PostgreSQL read
+session after expected missing inline tables. Read paths now use non-failing,
+namespace-scoped existence probes first; unexpected errors in a pinned session
+escape rather than being swallowed. Actual connection errors are still errors.
+
+These are safe preparation gates, **not full JVM 2.0/Quack-v3 qualification**.
+No 2.0 JDBC artifact was introduced, and heartbeat leases, network partitions,
+mixed-version rejection, cancellation under load, storage rollback, and full 1.1
+stats/types/nested-schema support remain release gates. Preview GitHub execution
+awaits pushing; the native probes are verified locally.
+
+Final full forced checks, followed by another full check after the one-connection
+write-preflight assertion, passed **499 JUnit tests** (408 catalog, 51 SLT, 40 replay),
+9,424 corpus records, detekt and Java 17 checkAbi. The maintained peer-version test
+confirms both native peers report v1.5.5. Both preview layout backends and matched
+native preview Quack provenance/recovery probes passed locally.
