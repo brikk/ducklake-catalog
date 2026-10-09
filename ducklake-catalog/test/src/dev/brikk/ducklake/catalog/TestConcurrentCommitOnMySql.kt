@@ -96,6 +96,19 @@ class TestConcurrentCommitOnMySql {
     }
 
     @Test
+    fun expirationRetainsConflictHistoryOnMySql() {
+        catalog.createSchema("my_expired_history")
+        val expired = catalog.currentSnapshotId
+        val change = catalog.listSnapshotChanges().single { it.snapshotId == expired }
+        catalog.createSchema("my_expired_history_marker")
+
+        catalog.expireSnapshots(setOf(expired))
+
+        assertThat(catalog.getSnapshot(expired)).isNull()
+        assertThat(catalog.listSnapshotChanges()).contains(change)
+    }
+
+    @Test
     fun fileIdCollisionIsRetried() {
         catalog.createSchema("my_files")
         catalog.createTable("my_files", "t", listOf(TableColumnSpec.leaf("id", "int32", true)), null, null)

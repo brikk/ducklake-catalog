@@ -41,7 +41,8 @@ interface DucklakeCatalog : AutoCloseable {
     fun listSnapshots(): List<DucklakeSnapshot>
 
     /**
-     * List all snapshot change records, newest first.
+     * List all snapshot change records, newest first, including retained conflict history
+     * for expired snapshots (whose [getSnapshot] result is null).
      */
     fun listSnapshotChanges(): List<DucklakeSnapshotChange>
 
@@ -166,8 +167,12 @@ interface DucklakeCatalog : AutoCloseable {
     fun listExpirableSnapshots(olderThan: java.time.Instant?, versions: Set<Long>?): List<Long>
 
     /**
-     * Expire [snapshotIds] (must NOT include the latest snapshot). Deletes the snapshot +
-     * snapshot_changes rows, then cascade-deletes the now-dead data/delete files (+ their column
+     * Expire [snapshotIds] (must NOT include the latest snapshot). Deletes the snapshot rows,
+     * but retains their `ducklake_snapshot_changes` conflict history for open/retrying writers.
+     * [listSnapshotChanges] therefore includes changes of expired snapshots; retaining a change
+     * does not make its snapshot available for time travel. There is no safe conflict-history
+     * pruning watermark shared with other engines, so expiry never removes those rows.
+     * Then cascade-deletes the now-dead data/delete files (+ their column
      * stats, variant stats, and partition values), **scheduling** those files into
      * `ducklake_files_scheduled_for_deletion` (stored as absolute paths) for a later age-gated
      * [physical cleanup][listFilesScheduledForDeletion]. Liveness uses the half-open
@@ -180,7 +185,7 @@ interface DucklakeCatalog : AutoCloseable {
      * (`ducklake_table` + column/stats/partition/sort/mapping rows; `ducklake_view`;
      * `ducklake_macro`/`_impl`/`_parameters`; `ducklake_schema`) and name-mapping rows orphaned by
      * that cleanup — a full catalog sweep so a long-lived warehouse doesn't accumulate dead
-     * metadata. Not supported on the Quack backend yet.
+     * metadata.
      */
     fun expireSnapshots(snapshotIds: Set<Long>): ExpireSnapshotsResult
 

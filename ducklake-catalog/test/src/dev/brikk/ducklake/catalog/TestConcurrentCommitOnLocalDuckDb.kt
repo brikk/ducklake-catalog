@@ -101,6 +101,19 @@ class TestConcurrentCommitOnLocalDuckDb {
     }
 
     @Test
+    fun expirationRetainsConflictHistoryOnLocalDuckDb() {
+        catalog.createSchema("duck_expired_history")
+        val expired = catalog.currentSnapshotId
+        val change = catalog.listSnapshotChanges().single { it.snapshotId == expired }
+        catalog.createSchema("duck_expired_history_marker")
+
+        catalog.expireSnapshots(setOf(expired))
+
+        assertThat(catalog.getSnapshot(expired)).isNull()
+        assertThat(catalog.listSnapshotChanges()).contains(change)
+    }
+
+    @Test
     fun duelingTableStatsUpdatesRetryToo() {
         // Two inserts into the same table both UPDATE ducklake_table_stats — DuckDB raises
         // "Conflict on update!" for the loser (a write-write conflict, not a duplicate key).

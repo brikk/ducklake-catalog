@@ -845,8 +845,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 // snapshots that REMAIN.
                 metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SNAPSHOT)
                     .where(DUCKLAKE_SNAPSHOT.SNAPSHOT_ID.`in`(snapshotIds)))
-                metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SNAPSHOT_CHANGES)
-                    .where(DUCKLAKE_SNAPSHOT_CHANGES.SNAPSHOT_ID.`in`(snapshotIds)))
+                // Conflict history outlives snapshot/time-travel retention. A native open writer
+                // or our retry loop may still be based on an older snapshot and needs every
+                // intervening change, even one whose snapshot was expired. Without a shared
+                // active-writer watermark it is unsafe to prune ducklake_snapshot_changes here
+                // (upstream duckdb/ducklake#1472).
 
                 val deadTableIds: List<Long> = findDeadTableIds(ctx)
                 // Physical per-table inlined tables to DROP once the metadata transaction has

@@ -108,10 +108,12 @@ class TestJdbcDucklakeCatalogExpireSnapshotsDropsInlinedTables {
 
         // Expire every snapshot but the latest: the dropped table is then fully dead.
         val expirable = catalog.listExpirableSnapshots(null, null)
+        val conflictHistory = catalog.listSnapshotChanges()
         assertThat(expirable).doesNotContain(afterDrop).isNotEmpty()
         val result = catalog.expireSnapshots(expirable.toSet())
         assertThat(result.expiredSnapshotCount).isEqualTo(expirable.size)
         assertThat(result.scheduledFileCount).`as`("the table's parquet file was scheduled for deletion").isGreaterThan(0)
+        assertThat(catalog.listSnapshotChanges()).`as`("metadata/file GC must not erase conflict history").isEqualTo(conflictHistory)
 
         // Metadata rows gone ...
         assertThat(count("SELECT count(*) FROM ducklake_table WHERE table_id = $tableId")).isZero()

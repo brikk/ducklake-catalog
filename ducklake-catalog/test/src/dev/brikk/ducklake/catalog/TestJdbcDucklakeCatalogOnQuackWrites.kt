@@ -172,7 +172,8 @@ class TestJdbcDucklakeCatalogOnQuackWrites {
         val result = c.expireSnapshots(setOf(s1))
         assertThat(result.expiredSnapshotCount).isEqualTo(1)
         assertThat(c.getSnapshot(s1)).isNull()
-        assertThat(c.listSnapshotChanges().map { it.snapshotId }).doesNotContain(s1)
+        assertThat(c.listSnapshotChanges().map { it.snapshotId })
+            .`as`("expired snapshots retain their conflict history").contains(s1)
     }
 
     @Test

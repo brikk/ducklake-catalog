@@ -94,7 +94,7 @@ full test suite, mixed-protocol test, or production lake migration was run.
 | UP2-06 | P0 for local/Quack deployments | Quack protocol and native metadata storage rollback | Source; current fixtures are already version-skewed |
 | UP2-07 | P1 | NULL/timestamptz_ns/VARIANT inline types | Runtime types + source; mappings need version-aware coverage |
 | UP2-08 | P1 | Aborted transactions, prepared statements and missing-table probes | **Runtime-reproduced** binder failure invalidates explicit transaction |
-| UP2-09 | P1, also current-lane correctness | Expiration removes conflict history; newer concurrency rules | Direct upstream/local code divergence; not an upgrade-only issue |
+| UP2-09 | P1, also current-lane correctness | Expiration removes conflict history; newer concurrency rules | **History retention fixed/verified Oct 9**; remaining concurrency-rule audit stays open |
 | UP2-10 | P1 for mixed-engine writes | Stricter file-format/delete-file contracts | Source-head behavior; audit producers/consumers, not just JDBC |
 
 ### UP2-01 — version detection and migration must protect every mutation
@@ -272,6 +272,14 @@ retains `ducklake_snapshot_changes` when snapshots expire, so writers that start
 earlier still see intervening conflicts. Our `expireSnapshots` currently deletes
 those rows. This is a concrete divergence worth a dedicated regression **now**,
 not only when switching to 2.0. No live stale-write reproduction was run here.
+
+**Follow-up, 2026-10-09: history-retention fix completed and verified.** The original
+assessment above is historical. New regressions reproduced both native positional
+and whole-file stale deletes committing without a conflict, plus a JVM ALTER retry
+that bypassed its conflict matrix. Expiration now retains all conflict records,
+while snapshot/file/metadata GC continues. Verification passed 491 JUnit tests and
+the full oracle corpus. See the [fix report](FIX-expired-snapshot-conflict-history-2026-10-09.md)
+for the API/rollout implications. The broader concurrency audit below is still open.
 
 Main's Oct 6–8 changes also cover replaced-delete-file conflicts, inlined/file
 cross-store deletes, file-granular compaction conflicts, and preserving concurrent
