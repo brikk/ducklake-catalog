@@ -1,0 +1,69 @@
+name: DuckDB 2.0 Native Preview
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/duckdb2-preview.yml'
+      - 'dev-docs/probes/**'
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-preview:
+    # This is deliberately not a JDBC/connector qualification job. The normal CI
+    # remains authoritative for the maintained JVM dependency lane.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [duckdb, postgres]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: preview
+          POSTGRES_PASSWORD: preview
+          POSTGRES_DB: preview
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U preview -d preview"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install the locked preview (not latest/pre)
+        run: |
+          VERSION=$(python -c "import json; print(json.load(open('dev-docs/probes/duckdb2-preview-lock.json'))['python_package'])")
+          python -m pip install "duckdb==$VERSION"
+      - name: Verify maintained corpus pin
+        run: |
+          EXPECTED=$(python -c "import json; print(json.load(open('dev-docs/probes/duckdb2-preview-lock.json'))['corpus_sha'])")
+          ACTUAL=$(git ls-tree HEAD ducklake-test-corpus-replay/ducklake | awk '{print $3}')
+          test "$ACTUAL" = "$EXPECTED"
+      - name: Run native layout/migration/SQL canaries
+        env:
+          BACKEND: ${{ matrix.backend }}
+          DUCKDB_PREVIEW_POSTGRES_URI: "postgres:dbname=preview host=localhost port=${{ job.services.postgres.ports[5432] }} user=preview password=preview"
+        run: |
+          mkdir -p "$RUNNER_TEMP/preview"
+          ARGS=()
+          if [ "$BACKEND" = postgres ]; then ARGS+=(--postgres); fi
+          python dev-docs/probes/duckdb2_readiness.py --temp-root "$RUNNER_TEMP/preview" "${ARGS[@]}" > preview-report.json
+          python dev-docs/probes/verify_duckdb2_preview.py dev-docs/probes/duckdb2-preview-lock.json preview-report.json
+      - name: Upload provenance and observations, including on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-preview-${{ matrix.backend }}-${{ github.run_id }}
+          path: |
+            preview-report.json
+            dev-docs/probes/duckdb2-preview-lock.json
+          retention-days: 14

@@ -1,0 +1,9 @@
+{
+  "python_package": "2.0.0.dev2610011535",
+  "core_version": "v2.0.0-alpha43763",
+  "core_source_id": "96063b9e39",
+  "ducklake_extension": "e8924cfc9c",
+  "quack_extension": "974927a394",
+  "corpus_sha": "d8a1881e22516ea3d186d73e83c65fe5bd1a1dc4",
+  "catalog_versions": ["1.0", "1.1-dev1"]
+}

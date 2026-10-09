@@ -7,7 +7,9 @@ The output identifies core and extension builds; it is not JVM/JDBC qualificatio
 
 import argparse
 import json
+import os
 import tempfile
+import uuid
 from pathlib import Path
 
 import duckdb
@@ -16,8 +18,11 @@ import duckdb
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--temp-root", required=True, type=Path)
+    parser.add_argument("--postgres", action="store_true", help="Use disposable schemas in DUCKDB_PREVIEW_POSTGRES_URI")
     args = parser.parse_args()
     results = {"python_package": duckdb.__version__, "observations": {}}
+    metadata_uri = os.environ["DUCKDB_PREVIEW_POSTGRES_URI"] if args.postgres else None
+    schema_suffix = uuid.uuid4().hex[:12]
     with tempfile.TemporaryDirectory(prefix="catalog-duckdb2-", dir=args.temp_root) as directory:
         root = Path(directory)
         connection = duckdb.connect()
@@ -25,6 +30,8 @@ def main():
             results["core"] = connection.execute("PRAGMA version").fetchall()
             for extension in ("ducklake", "quack"):
                 connection.execute(f"INSTALL {extension}; LOAD {extension}")
+            if args.postgres:
+                connection.execute("INSTALL postgres; LOAD postgres")
             results["extensions"] = connection.execute(
                 "SELECT extension_name, extension_version, installed_from "
                 "FROM duckdb_extensions() WHERE loaded ORDER BY extension_name"
@@ -57,10 +64,11 @@ def main():
 
             def attach(alias, version_option=""):
                 # Paths come from TemporaryDirectory, not from user-authored SQL fragments.
-                metadata = str(root / f"{alias}.db").replace("'", "''")
+                metadata = (metadata_uri or str(root / f"{alias}.db")).replace("'", "''")
                 data = str(root / f"{alias}-files").replace("'", "''")
+                schema_option = f", METADATA_SCHEMA 'preview_{alias}_{schema_suffix}'" if args.postgres else ""
                 connection.execute(f"ATTACH 'ducklake:{metadata}' AS {alias} "
-                                   f"(DATA_PATH '{data}', METADATA_CATALOG '{alias}_meta'{version_option})")
+                                   f"(DATA_PATH '{data}', METADATA_CATALOG '{alias}_meta'{schema_option}{version_option})")
 
             def catalog_shape(alias, label=None):
                 label = label or alias
