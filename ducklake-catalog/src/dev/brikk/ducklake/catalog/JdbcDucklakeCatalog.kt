@@ -838,6 +838,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val ctx = forConnection(conn)
             metadata.begin(ctx)
             try {
+                requireCatalogWritesSupported(ctx)
                 val maxId = readLatestSnapshotId(ctx)
                 require(maxId !in snapshotIds) { "cannot expire the latest snapshot ($maxId)" }
 
@@ -1208,7 +1209,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun removeSelectedScheduledFiles(entries: Collection<DucklakeScheduledFileEntry>) {
         requireNotInReadSession("remove selected scheduled files")
-        JdbcDucklakeCleanupQueries(dsl, metadata).removeSelectedScheduledFiles(entries)
+        withMaintenanceWriteContext { ctx -> JdbcDucklakeCleanupQueries(ctx, metadata).removeSelectedScheduledFiles(entries) }
     }
 
     override fun listFilesScheduledForDeletion(olderThan: Instant): List<DucklakeScheduledFile> {
@@ -1224,8 +1225,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (dataFileIds.isEmpty()) {
             return
         }
-        val sched = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION
-        metadata.execute(pooledDsl, pooledDsl.deleteFrom(sched).where(sched.DATA_FILE_ID.`in`(dataFileIds)))
+        withMaintenanceWriteContext { ctx ->
+            val sched = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION
+            metadata.execute(ctx, ctx.deleteFrom(sched).where(sched.DATA_FILE_ID.`in`(dataFileIds)))
+        }
     }
 
     private fun resolveScopedPath(path: String?, isRelative: Boolean?, parentPath: String): String {
@@ -1408,6 +1411,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val ctx = forConnection(conn)
             metadata.begin(ctx)
             try {
+                requireCatalogWritesSupported(ctx)
                 val snap = DUCKLAKE_SNAPSHOT
                 val snapshot = ctx.selectFrom(snap).orderBy(snap.SNAPSHOT_ID.desc()).limit(1).fetchOne()
                     ?: throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
@@ -2275,28 +2279,45 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .fetchOne(meta.VALUE)
     }
 
-    /**
-     * Cached once per catalog instance: `version` and `encrypted` are written at catalog creation
-     * and only change through an upstream migration, which requires re-attaching anyway.
-     */
-    @Volatile
-    private var fileWriteGuard: FileWriteGuard? = null
-
-    private data class FileWriteGuard(val version: String?, val encrypted: Boolean)
-
-    /**
-     * Precondition for every operation that registers data or delete FILES (insert, add_files,
-     * delete, merge, flush, rewrite): the catalog must be at a spec version whose row shapes this
-     * library writes, and must not be encrypted (see [DucklakeEncryptedCatalogUnsupportedException]).
-     * Metadata-only DDL is not gated — it is version-agnostic within 0.4+ and unaffected by encryption.
-     */
-    private fun requireFileWritesSupported() {
-        val guard = fileWriteGuard ?: FileWriteGuard(getSpecVersion(), isEncrypted()).also { fileWriteGuard = it }
-        if (guard.version !in DucklakeSpecVersions.WRITABLE) {
-            throw DucklakeUnsupportedCatalogVersionException(catalogDatabaseUrl, guard.version)
+    /** Fresh per attempt: another engine can migrate while this instance remains attached. */
+    private fun requireCatalogWritesSupported(ctx: DSLContext, registersFiles: Boolean = false) {
+        val version = lockedGlobalMetadataValue(ctx, "version")
+        if (version !in DucklakeSpecVersions.WRITABLE) {
+            throw DucklakeUnsupportedCatalogVersionException(catalogDatabaseUrl, version)
         }
-        if (guard.encrypted) {
+        if (registersFiles && lockedGlobalMetadataValue(ctx, "encrypted")?.equals("true", ignoreCase = true) == true) {
             throw DucklakeEncryptedCatalogUnsupportedException(catalogDatabaseUrl)
+        }
+    }
+
+    private fun requireFileWritesSupported() = requireCatalogWritesSupported(pooledDsl, registersFiles = true)
+
+    private fun lockedGlobalMetadataValue(ctx: DSLContext, key: String): String? {
+        val meta = DUCKLAKE_METADATA
+        val query = ctx.select(meta.VALUE).from(meta).where(meta.KEY.eq(key)).and(meta.SCOPE.isNull).limit(2)
+        // PG/MySQL locking reads see the current row and prevent its update until this owned
+        // transaction completes. DuckDB/Quack have no FOR SHARE: migrations there must still be
+        // coordinated externally; this guard is not a cross-engine migration protocol.
+        val values = if (dialect == SQLDialect.POSTGRES || dialect == SQLDialect.MYSQL) {
+            query.forShare().fetch(meta.VALUE)
+        } else query.fetch(meta.VALUE)
+        if (values.size > 1) throw DucklakeCatalogCorruptionException("Duplicate catalog $key metadata")
+        return values.singleOrNull()
+    }
+
+    private fun withMaintenanceWriteContext(action: (DSLContext) -> Unit) {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            val ctx = forConnection(conn)
+            metadata.begin(ctx)
+            try {
+                requireCatalogWritesSupported(ctx)
+                action(ctx)
+                metadata.commit(ctx, conn)
+            } catch (e: Exception) {
+                rollbackQuietly(ctx, conn, e)
+                throw e
+            }
         }
     }
 
@@ -2457,7 +2478,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * with an "exceeded retry count" message. This matches upstream DuckLake's
      * retry semantics so that low-rate contention is absorbed transparently.
      */
-    private fun executeWriteTransaction(operationDescription: String, action: WriteTransactionAction) {
+    private fun executeWriteTransaction(
+        operationDescription: String,
+        registersFiles: Boolean = false,
+        action: WriteTransactionAction,
+    ) {
         requireNotInReadSession(operationDescription)
         // Captured once on attempt 1, propagated across retries so the
         // change-vs-change conflict matrix on retry can ask "what committed
@@ -2473,7 +2498,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             operationDescription,
             WriteTransactionRetry.RANDOM_JITTER,
         ) {
-            attemptWriteTransaction(operationDescription, action, transactionStartSnapshotId)
+            attemptWriteTransaction(operationDescription, action, transactionStartSnapshotId, registersFiles)
         }
     }
 
@@ -2481,6 +2506,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         operationDescription: String,
         action: WriteTransactionAction,
         transactionStartSnapshotId: LongArray,
+        registersFiles: Boolean,
     ) {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
         val schver = DUCKLAKE_SCHEMA_VERSIONS.`as`("schver")
@@ -2522,6 +2548,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     // does any writes, so a competing committer can advance the
                     // snapshot without deadlocking on row locks this tx would hold.
                     beforeWriteTransactionAction.run()
+
+                    requireCatalogWritesSupported(txDsl, registersFiles)
 
                     action.execute(tx)
 
@@ -3312,7 +3340,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun flushInlinedData(tableId: Long, fragments: List<DucklakeWriteFragment>, preservedRowIdStart: Long) {
         requireFileWritesSupported()
-        executeWriteTransaction("flush inlined data for table $tableId") { tx ->
+        executeWriteTransaction("flush inlined data for table $tableId", registersFiles = true) { tx ->
             val ctx = tx.dsl()
             val newSnapshotId = tx.getNewSnapshotId()
 
@@ -3357,7 +3385,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
         }
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        executeWriteTransaction("flush inlined data (with snapshots) for table $tableId") { tx ->
+        executeWriteTransaction("flush inlined data (with snapshots) for table $tableId", registersFiles = true) { tx ->
             val ctx = tx.dsl()
             require(readSnapshotId <= tx.getCurrentSnapshotId()) {
                 "flushInlinedDataWithSnapshots: read snapshot $readSnapshotId is newer than current snapshot ${tx.getCurrentSnapshotId()}"
@@ -4277,7 +4305,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return
         }
 
-        executeWriteTransaction("insert into table $tableId") { tx ->
+        executeWriteTransaction("insert into table $tableId", registersFiles = true) { tx ->
             applyInsertFragments(tx, tableId, fragments)
             tx.recordChange(WriteChange.InsertedIntoTable(tableId, referencedColumnIds(fragments)))
         }
@@ -4289,7 +4317,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return
         }
 
-        executeWriteTransaction("add files to table $tableId") { tx ->
+        executeWriteTransaction("add files to table $tableId", registersFiles = true) { tx ->
             applyInsertFragments(tx, tableId, fragments)
             tx.recordChange(WriteChange.InsertedIntoTable(tableId, referencedColumnIds(fragments)))
         }
@@ -4612,7 +4640,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return
         }
 
-        executeWriteTransaction("delete from table $tableId") { tx ->
+        executeWriteTransaction("delete from table $tableId", registersFiles = true) { tx ->
             applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId ?: tx.getCurrentSnapshotId())
             tx.recordChange(WriteChange.DeletedFromTable(tableId, referencedDataFileIds(deleteFragments)))
         }
@@ -4647,7 +4675,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return
         }
 
-        executeWriteTransaction("merge into table $tableId") { tx ->
+        executeWriteTransaction("merge into table $tableId", registersFiles = true) { tx ->
             if (deleteFragments.isNotEmpty()) {
                 applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId ?: tx.getCurrentSnapshotId())
                 tx.recordChange(WriteChange.DeletedFromTable(tableId, referencedDataFileIds(deleteFragments)))
@@ -4669,7 +4697,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (sourceDataFileIds.isEmpty() || fragments.isEmpty()) {
             return
         }
-        executeWriteTransaction("rewrite data files for table $tableId") { tx ->
+        executeWriteTransaction("rewrite data files for table $tableId", registersFiles = true) { tx ->
             assertNoNewerDeleteOnRewriteSources(tx, sourceDataFileIds, readSnapshotId)
             val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
@@ -4700,7 +4728,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return
         }
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        executeWriteTransaction("partial-rewrite data files for table $tableId") { tx ->
+        executeWriteTransaction("partial-rewrite data files for table $tableId", registersFiles = true) { tx ->
             val ctx = tx.dsl()
             // Recheck eligibility on every attempt before registering output or deleting history.
             // Applying deletes requires the ordinary, end-snapshotting rewrite instead.

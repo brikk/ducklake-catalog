@@ -114,7 +114,7 @@ Version `0.9.0` adds bounded cleanup APIs:
   and dropped owners; excludes the deletion queue.
 - `getCleanupDataPath()`: bounded catalog-root projection, including duplicate detection.
 - `removeSelectedScheduledFiles(entries)`: exact raw tuple equality, independent of supported
-  path collations, in chunks of 64 predicates. At most 1024 input entries; not atomic across chunks.
+  path collations, in chunks of 64 predicates inside one guarded catalog transaction. At most 1024 input entries.
 
 Path fields are limited to 16,384 characters, with SQL overflow sentinels so oversized metadata
 is not first materialized in full. Consumers should plan within `readSession`, cap total inspected

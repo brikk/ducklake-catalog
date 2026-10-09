@@ -26,7 +26,8 @@ import java.sql.DriverManager
  * (TODO-rectify-from-eval.md W-B7, W-D8): an ENCRYPTED lake (every file needs a per-file key we
  * do not produce — upstream then throws "Database is encrypted, but file ... does not have an
  * encryption key" for the whole table) and a pre-0.4 spec version (row shapes differ; upstream
- * migrates on ATTACH). Metadata-only DDL keeps working.
+ * migrates on ATTACH). Metadata-only DDL keeps working on supported encrypted catalogs,
+ * but every mutation rejects unsupported catalog versions.
  */
 class TestJdbcDucklakeCatalogFileWriteGuards {
     companion object {
@@ -111,6 +112,77 @@ class TestJdbcDucklakeCatalogFileWriteGuards {
             // ... and metadata-only DDL is still allowed.
             catalog.createSchema("enc_ddl_ok")
             assertThat(catalog.getSchema("enc_ddl_ok", catalog.currentSnapshotId)).isNotNull()
+        }
+    }
+
+    @Test
+    fun aLiveClientDoesNotReuseItsSupportedVersionAfterExternalMigration() {
+        openCatalog(isolated.jdbcUrl, isolated.dataDir.toString()).use { catalog ->
+            val table = catalog.getTable("test_schema", "simple_table", catalog.currentSnapshotId)!!
+            val column = catalog.getTableColumns(table.tableId, catalog.currentSnapshotId).first().columnId
+            catalog.commitInsert(table.tableId, listOf(fragment(column))) // warm the old cached guard
+            val before = catalog.currentSnapshotId
+            setMetadata("version", "1.1-dev1")
+            try {
+                assertThatThrownBy { catalog.commitInsert(table.tableId, listOf(fragment(column))) }
+                    .isInstanceOf(DucklakeUnsupportedCatalogVersionException::class.java)
+                assertThat(catalog.currentSnapshotId).isEqualTo(before)
+            } finally { setMetadata("version", "1.0") }
+        }
+    }
+
+    @Test
+    fun unsupportedFormatsRefuseDdlStatsExpiryAndCleanupMutations() {
+        openCatalog(isolated.jdbcUrl, isolated.dataDir.toString()).use { catalog ->
+            val before = catalog.currentSnapshotId
+            val table = catalog.getTable("test_schema", "simple_table", before)!!
+            val expired = catalog.listExpirableSnapshots(null, null).first()
+            val operations = listOf<() -> Unit>(
+                { catalog.createSchema("unsupported_ddl") },
+                { catalog.addColumn(table.tableId, TableColumnSpec.leaf("unsupported", "int32", true)) },
+                { catalog.truncateTable("test_schema", "simple_table") },
+                { catalog.analyzeTable(table.tableId) },
+                { catalog.expireSnapshots(setOf(expired)) },
+                { catalog.removeScheduledFileRows(listOf(0)) },
+                { catalog.removeSelectedScheduledFiles(listOf(DucklakeScheduledFileEntry(0, "p", true, java.time.OffsetDateTime.now()))) },
+            )
+            setMetadata("version", "1.1-dev1")
+            try {
+                operations.forEach { operation ->
+                    assertThatThrownBy { operation() }.isInstanceOf(DucklakeUnsupportedCatalogVersionException::class.java)
+                }
+                assertThat(catalog.currentSnapshotId).isEqualTo(before)
+                assertThat(catalog.getSnapshot(expired)).isNotNull()
+                assertThat(catalog.getSchema("unsupported_ddl", before)).isNull()
+            } finally { setMetadata("version", "1.0") }
+        }
+    }
+
+    @Test
+    fun migrationBetweenPreflightAndMutationIsRejectedOnTheOwnedConnection() {
+        openCatalog(isolated.jdbcUrl, isolated.dataDir.toString()).use { catalog ->
+            val before = catalog.currentSnapshotId
+            val table = catalog.getTable("test_schema", "simple_table", before)!!
+            val column = catalog.getTableColumns(table.tableId, before).first().columnId
+            catalog.beforeWriteTransactionAction = Runnable { setMetadata("version", "1.1-dev1") }
+            try {
+                assertThatThrownBy { catalog.commitInsert(table.tableId, listOf(fragment(column))) }
+                    .isInstanceOf(DucklakeUnsupportedCatalogVersionException::class.java)
+                assertThat(catalog.currentSnapshotId).isEqualTo(before)
+            } finally {
+                catalog.beforeWriteTransactionAction = Runnable {}
+                setMetadata("version", "1.0")
+            }
+        }
+    }
+
+    private fun setMetadata(key: String, value: String) {
+        DriverManager.getConnection(isolated.jdbcUrl, isolated.user, isolated.password).use { connection ->
+            connection.prepareStatement("UPDATE ducklake_metadata SET value = ? WHERE key = ? AND scope IS NULL").use {
+                it.setString(1, value)
+                it.setString(2, key)
+                it.executeUpdate()
+            }
         }
     }
 

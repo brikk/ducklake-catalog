@@ -230,7 +230,7 @@ interface DucklakeCatalog : AutoCloseable {
     /**
      * Removes only the exact raw id/path/relative/timestamp tuples selected by the caller, including
      * identical duplicates. At most [DucklakeCleanupLimits.MAX_BATCH_SIZE] entries, in small mutation
-     * chunks; not atomic across chunks. Forbidden inside [readSession]. This does not lock owners or
+     * chunks inside one guarded catalog transaction. Forbidden inside [readSession]. This does not lock owners or
      * coordinate concurrent file registration with physical cleanup.
      */
     fun removeSelectedScheduledFiles(entries: Collection<DucklakeScheduledFileEntry>)

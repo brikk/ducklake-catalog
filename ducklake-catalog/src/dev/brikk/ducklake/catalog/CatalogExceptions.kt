@@ -138,7 +138,7 @@ open class DucklakeUnsupportedCatalogVersionException(
 ) : DucklakeException(
     "DuckLake catalog at \"$catalogDatabaseUrl\" has spec version " + (version ?: "<missing>") +
         "; this client writes spec versions ${DucklakeSpecVersions.WRITABLE.joinToString(", ")} only. " +
-        "Attach the catalog from a current DuckDB (INSTALL ducklake; LOAD ducklake; ATTACH ...) to migrate it, then retry.",
+        "Use a compatible catalog version; do not migrate to a newer development format until this client supports it.",
 )
 
 /** DuckLake spec versions as recorded in `ducklake_metadata.version`. */
