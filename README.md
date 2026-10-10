@@ -21,10 +21,13 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 ## Using it as a dependency
 
-Latest release: **0.10.0** (`main` is `0.11.0-SNAPSHOT`)
+Latest release: **0.11.0** (`main` is `0.12.0-SNAPSHOT`)
 
 The `0.10.0` upgrade requires nullable row-ID handling in consumers; see the
 [release and migration notes](dev-docs/RELEASE-0.10.0.md).
+
+For 0.11.0 transport setup and intentional maintenance/version-guard behavior
+changes, see the [0.11.0 release notes](dev-docs/RELEASE-0.11.0.md).
 
 ### Gradle (Kotlin DSL)
 
@@ -34,16 +37,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.10.0")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.11.0")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.10.0"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.11.0"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.10.0")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.11.0")
 
     // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
-    implementation("dev.brikk.ducklake:slt-format:0.10.0")
+    implementation("dev.brikk.ducklake:slt-format:0.11.0")
 }
 ```
 
@@ -54,10 +57,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.10.0'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.10.0')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.10.0'
-    implementation 'dev.brikk.ducklake:slt-format:0.10.0'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.11.0'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.11.0')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.11.0'
+    implementation 'dev.brikk.ducklake:slt-format:0.11.0'
 }
 ```
 
@@ -67,14 +70,14 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.10.0</version>
+  <version>0.11.0</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.10.0</version>
+  <version>0.11.0</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
 </dependency>
@@ -83,7 +86,7 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>slt-format</artifactId>
-  <version>0.10.0</version>
+  <version>0.11.0</version>
 </dependency>
 ```
 
@@ -100,7 +103,7 @@ repositories {
         content { includeGroup("dev.brikk.ducklake") }
     }
 }
-// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.11.0-SNAPSHOT
+// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.12.0-SNAPSHOT
 ```
 
 ## Bounded Cleanup API

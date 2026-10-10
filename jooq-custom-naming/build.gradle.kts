@@ -2,7 +2,7 @@ plugins {
     id("buildlogic.kotlin.library")
 }
 
-version = "0.11.0-SNAPSHOT"
+version = "0.11.0"
 
 dependencies {
     implementation(libs.jooq.codegen)
