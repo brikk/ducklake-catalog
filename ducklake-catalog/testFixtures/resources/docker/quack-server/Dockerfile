@@ -4,12 +4,12 @@
 # that breaks the connection-id self-RPC loop documented upstream in
 # duckdb/ducklake's scripts/run_quack_tests.py.
 #
-# Pinned to match duckdb_jdbc:1.5.5.0 on the client side. Bumping this version
+# Pinned to match duckdb_jdbc:1.5.6.0 on the client side. Bumping this version
 # requires the matching bump in gradle/libs.versions.toml (key: `duckdb`).
 
 FROM debian:bookworm-slim
 
-ARG DUCKDB_VERSION=v1.5.5
+ARG DUCKDB_VERSION=v1.5.6
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl unzip \

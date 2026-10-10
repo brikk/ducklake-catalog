@@ -121,6 +121,8 @@ dependencies {
     testFixturesApi(libs.bundles.jooq)
 
     testImplementation(libs.duckdb.jdbc)
+    // Direct Java Quack transport is optional at runtime; qualify it against the same metadata server.
+    testRuntimeOnly(libs.quack.jdbc)
     testRuntimeOnly(libs.postgres.jdbc)
     // MySQL Connector/J for the MySQL-backend smoke test. Test-only: the main artifact
     // never names a driver — HikariCP resolves it from the JDBC URL at runtime.

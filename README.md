@@ -124,6 +124,25 @@ new bulk maintenance must not use their unbounded fetches as a paging fallback.
 
 Update consumers to matching published artifacts before deployment.
 
+## DuckDB catalog transports
+
+The maintained runtime/test lane uses DuckDB JDBC **1.5.6.0** and a matching
+DuckDB **1.5.6** Quack server. For an initialized DuckLake 1.0 metadata catalog:
+
+| Route | `DucklakeCatalogConfig.catalogDatabaseUrl` | Required runtime driver |
+|---|---|---|
+| Local DuckDB file | `jdbc:duckdb:/path/catalog.db` | `org.duckdb:duckdb_jdbc:1.5.6.0` |
+| Native Quack client | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC 1.5.6.0, native Quack/DuckLake extensions |
+| Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.8.0` |
+
+For both remote routes, pass the token in `catalogDatabasePassword`, not in shared
+URLs. The direct Java route uses ordinary remote JDBC transactions and does not
+need embedded DuckDB in the client process; the native route remains unchanged.
+The library does not bundle JDBC drivers or initialize/migrate the catalog. Quack
+serves metadata here; engines still need access to the actual Parquet data location.
+Direct Java transport is verified against the released 1.5.6/v1 server; this does
+not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](dev-docs/UPGRADE-DUCKDB-1.5.6-2026-10-10.md).
+
 ## Building
 
 Multi-module Gradle build. The toolchain is pinned in [`mise.toml`](mise.toml) / [`.sdkmanrc`](.sdkmanrc)

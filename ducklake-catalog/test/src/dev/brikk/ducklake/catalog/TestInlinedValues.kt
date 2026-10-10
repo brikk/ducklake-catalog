@@ -79,6 +79,30 @@ class TestInlinedValues {
     }
 
     @Test
+    fun standardJdbcStructsPreserveFieldOrderNestedValuesAndNulls() {
+        val type = InlinedTypeNode("struct", "s", listOf(
+            leaf("int32", "a"), InlinedTypeNode("struct", "child", listOf(leaf("varchar", "v"))),
+        ))
+        assertThat(InlinedValues.decode(jdbcStruct(arrayOf(7, jdbcStruct(arrayOf("x")))), type))
+            .isEqualTo(linkedMapOf("a" to 7, "child" to linkedMapOf("v" to "x")))
+        assertThat(InlinedValues.decode(jdbcStruct(arrayOf(7, null)), type))
+            .isEqualTo(linkedMapOf("a" to 7, "child" to null))
+    }
+
+    @Test
+    fun malformedStandardJdbcStructsFailInsteadOfDroppingAttributes() {
+        val type = InlinedTypeNode("struct", "s", listOf(leaf("int32", "a")))
+        assertThatThrownBy { InlinedValues.decode(jdbcStruct(arrayOf(1, 2)), type) }
+            .isInstanceOf(DucklakeCatalogCorruptionException::class.java).hasMessageContaining("attribute count")
+    }
+
+    private fun jdbcStruct(values: Array<Any?>): java.sql.Struct = object : java.sql.Struct {
+        override fun getSQLTypeName() = "STRUCT"
+        override fun getAttributes(): Array<Any?> = values.clone()
+        override fun getAttributes(map: MutableMap<String, Class<*>>?): Array<Any?> = values.clone()
+    }
+
+    @Test
     fun undecodableValuesSurfaceAsCorruptionNotAsWrongValues() {
         assertThatThrownBy { InlinedValues.decode("not-a-date", leaf("date")) }
             .isInstanceOf(DucklakeCatalogCorruptionException::class.java)

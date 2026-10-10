@@ -38,7 +38,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.function.Supplier
 
-/** The same bounded-cleanup contract runs against real metadata tables on all four backends. */
+/** The bounded-cleanup contract runs on every backend, including both native and Java Quack routes. */
 class TestJdbcDucklakeCatalogBoundedCleanup {
     @Nested
     inner class PostgreSql : Contract(Backend.POSTGRES)
@@ -52,7 +52,10 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
     @Nested
     inner class Quack : Contract(Backend.QUACK)
 
-    enum class Backend { POSTGRES, DUCKDB, MYSQL, QUACK }
+    @Nested
+    inner class JavaQuack : Contract(Backend.JAVA_QUACK)
+
+    enum class Backend { POSTGRES, DUCKDB, MYSQL, QUACK, JAVA_QUACK }
 
     @TestInstance(TestInstance.Lifecycle.PER_CLASS)
     abstract class Contract(private val backend: Backend) {
@@ -95,6 +98,7 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
                     config.catalogDatabaseUrl = "jdbc:duckdb:quack://${quack.getHost()}:${quack.getMappedPort()}?metadata_catalog=cleanup_meta"
                     config.catalogDatabasePassword = quack.getToken()
                 }
+                Backend.JAVA_QUACK -> configureJavaQuack(config)
             }
             catalog = JdbcDucklakeCatalog(config)
             if (backend == Backend.QUACK) {
@@ -111,6 +115,19 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
             configurePathCollation()
         }
 
+        private fun configureJavaQuack(config: DucklakeCatalogConfig) {
+            val quack = TestingDucklakeDuckDbQuackCatalogServer().also { server = it }
+            DriverManager.getConnection("jdbc:duckdb:").use { native ->
+                val url = QuackBackedDuckDbCatalogUrl.parse(
+                    "jdbc:duckdb:quack://${quack.getHost()}:${quack.getMappedPort()}?metadata_catalog=java_cleanup_meta",
+                    quack.getToken(), config.dataPath,
+                )
+                native.createStatement().use { it.execute(url.connectionInitSql()) }
+            }
+            config.catalogDatabaseUrl = "jdbc:quack://${quack.getHost()}:${quack.getMappedPort()}"
+            config.catalogDatabasePassword = quack.getToken()
+        }
+
         private fun configurePathCollation() {
             when (backend) {
                 Backend.MYSQL -> {
@@ -121,7 +138,7 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
                     exec("CREATE COLLATION cleanup_insensitive (provider = icu, locale = 'und-u-ka-shifted-ks-level1', deterministic = false)")
                     exec("ALTER TABLE ducklake_files_scheduled_for_deletion ALTER COLUMN path TYPE TEXT COLLATE cleanup_insensitive")
                 }
-                Backend.DUCKDB, Backend.QUACK -> {
+                Backend.DUCKDB, Backend.QUACK, Backend.JAVA_QUACK -> {
                     exec("ALTER TABLE ducklake_files_scheduled_for_deletion ALTER COLUMN path TYPE VARCHAR COLLATE NOCASE")
                 }
             }

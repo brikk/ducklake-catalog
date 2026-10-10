@@ -352,7 +352,7 @@ object InlinedValues {
 
     private fun decodeNested(raw: Any, type: InlinedTypeNode): Any {
         // Native driver objects (DuckDB backend) first; everything else is DuckDB's text form.
-        nativeNested(raw)?.let { native ->
+        nativeNested(raw, type)?.let { native ->
             when {
                 native is Map<*, *> && type.type == "map" ->
                     return LinkedHashMap<Any?, Any?>().also { out ->
@@ -371,18 +371,29 @@ object InlinedValues {
 
     /**
      * Unwraps the JDBC driver's native nested objects to plain `List` / `Map`: `java.sql.Array`,
-     * `java.util.Map`, `List`, and DuckDB's `DuckDBStruct` (`getMap()`) / `DuckDBMap` — reached by
+     * standard `java.sql.Struct`, `java.util.Map`, `List`, and DuckDB's `DuckDBStruct` (`getMap()`) / `DuckDBMap` — reached by
      * reflection so the catalog does not depend on the DuckDB driver at compile time.
      */
-    private fun nativeNested(raw: Any): Any? =
+    private fun nativeNested(raw: Any, type: InlinedTypeNode): Any? =
         when {
             raw is java.sql.Array -> (raw.array as Array<*>).toList()
             raw is Map<*, *> -> raw
             raw is List<*> -> raw
             raw.javaClass.simpleName == "DuckDBStruct" -> raw.javaClass.getMethod("getMap").invoke(raw) as? Map<*, *>
             raw.javaClass.simpleName == "DuckDBArray" -> (raw.javaClass.getMethod("getArray").invoke(raw) as? Array<*>)?.toList()
+            raw is java.sql.Struct -> standardStructFields(raw, type)
             else -> null
         }
+
+    private fun standardStructFields(raw: java.sql.Struct, type: InlinedTypeNode): Map<String, Any?> {
+        val attributes = raw.attributes
+        require(type.type == "struct" && attributes.size == type.children.size) {
+            "Struct attribute count does not match declared fields"
+        }
+        return LinkedHashMap<String, Any?>().also { out ->
+            type.children.forEachIndexed { index, child -> out[child.name] = attributes[index] }
+        }
+    }
 
     /**
      * Recursive-descent parser for DuckDB's nested-value text (`Value::ToString` of STRUCT / LIST /

@@ -92,3 +92,13 @@ write-preflight assertion, passed **499 JUnit tests** (408 catalog, 51 SLT, 40 r
 9,424 corpus records, detekt and Java 17 checkAbi. The maintained peer-version test
 confirms both native peers report v1.5.5. Both preview layout backends and matched
 native preview Quack provenance/recovery probes passed locally.
+
+## 2026-10-10 maintained-lane upgrade
+
+The historical verification above remains the step-by-step 1.5.5 baseline.
+The maintained lane subsequently moved to released DuckDB/JDBC 1.5.6, with its
+matching corpus and signed Quack server. The published Java driver 0.8.0 is now
+qualified separately through the optional direct JDBC catalog route; the existing
+embedded/native route is unchanged. See [the upgrade report](UPGRADE-DUCKDB-1.5.6-2026-10-10.md)
+for final-artifact verification and consumer setup. Native 2.0 preview pins and
+final-2.0/1.1 write gates are unchanged.

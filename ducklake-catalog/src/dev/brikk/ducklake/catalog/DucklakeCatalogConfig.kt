@@ -32,9 +32,12 @@ package dev.brikk.ducklake.catalog
  *    is effectively single-writer-PROCESS: no concurrent DuckDB CLI / second cluster can write the
  *    same catalog file. Concurrency between threads of this process works (DuckDB's optimistic
  *    conflicts are detected and retried).
- *  - **Quack-wrapped DuckDB** (`jdbc:duckdb:` + Quack RPC) — read paths are supported; the write
- *    paths that UPDATE/DELETE metadata rows are not verified end-to-end (see
- *    TODO-rectify-from-eval.md C-D5).
+ *  - **Quack-wrapped DuckDB** (`jdbc:duckdb:quack://…`) — embedded DuckDB's native client,
+ *    with server-side wrapping and explicitly owned remote transactions.
+ *  - **Direct Java Quack** (`jdbc:quack://…`) — optional `dev.brikk.duckdb:quack-jdbc`
+ *    runtime driver; server SQL uses the DuckDB dialect and ordinary JDBC transactions.
+ *    The password slot supplies the Quack token. Both routes require initialized remote
+ *    metadata and do not turn the Quack catalog into Trino's Parquet scan engine.
  *
  * Every backend must already hold an initialized DuckLake catalog (spec version 0.4 or 1.0, created
  * by attaching it once from DuckDB); this library never bootstraps or migrates the schema.

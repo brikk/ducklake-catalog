@@ -154,7 +154,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (config.catalogDatabasePassword != null) {
                 hikariConfig.password = config.catalogDatabasePassword
             }
-            dialectInferenceUrl = configuredUrl
+            // The independent Java Quack driver still executes DuckDB SQL. jOOQ does not
+            // recognise jdbc:quack URLs and DEFAULT renders invalid INSERT aliases and cleanup
+            // predicates. Infer the server dialect without replacing the actual driver URL.
+            dialectInferenceUrl = if (configuredUrl.startsWith("jdbc:quack:")) "jdbc:duckdb:" else configuredUrl
             metadataQuery = DirectMetadataQuery()
         }
         hikariConfig.maximumPoolSize = config.maxCatalogConnections

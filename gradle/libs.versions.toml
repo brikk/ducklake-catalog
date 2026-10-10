@@ -1,6 +1,7 @@
 [versions]
 kotlin = "2.3.10"
-duckdb = "1.5.5.0"
+duckdb = "1.5.6.0"
+quack-jdbc = "0.8.0"
 jackson = "2.21.2"
 java-uuid-generator = "5.0.0"
 junit = "5.12.2"
@@ -21,6 +22,7 @@ kotlin-bom = { module = "org.jetbrains.kotlin:kotlin-bom", version.ref = "kotlin
 
 hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
 duckdb-jdbc = { module = "org.duckdb:duckdb_jdbc", version.ref = "duckdb" }
+quack-jdbc = { module = "dev.brikk.duckdb:quack-jdbc", version.ref = "quack-jdbc" }
 trino-bom = { module = "io.trino:trino-root", version.ref = "trino" }
 postgres-jdbc = { module = "org.postgresql:postgresql", version.ref = "postgres" }
 mysql-jdbc = { module = "com.mysql:mysql-connector-j", version.ref = "mysql" }
