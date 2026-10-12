@@ -172,7 +172,98 @@ class TestJdbcDucklakeCatalogCoverageInlined {
         return scratch("SELECT id FROM read_parquet(${q(dir.resolve(h.file.path).toString())})").map { it[0]!!.toInt() }
     }
 
+    private fun taggedDeleteFile(dir: Path, name: String, dataPath: Path, positions: Map<Long, Long>): Long {
+        val rows = positions.entries.joinToString(" UNION ALL ") { (pos, snap) ->
+            "SELECT ${q(dataPath.toString())} AS file_path, $pos::BIGINT AS pos, $snap::BIGINT AS _ducklake_internal_snapshot_id"
+        }
+        scratch("COPY (SELECT * FROM ($rows) ORDER BY pos) TO ${q(dir.resolve(name).toString())} (FORMAT PARQUET)")
+        return Files.size(dir.resolve(name))
+    }
+
+    @Test
+    fun jvmFlushMergesInlinePositionsWithAnExistingDeleteFileWithoutDuplicatingLiveDeletes() {
+        duckExec(
+            "CREATE TABLE lake.$SCHEMA.flush_merge (id INTEGER)",
+            "INSERT INTO lake.$SCHEMA.flush_merge SELECT * FROM range(20)",
+            "CALL ducklake_flush_inlined_data('lake', schema_name => '$SCHEMA', table_name => 'flush_merge')",
+        )
+        val t = table("flush_merge")
+        val dataFile = catalog.getDataFiles(t.tableId, catalog.currentSnapshotId).single()
+        val dir = tableDir(t)
+        val dataPath = dir.resolve(dataFile.path)
+        val ids = scratch("SELECT id FROM read_parquet(${q(dataPath.toString())})").map { it[0]!!.toLong() }
+        duckExec("DELETE FROM lake.$SCHEMA.flush_merge WHERE id < 5")
+        val inlineSnapshot = catalog.currentSnapshotId
+        val committed = inlineSnapshot + 1
+        val oldDeletes = (5L..15L).associate { ids.indexOf(it).toLong() to committed }
+        val oldSize = taggedDeleteFile(dir, "prior.parquet", dataPath, oldDeletes)
+        catalog.commitDelete(t.tableId, listOf(DucklakeDeleteFragment(
+            dataFile.dataFileId, "prior.parquet", 11, oldSize, 0, 11, "parquet", committed, committed,
+        )), inlineSnapshot)
+        val mergedDeletes = oldDeletes + (0L..4L).associate { ids.indexOf(it).toLong() to inlineSnapshot }
+        val size = taggedDeleteFile(dir, "merged.parquet", dataPath, mergedDeletes)
+        catalog.flushInlinedDataWithSnapshots(t.tableId, emptyList(), listOf(DucklakeDeleteFragment(
+            dataFile.dataFileId, "merged.parquet", 16, size, 0, 5, "parquet", inlineSnapshot, committed,
+        )), committed)
+        assertThat(pg("SELECT count(*) FROM ducklake_delete_file WHERE table_id = ${t.tableId} AND end_snapshot IS NULL"))
+            .containsExactly(listOf("1"))
+        assertThat(catalog.getInlinedDeletes(t.tableId, catalog.currentSnapshotId)).isEmpty()
+        assertThat(catalog.getLiveRowCount(t.tableId, catalog.currentSnapshotId)).isEqualTo(4L)
+        assertThat(duckColumn("SELECT id FROM lake.$SCHEMA.flush_merge ORDER BY id")).containsExactly("16", "17", "18", "19")
+        assertThat(duckColumn("SELECT count(*) FROM lake.$SCHEMA.flush_merge AT (VERSION => $inlineSnapshot)")).containsExactly("15")
+        assertThat(duckColumn("SELECT id FROM lake.$SCHEMA.flush_merge AT (VERSION => $committed) ORDER BY id"))
+            .containsExactly("16", "17", "18", "19")
+        assertThat(pg("SELECT path FROM ducklake_files_scheduled_for_deletion").map { it[0]!! })
+            .anyMatch { it.endsWith("prior.parquet") }
+    }
+
     // ---------------------------------------------------------------- hasInlinedDeletes / getInlinedFileDeletesBetween
+
+    @Test
+    fun repeatedUpdatesAndDeleteKeepPhysicalDeletionPositionsAcrossNativeFlush() {
+        duckExec(
+            "CREATE TABLE lake.$SCHEMA.repeated (id INTEGER, v VARCHAR)",
+            "INSERT INTO lake.$SCHEMA.repeated VALUES (1, 'a'), (2, 'x')",
+        )
+        val inserted = catalog.currentSnapshotId
+        duckExec("UPDATE lake.$SCHEMA.repeated SET v = 'b' WHERE id = 1")
+        duckExec("UPDATE lake.$SCHEMA.repeated SET v = 'y' WHERE id = 2")
+        duckExec("UPDATE lake.$SCHEMA.repeated SET v = 'c' WHERE id = 1")
+        duckExec("DELETE FROM lake.$SCHEMA.repeated WHERE id = 1")
+        val deleted = catalog.currentSnapshotId
+        val t = table("repeated")
+        val sv = catalog.getInlinedDataInfos(t.tableId, deleted).single().schemaVersion
+        val before = pg("SELECT row_id, v, begin_snapshot, end_snapshot FROM ducklake_inlined_data_${t.tableId}_$sv ORDER BY row_id, begin_snapshot")
+        assertThat(before.map { it[0] }.distinct()).hasSize(2)
+        assertThat(before).hasSize(5)
+
+        duckExec("CALL ducklake_flush_inlined_data('lake', schema_name => '$SCHEMA', table_name => 'repeated')")
+        val file = catalog.getDataFiles(t.tableId, catalog.currentSnapshotId).single()
+        val dir = tableDir(t)
+        val versions = scratch("SELECT v, _ducklake_internal_row_id FROM read_parquet(${q(dir.resolve(file.path).toString())})")
+        assertThat(versions).hasSize(5)
+        assertThat(versions.map { it[1] }.distinct()).hasSize(2)
+
+        // #1587: the reader must index deletion snapshots by physical position, NOT row ID.
+        // A native table_changes implementation is not an independent oracle for this bug.
+        val feed = catalog.getDeletionsBetween(t.tableId, inserted + 1, deleted).filter { !it.fullFileDelete }
+        assertThat(feed).hasSize(1)
+        val deletePath = dir.resolve(requireNotNull(feed.single().currentDeletePath))
+        val positionalDeletes = scratch("SELECT pos, _ducklake_internal_snapshot_id FROM read_parquet(${q(deletePath.toString())}) ORDER BY pos")
+        val observed = positionalDeletes.map { (pos, snap) -> listOf(snap, versions[pos!!.toInt()][0]) }
+        assertThat(observed).containsExactlyInAnyOrder(
+            listOf((inserted + 1).toString(), "a"), listOf((inserted + 2).toString(), "x"),
+            listOf((inserted + 3).toString(), "b"), listOf(deleted.toString(), "c"),
+        )
+        for (snapshot in inserted + 1..deleted) {
+            assertThat(catalog.getDeletionsBetween(t.tableId, snapshot, snapshot).filter { !it.fullFileDelete })
+                .`as`("a back-dated delete file with NULL partial_max must still be a candidate at $snapshot")
+                .hasSize(1)
+        }
+        assertThat(duck("SELECT id, v FROM lake.$SCHEMA.repeated ORDER BY id")).containsExactly(listOf("2", "y"))
+        assertThat(duck("SELECT id, v FROM lake.$SCHEMA.repeated AT (VERSION => ${inserted + 1}) ORDER BY id"))
+            .containsExactly(listOf("1", "b"), listOf("2", "x"))
+    }
 
     @Test
     fun hasInlinedDeletesIsSnapshotBoundAndFalseWithoutTheDynamicTable() {

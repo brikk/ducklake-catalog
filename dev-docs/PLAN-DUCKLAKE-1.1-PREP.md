@@ -20,20 +20,23 @@ Prepare tests, fixtures and compatibility contracts now; implement/enable actual
 
 ### 1. Current-lane correctness and scale regressions
 
-- [ ] Start with repeated-update change feeds across inline flushes:
+- [x] Start with repeated-update change feeds across inline flushes:
   [#1587](https://github.com/duckdb/ducklake/pull/1587), physical positions versus reused row IDs.
-- [ ] Add snapshot/file expiration scale fixtures:
+- [x] Add snapshot/file expiration scale fixtures:
   [#1659](https://github.com/duckdb/ducklake/pull/1659), range-join fan-out on DuckDB/Quack.
   Preserve liveness/GC semantics; do not blindly emit ASOF SQL on PostgreSQL/MySQL.
-- [ ] Cover same-transaction delete/flush interactions:
+- [x] Cover same-transaction delete/flush interactions:
   [#1662](https://github.com/duckdb/ducklake/pull/1662).
-- [ ] Audit orphan reference/age boundaries against
+- [x] Audit orphan reference/age boundaries against
   [#1669](https://github.com/duckdb/ducklake/pull/1669). Trino's agent owns physical
   deletion and cross-process in-flight-writer protection; no Trino edits here.
 
 **Exit:** deterministic regressions/scale evidence, with native-oracle defects
 distinguished from JVM failures. Fix only reproduced local defects; do not relax
 goldens or blanket-skip scenarios to hide an older oracle's bug.
+
+**Results:** [execution evidence](DUCKLAKE-1.1-PREP-RESULTS.md). JVM checks passed;
+both native targets reproduce #1587/#1662 and remain failing qualification gates.
 
 ### 2. Versioned fixture and capability matrix
 
