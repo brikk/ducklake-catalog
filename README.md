@@ -21,13 +21,16 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 ## Using it as a dependency
 
-Latest release: **0.11.0** (`main` is `0.12.0-SNAPSHOT`)
+Latest release: **0.12.0** (`main` is `0.13.0-SNAPSHOT`)
 
 The `0.10.0` upgrade requires nullable row-ID handling in consumers; see the
 [release and migration notes](dev-docs/RELEASE-0.10.0.md).
 
 For 0.11.0 transport setup and intentional maintenance/version-guard behavior
 changes, see the [0.11.0 release notes](dev-docs/RELEASE-0.11.0.md).
+
+Version 0.12.0 adds compatibility/regression preparation without enabling 1.1
+support or changing production dependencies; see the [0.12.0 release notes](dev-docs/RELEASE-0.12.0.md).
 
 ### Gradle (Kotlin DSL)
 
@@ -37,16 +40,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.11.0")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.12.0")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.11.0"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.12.0"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.11.0")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.12.0")
 
     // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
-    implementation("dev.brikk.ducklake:slt-format:0.11.0")
+    implementation("dev.brikk.ducklake:slt-format:0.12.0")
 }
 ```
 
@@ -57,10 +60,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.11.0'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.11.0')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.11.0'
-    implementation 'dev.brikk.ducklake:slt-format:0.11.0'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.12.0'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.12.0')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.12.0'
+    implementation 'dev.brikk.ducklake:slt-format:0.12.0'
 }
 ```
 
@@ -70,14 +73,14 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.11.0</version>
+  <version>0.12.0</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.11.0</version>
+  <version>0.12.0</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
 </dependency>
@@ -86,7 +89,7 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>slt-format</artifactId>
-  <version>0.11.0</version>
+  <version>0.12.0</version>
 </dependency>
 ```
 
@@ -103,7 +106,7 @@ repositories {
         content { includeGroup("dev.brikk.ducklake") }
     }
 }
-// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.12.0-SNAPSHOT
+// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.13.0-SNAPSHOT
 ```
 
 ## Bounded Cleanup API
@@ -156,9 +159,9 @@ not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](d
 - **DuckLake 1.1 / DuckDB 2.0:** preparation only, **not supported write formats or
   final-artifact certification**. All 1.1 writes remain disabled. Known dev inline
   layout reads do not constitute full 1.1 schema/type/statistics support.
-- Development preparation adds flush/change-feed and expiration regressions,
+- Version 0.12.0 adds flush/change-feed and expiration regressions,
   provenance-aware layout fixtures, frozen consumer ABI/wire controls and migration
-  rehearsals. It does not change the published 0.11.0 support contract or production pins.
+  rehearsals. It preserves the 0.11.0 support contract and production pins.
   See the [prep results and remaining gates](dev-docs/DUCKLAKE-1.1-PREP-RESULTS.md) and
   [capability matrix](dev-docs/DUCKLAKE-1.1-CAPABILITIES.md).
 - Two strict native change-feed/delete-and-flush gates still fail on the sampled
