@@ -1,0 +1,77 @@
+{
+  "captured_on": "2026-10-12",
+  "fixtures": [
+    {
+      "label": "maintained-1.0", "kind": "binary", "python_package": "1.5.6",
+      "core": ["v1.5.6", "069cc9f9b5", "Variegata"], "extensions": [["ducklake", "ac7595b0", "core"]], "catalog_version": "1.0",
+      "schema": {
+        "ducklake_schema": ["schema_id BIGINT", "schema_uuid UUID", "begin_snapshot BIGINT", "end_snapshot BIGINT", "schema_name VARCHAR", "path VARCHAR", "path_is_relative BOOLEAN"],
+        "ducklake_data_file": ["data_file_id BIGINT", "table_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "file_order BIGINT", "path VARCHAR", "path_is_relative BOOLEAN", "file_format VARCHAR", "record_count BIGINT", "file_size_bytes BIGINT", "footer_size BIGINT", "row_id_start BIGINT", "partition_id BIGINT", "encryption_key VARCHAR", "mapping_id BIGINT", "partial_max BIGINT"],
+        "ducklake_delete_file": ["delete_file_id BIGINT", "table_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "data_file_id BIGINT", "path VARCHAR", "path_is_relative BOOLEAN", "format VARCHAR", "delete_count BIGINT", "file_size_bytes BIGINT", "footer_size BIGINT", "encryption_key VARCHAR", "partial_max BIGINT"],
+        "ducklake_file_column_stats": ["data_file_id BIGINT", "table_id BIGINT", "column_id BIGINT", "column_size_bytes BIGINT", "value_count BIGINT", "null_count BIGINT", "min_value VARCHAR", "max_value VARCHAR", "contains_nan BOOLEAN", "extra_stats VARCHAR"],
+        "ducklake_table_column_stats": ["table_id BIGINT", "column_id BIGINT", "contains_null BOOLEAN", "contains_nan BOOLEAN", "min_value VARCHAR", "max_value VARCHAR", "extra_stats VARCHAR"]
+      },
+      "inline_columns": ["row_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "i INTEGER", "xs INTEGER[]", "kv MAP(VARCHAR, INTEGER)"],
+      "nested_values": [[1, [1, null], {"x": 7}]],
+      "nested_schema": "Parser Error: CREATE SCHEMA too many dots: expected \"catalog.schema\" or \"schema\"",
+      "schema_names": [["main"], ["parent"]],
+      "delete_format": "parquet", "delete_columns": ["file_path VARCHAR", "pos BIGINT", "_ducklake_internal_snapshot_id BIGINT"], "delete_positions": [[1], [2]]
+    },
+    {
+      "label": "locked-preview-fresh", "kind": "binary", "python_package": "2.0.0.dev2610011535",
+      "core": ["v2.0.0-alpha43763", "96063b9e39", "Cyanoptera"], "extensions": [["ducklake", "e8924cfc9c", "core"]], "catalog_version": "1.1-dev1",
+      "schema": {
+        "ducklake_schema": ["schema_id BIGINT", "schema_uuid UUID", "begin_snapshot BIGINT", "end_snapshot BIGINT", "schema_name VARCHAR", "path VARCHAR", "path_is_relative BOOLEAN"],
+        "ducklake_data_file": ["data_file_id BIGINT", "table_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "file_order BIGINT", "path VARCHAR", "path_is_relative BOOLEAN", "file_format VARCHAR", "record_count BIGINT", "file_size_bytes BIGINT", "footer_size BIGINT", "row_id_start BIGINT", "partition_id BIGINT", "encryption_key VARCHAR", "mapping_id BIGINT", "partial_max BIGINT", "row_group_count BIGINT"],
+        "ducklake_delete_file": ["delete_file_id BIGINT", "table_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "data_file_id BIGINT", "path VARCHAR", "path_is_relative BOOLEAN", "format VARCHAR", "delete_count BIGINT", "file_size_bytes BIGINT", "footer_size BIGINT", "encryption_key VARCHAR", "partial_max BIGINT", "row_group_count BIGINT"],
+        "ducklake_file_column_stats": ["data_file_id BIGINT", "table_id BIGINT", "column_id BIGINT", "column_size_bytes BIGINT", "value_count BIGINT", "null_count BIGINT", "min_value VARCHAR", "max_value VARCHAR", "contains_nan BOOLEAN", "extra_stats VARCHAR", "min_is_exact BOOLEAN", "max_is_exact BOOLEAN"],
+        "ducklake_table_column_stats": ["table_id BIGINT", "column_id BIGINT", "contains_null BOOLEAN", "contains_nan BOOLEAN", "min_value VARCHAR", "max_value VARCHAR", "extra_stats VARCHAR", "min_is_exact BOOLEAN", "max_is_exact BOOLEAN"]
+      },
+      "inline_columns": ["_ducklake_row_id BIGINT", "_ducklake_begin_snapshot BIGINT", "_ducklake_end_snapshot BIGINT", "i INTEGER", "xs INTEGER[]", "kv MAP(VARCHAR, INTEGER)"],
+      "nested_values": [[1, [1, null], {"x": 7}]], "nested_schema": "accepted",
+      "schema_names": [["child"], ["main"], ["parent"]],
+      "delete_format": "parquet", "delete_columns": ["file_path VARCHAR", "pos BIGINT", "_ducklake_internal_snapshot_id BIGINT"], "delete_positions": [[1], [2]]
+    },
+    {
+      "label": "locked-preview-1.0", "kind": "binary", "python_package": "2.0.0.dev2610011535",
+      "core": ["v2.0.0-alpha43763", "96063b9e39", "Cyanoptera"], "extensions": [["ducklake", "e8924cfc9c", "core"]], "catalog_version": "1.0",
+      "schema": {
+        "ducklake_schema": ["schema_id BIGINT", "schema_uuid UUID", "begin_snapshot BIGINT", "end_snapshot BIGINT", "schema_name VARCHAR", "path VARCHAR", "path_is_relative BOOLEAN"],
+        "ducklake_data_file": ["data_file_id BIGINT", "table_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "file_order BIGINT", "path VARCHAR", "path_is_relative BOOLEAN", "file_format VARCHAR", "record_count BIGINT", "file_size_bytes BIGINT", "footer_size BIGINT", "row_id_start BIGINT", "partition_id BIGINT", "encryption_key VARCHAR", "mapping_id BIGINT", "partial_max BIGINT"],
+        "ducklake_delete_file": ["delete_file_id BIGINT", "table_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "data_file_id BIGINT", "path VARCHAR", "path_is_relative BOOLEAN", "format VARCHAR", "delete_count BIGINT", "file_size_bytes BIGINT", "footer_size BIGINT", "encryption_key VARCHAR", "partial_max BIGINT"],
+        "ducklake_file_column_stats": ["data_file_id BIGINT", "table_id BIGINT", "column_id BIGINT", "column_size_bytes BIGINT", "value_count BIGINT", "null_count BIGINT", "min_value VARCHAR", "max_value VARCHAR", "contains_nan BOOLEAN", "extra_stats VARCHAR"],
+        "ducklake_table_column_stats": ["table_id BIGINT", "column_id BIGINT", "contains_null BOOLEAN", "contains_nan BOOLEAN", "min_value VARCHAR", "max_value VARCHAR", "extra_stats VARCHAR"]
+      },
+      "inline_columns": ["row_id BIGINT", "begin_snapshot BIGINT", "end_snapshot BIGINT", "i INTEGER", "xs INTEGER[]", "kv MAP(VARCHAR, INTEGER)"],
+      "nested_values": [[1, [1, null], {"x": 7}]], "nested_schema": "accepted",
+      "schema_names": [["child"], ["main"], ["parent"]],
+      "delete_format": "parquet", "delete_columns": ["file_path VARCHAR", "pos BIGINT", "_ducklake_internal_snapshot_id BIGINT"], "delete_positions": [[1], [2]]
+    },
+    {
+      "label": "duckdb-2.0-bundle", "kind": "source-only", "executed": false,
+      "ducklake_sha": "80e6155e415b922ce27a0f67f02fc62edd508f37",
+      "source_path": "src/metadata_manager/ducklake_metadata_manager_v1_1.cpp",
+      "source_sha256": "b9c15d521f457a1082c77c4245301d956fae207c3e8cbf4db30f4f3835f0b967",
+      "statements": [
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_schema(schema_id BIGINT PRIMARY KEY, schema_uuid UUID, begin_snapshot BIGINT, end_snapshot BIGINT, schema_name VARCHAR, path VARCHAR, path_is_relative BOOLEAN, parent_schema_id BIGINT);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_data_file(data_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, file_order BIGINT, path VARCHAR, path_is_relative BOOLEAN, file_format VARCHAR, record_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, row_id_start BIGINT, partition_id BIGINT, encryption_key VARCHAR, mapping_id BIGINT, partial_max BIGINT, row_group_count BIGINT);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_delete_file(delete_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, data_file_id BIGINT, path VARCHAR, path_is_relative BOOLEAN, format VARCHAR, delete_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, encryption_key VARCHAR, partial_max BIGINT, row_group_count BIGINT);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_file_column_stats(data_file_id BIGINT, table_id BIGINT, column_id BIGINT, column_size_bytes BIGINT, value_count BIGINT, null_count BIGINT, min_value VARCHAR, max_value VARCHAR, contains_nan BOOLEAN, extra_stats VARCHAR, min_is_exact BOOLEAN, max_is_exact BOOLEAN);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_table_column_stats(table_id BIGINT, column_id BIGINT, contains_null BOOLEAN, contains_nan BOOLEAN, min_value VARCHAR, max_value VARCHAR, extra_stats VARCHAR, min_is_exact BOOLEAN, max_is_exact BOOLEAN);"
+      ]
+    },
+    {
+      "label": "development-main", "kind": "source-only", "executed": false,
+      "ducklake_sha": "d248aff8044c75081ac970ccf7ed512a03f6f87e",
+      "source_path": "src/metadata_manager/ducklake_metadata_manager_v1_1.cpp",
+      "source_sha256": "b9c15d521f457a1082c77c4245301d956fae207c3e8cbf4db30f4f3835f0b967",
+      "statements": [
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_schema(schema_id BIGINT PRIMARY KEY, schema_uuid UUID, begin_snapshot BIGINT, end_snapshot BIGINT, schema_name VARCHAR, path VARCHAR, path_is_relative BOOLEAN, parent_schema_id BIGINT);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_data_file(data_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, file_order BIGINT, path VARCHAR, path_is_relative BOOLEAN, file_format VARCHAR, record_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, row_id_start BIGINT, partition_id BIGINT, encryption_key VARCHAR, mapping_id BIGINT, partial_max BIGINT, row_group_count BIGINT);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_delete_file(delete_file_id BIGINT PRIMARY KEY, table_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, data_file_id BIGINT, path VARCHAR, path_is_relative BOOLEAN, format VARCHAR, delete_count BIGINT, file_size_bytes BIGINT, footer_size BIGINT, encryption_key VARCHAR, partial_max BIGINT, row_group_count BIGINT);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_file_column_stats(data_file_id BIGINT, table_id BIGINT, column_id BIGINT, column_size_bytes BIGINT, value_count BIGINT, null_count BIGINT, min_value VARCHAR, max_value VARCHAR, contains_nan BOOLEAN, extra_stats VARCHAR, min_is_exact BOOLEAN, max_is_exact BOOLEAN);",
+        "CREATE TABLE {METADATA_CATALOG}.ducklake_table_column_stats(table_id BIGINT, column_id BIGINT, contains_null BOOLEAN, contains_nan BOOLEAN, min_value VARCHAR, max_value VARCHAR, extra_stats VARCHAR, min_is_exact BOOLEAN, max_is_exact BOOLEAN);"
+      ]
+    }
+  ]
+}

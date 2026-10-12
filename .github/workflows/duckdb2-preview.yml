@@ -65,6 +65,13 @@ jobs:
         run: |
           python dev-docs/probes/duckdb2_quack.py > quack-preview-report.json
           python dev-docs/probes/verify_duckdb2_preview.py dev-docs/probes/duckdb2-preview-lock.json quack-preview-report.json quack
+      - name: Verify versioned local fixtures (not full 1.1 support)
+        if: matrix.backend == 'duckdb'
+        run: |
+          python -m unittest discover -s dev-docs/probes -p 'test_ducklake_11_fixtures.py' -v
+          python dev-docs/probes/ducklake_11_fixture.py --temp-root "$RUNNER_TEMP/preview" --label locked-preview-fresh > fixture-preview.json
+          python dev-docs/probes/ducklake_11_fixture.py --temp-root "$RUNNER_TEMP/preview" --version 1.0 --label locked-preview-1.0 > fixture-preview-10.json
+          python dev-docs/probes/verify_ducklake_11_fixtures.py fixture-preview.json fixture-preview-10.json
       - name: Upload provenance and observations, including on failure
         if: always()
         uses: actions/upload-artifact@v4
@@ -73,5 +80,7 @@ jobs:
           path: |
             preview-report.json
             quack-preview-report.json
+            fixture-preview.json
+            fixture-preview-10.json
             dev-docs/probes/duckdb2-preview-lock.json
           retention-days: 14

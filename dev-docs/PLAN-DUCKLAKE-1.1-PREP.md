@@ -40,12 +40,16 @@ both native targets reproduce #1587/#1662 and remain failing qualification gates
 
 ### 2. Versioned fixture and capability matrix
 
-- [ ] Capture 1.0 versus candidate 1.1 schema, inline layouts, exactness flags,
+- [x] Capture 1.0 versus candidate 1.1 schema, inline layouts, exactness flags,
   parent schemas, row-group counts and deletion-file shapes against exact SHAs.
-- [ ] Separate bundled-extension and development-main fixtures. Do not infer
+- [x] Separate bundled-extension and development-main fixtures. Do not infer
   capabilities from `1.1-dev1` alone or silently update production/preview pins.
 
 **Exit:** reproducible disposable fixtures and explicit supported/rejected cases.
+
+**Results:** [capability matrix](DUCKLAKE-1.1-CAPABILITIES.md). Five regenerated
+fixtures matched exactly; four fixture-contract tests passed. Latest bundle/main
+fixtures are source-only, not binary qualification.
 
 ### 3. Consumer API and wire contracts
 

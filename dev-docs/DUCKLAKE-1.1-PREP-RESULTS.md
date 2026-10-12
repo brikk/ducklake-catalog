@@ -71,3 +71,17 @@ Verification: `mise exec -- ./gradlew check -Dducklake.corpus.dirs=all
 --no-configuration-cache` passed **529 JUnit tests** (438 catalog, 51 SLT, 40 replay),
 zero failures/errors/skips, detekt and Java 17 checkAbi. Replay was up-to-date from
 the verified 9,697-record baseline; a forced full replay will run at final handoff.
+
+## Step 2 — versioned fixtures
+
+Five labelled captures matched [the committed fixture](probes/ducklake-11-fixtures.json)
+exactly: maintained 1.0, locked preview explicit 1.0, locked preview fresh dev,
+bundled candidate source and development-main source. Four verifier tests passed,
+including negative provenance/layout controls. The native-preview CI adds the
+same local fixture regeneration; its GitHub execution awaits permission to push.
+
+Important discovery: the locked dev binary has no `parent_schema_id`, whereas
+newer candidate/main DDL does, despite both being called 1.1-dev1. The new
+[capability matrix](DUCKLAKE-1.1-CAPABILITIES.md) separates executed binary evidence
+from source declarations. All samples are disposable, and no production pins or
+JVM models changed.
