@@ -141,10 +141,34 @@ DuckDB **1.5.6** Quack server. For an initialized DuckLake 1.0 metadata catalog:
 For both remote routes, pass the token in `catalogDatabasePassword`, not in shared
 URLs. The direct Java route uses ordinary remote JDBC transactions and does not
 need embedded DuckDB in the client process; the native route remains unchanged.
-The library does not bundle JDBC drivers or initialize/migrate the catalog. Quack
-serves metadata here; engines still need access to the actual Parquet data location.
+Applications supply their JDBC drivers. Local/direct JDBC routes expect initialized
+metadata; the native Quack route uses DuckLake `ATTACH`, which can bootstrap missing
+metadata through the native extension. No 1.1 migration is enabled by this library.
+Quack serves metadata here; engines still need access to the actual Parquet data location.
 Direct Java transport is verified against the released 1.5.6/v1 server; this does
 not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](dev-docs/UPGRADE-DUCKDB-1.5.6-2026-10-10.md).
+
+## Compatibility status
+
+- **Maintained, qualified lane:** DuckLake **1.0**, DuckDB/JDBC **1.5.6 / 1.5.6.0**,
+  with optional direct Java Quack JDBC **0.8.0**. The catalog library targets Java 17;
+  building it requires JDK 25.
+- **DuckLake 1.1 / DuckDB 2.0:** preparation only, **not supported write formats or
+  final-artifact certification**. All 1.1 writes remain disabled. Known dev inline
+  layout reads do not constitute full 1.1 schema/type/statistics support.
+- Development preparation adds flush/change-feed and expiration regressions,
+  provenance-aware layout fixtures, frozen consumer ABI/wire controls and migration
+  rehearsals. It does not change the published 0.11.0 support contract or production pins.
+  See the [prep results and remaining gates](dev-docs/DUCKLAKE-1.1-PREP-RESULTS.md) and
+  [capability matrix](dev-docs/DUCKLAKE-1.1-CAPABILITIES.md).
+- Two strict native change-feed/delete-and-flush gates still fail on the sampled
+  maintained and locked-preview engines; passing JVM tests is not native qualification.
+- **Rollback requires a tested backup:** the preview write/checkpoint rehearsal made
+  local metadata unreadable by 1.5.6 even while the DuckLake format stayed 1.0.
+  See the [migration/rollback acceptance runbook](dev-docs/DUCKLAKE-1.1-ACCEPTANCE.md).
+
+Actual 1.1 implementation remains deferred until release-candidate artifacts/layouts
+are rechecked, using the [consumer contract](dev-docs/DUCKLAKE-1.1-CONSUMER-CONTRACT.md).
 
 ## Building
 
@@ -167,9 +191,11 @@ only regeneration needs Docker. See [`ducklake-catalog/README.md`](ducklake-cata
 
 ## CI
 
-Upcoming DuckDB 2.0 / DuckLake format changes are tracked in the
-[October 8 compatibility assessment](dev-docs/UPSTREAM-DUCKDB-2.0-2026-10-08.md).
-This is a readiness report, not a claim of 2.0 support.
+The separate `.github/workflows/duckdb2-preview.yml` lane checks pinned **native**
+layout/migration canaries, matched Quack peers and versioned local fixtures. It is
+not full JVM DuckDB 2.0 or DuckLake 1.1 qualification. The
+[October 8 assessment](dev-docs/UPSTREAM-DUCKDB-2.0-2026-10-08.md) is historical;
+the [prep results](dev-docs/DUCKLAKE-1.1-PREP-RESULTS.md) record current findings and limits.
 
 `.github/workflows/ci.yml` runs `./gradlew check` (compile, detekt, `checkAbi`, all tests including
 the Testcontainers PostgreSQL/MySQL and DuckDB-oracle interop tests) on every pull request and push
