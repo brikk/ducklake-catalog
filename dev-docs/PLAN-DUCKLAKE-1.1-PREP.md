@@ -53,11 +53,15 @@ fixtures are source-only, not binary qualification.
 
 ### 3. Consumer API and wire contracts
 
-- [ ] Specify how schema parentage, bound exactness and row-group counts reach readers.
-- [ ] Add constructor/serialization compatibility fixtures before extending models.
+- [x] Specify how schema parentage, bound exactness and row-group counts reach readers.
+- [x] Add constructor/serialization compatibility fixtures before extending models.
   Kotlin default parameters alone do not preserve Java record binary compatibility.
 
 **Exit:** documented changes and consumer obligations; no premature 1.1 write enablement.
+
+**Contract:** [consumer specification](DUCKLAKE-1.1-CONSUMER-CONTRACT.md). Preserve
+old records; plan an opt-in companion/envelope seam. A frozen published-0.11.0
+Java consumer, record-component locks and JSON controls guard current contracts.
 
 ### 4. Migration and release-candidate acceptance
 

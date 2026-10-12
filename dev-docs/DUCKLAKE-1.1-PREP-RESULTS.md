@@ -85,3 +85,17 @@ newer candidate/main DDL does, despite both being called 1.1-dev1. The new
 [capability matrix](DUCKLAKE-1.1-CAPABILITIES.md) separates executed binary evidence
 from source declarations. All samples are disposable, and no production pins or
 JVM models changed.
+
+## Step 3 — API/wire specification and compatibility fixtures
+
+[The consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) chooses new opt-in
+metadata envelopes rather than changing existing records, with explicit unknown
+parentage, exactness and row-group semantics. No public models or interfaces were
+modified. A Java 17 fixture compiled against the published 0.11.0 Maven JAR links
+against current classes; decoded fixture bytes match the release-compiled class
+exactly. Release JAR SHA-256 is recorded beside the source.
+
+Targeted verification passed **31 tests** (3 new ABI/record/wire controls plus
+28 existing airlift goldens), zero failures/errors/skips, detekt and Java 17
+checkAbi. This locks selected descriptors, not the entire public ABI. New-envelope
+cross-version wire negotiation remains an actual-implementation release gate.
