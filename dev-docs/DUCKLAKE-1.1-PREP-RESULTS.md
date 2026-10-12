@@ -99,3 +99,50 @@ Targeted verification passed **31 tests** (3 new ABI/record/wire controls plus
 28 existing airlift goldens), zero failures/errors/skips, detekt and Java 17
 checkAbi. This locks selected descriptors, not the entire public ABI. New-envelope
 cross-version wire negotiation remains an actual-implementation release gate.
+
+## Step 4 — migration/rollback rehearsal and acceptance runbook
+
+`ducklake_11_migration.py` ran the maintained and locked preview engines in separate
+bounded processes on disposable copies. **All 12 rehearsal checks passed**: default
+1.0 format, real old Parquet rows and snapshots, two inline schema versions,
+preserved row IDs, renamed dev metadata after explicit migration, a visible new
+write/checkpoint, pristine-backup restore and atomic reserved-name collision
+rejection. The rejected collision copy also still reopens with 1.5.6.
+
+**Downgrade is not safe after a successful preview write/checkpoint:** even while
+DuckLake format remains 1.0, the metadata `.db` storage rises to version 69 and
+1.5.6's storage version 7 cannot reopen it. Explicit migration has the same reopen
+boundary. This is recorded as an unsafe downgrade, not a promised capability or a
+reason to weaken the probe. The untouched backup restored all original state.
+
+[The acceptance runbook](DUCKLAKE-1.1-ACCEPTANCE.md) covers writer draining,
+consistent backups, real migration versus synthetic guard tests, backend/transport
+qualification and RC go/no-go gates. Final/unknown version-string regressions
+confirm that 1.1 cannot be enabled merely by relabelling a catalog.
+
+Final forced verification:
+
+```sh
+mise exec -- ./gradlew check --rerun-tasks -Dducklake.corpus.dirs=all --no-configuration-cache
+```
+
+- **533 JUnit tests**: 442 catalog + 51 SLT + 40 replay; zero failures/errors/skips.
+- Full corpus: 484 files discovered, 453 run, **9,697 records passed**, zero failed;
+  existing 31 file skips and 12 record skips unchanged.
+- Detekt and Java 17 checkAbi passed. Four Python fixture-contract tests and all
+  five regenerated fixture comparisons passed; workflow YAML parsed. Added GitHub
+  workflow execution is not claimed before pushing.
+- All 12 native migration rehearsal checks passed. The **two strict native
+  correctness gates still fail on both sampled engines** as recorded in step 1.
+
+## Remaining work / handoff
+
+Preparation commits: step 1 `94c13de`, step 2 `e42888f`, step 3 `c86c7e9`; step 4 is
+the commit containing this final log/runbook. No production dependencies, corpus
+pin, native-preview lock, public DTOs or write support changed. No sibling edits.
+
+At T−3/T−4, refresh the release calendar, engine/JDBC/extension provenance and final
+schema, then scope actual 1.1 implementation. Current bundle/main fixtures are
+source-only. Shipping-engine #1587/#1662 fixes, real multi-backend migration,
+new-envelope wire negotiation, larger memory-profiled expiration and matched
+Quack/JVM qualification remain gates. **Do not enable 1.1 writes yet.**

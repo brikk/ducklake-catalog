@@ -31,7 +31,9 @@ class TestInlinedMetadataLayouts {
             val sql = InlinedDataTables.createTableSql("t", emptyList(), SQLDialect.POSTGRES, version)
             assertThat(sql).contains("\"${names.rowId}\"", "\"${names.beginSnapshot}\"", "\"${names.endSnapshot}\"")
         }
-        assertThatThrownBy { InlinedDataTables.metadataColumns("1.2") }.isInstanceOf(DucklakeInvalidOperationException::class.java)
+        for (unknown in listOf(null, "1.1", "1.1-dev2", "1.2")) {
+            assertThatThrownBy { InlinedDataTables.metadataColumns(unknown) }.isInstanceOf(DucklakeInvalidOperationException::class.java)
+        }
     }
 
     @Test

@@ -65,12 +65,16 @@ Java consumer, record-component locks and JSON controls guard current contracts.
 
 ### 4. Migration and release-candidate acceptance
 
-- [ ] Prepare old-file, mixed-inline-schema, reserved-name collision, live-old-client,
+- [x] Prepare old-file, mixed-inline-schema, reserved-name collision, live-old-client,
   unsupported-write and native-storage rollback tests/runbook.
 - [ ] At T−3/T−4, refresh release calendar, final format and engine/extension/JDBC
   availability; then explicitly scope real 1.1 implementation and qualification.
 
 **Exit:** clear upgrade/rollback boundaries and final-artifact release gates.
+
+**Runbook:** [acceptance and rollback](DUCKLAKE-1.1-ACCEPTANCE.md). Native rehearsal
+uses disposable copies and separate pinned engines; JVM guards/contracts remain
+strict. The T−3/T−4 final-artifact refresh is intentionally deferred, not omitted.
 
 ## Execution rules and handoff
 
@@ -81,5 +85,9 @@ Java consumer, record-component locks and JSON controls guard current contracts.
 - Leave sibling repositories to their agents; tear down session-owned test infrastructure.
 - Reference: [existing preparation log](DUCKDB-2.0-PREPARATION.md),
   [assessment](UPSTREAM-DUCKDB-2.0-2026-10-08.md), [release notes](RELEASE-0.11.0.md).
-- **Resume after compaction at step 1:** inspect the upstream change-feed regression
-  and our current change-feed implementation before editing code.
+- **Prep executed:** see [results and commit handoff](DUCKLAKE-1.1-PREP-RESULTS.md).
+  Step 1 `94c13de`, step 2 `e42888f`, step 3 `c86c7e9`; step 4 is the final log/runbook
+  commit. Forced checks passed 533 tests and 9,697 corpus records. Native #1587/#1662
+  gates still fail on maintained/locked-preview engines; this is not 1.1 qualification.
+- **Resume at T−3/T−4:** refresh final artifacts/schema and explicitly scope real
+  1.1 support using the capability matrix, consumer contract and acceptance runbook.

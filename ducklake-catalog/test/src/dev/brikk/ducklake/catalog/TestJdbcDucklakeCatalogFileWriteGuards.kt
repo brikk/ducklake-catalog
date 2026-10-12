@@ -132,6 +132,26 @@ class TestJdbcDucklakeCatalogFileWriteGuards {
     }
 
     @Test
+    fun finalAndUnknownVersionsCannotBeEnabledByChangingOnlyTheVersionString() {
+        openCatalog(isolated.jdbcUrl, isolated.dataDir.toString()).use { catalog ->
+            val before = catalog.currentSnapshotId
+            val table = catalog.getTable("test_schema", "simple_table", before)!!
+            for (version in listOf("1.1", "1.1-dev2", "2.0")) {
+                setMetadata("version", version)
+                try {
+                    assertThat(catalog.getSpecVersion()).isEqualTo(version)
+                    assertThatThrownBy { catalog.createSchema("candidate_only") }
+                        .isInstanceOf(DucklakeUnsupportedCatalogVersionException::class.java)
+                    assertThatThrownBy { catalog.analyzeTable(table.tableId) }
+                        .isInstanceOf(DucklakeUnsupportedCatalogVersionException::class.java)
+                    assertThat(catalog.currentSnapshotId).isEqualTo(before)
+                    assertThat(catalog.getSchema("candidate_only", before)).isNull()
+                } finally { setMetadata("version", "1.0") }
+            }
+        }
+    }
+
+    @Test
     fun unsupportedFormatsRefuseDdlStatsExpiryAndCleanupMutations() {
         openCatalog(isolated.jdbcUrl, isolated.dataDir.toString()).use { catalog ->
             val before = catalog.currentSnapshotId
