@@ -45,3 +45,39 @@ native output as its golden or recommend automatic migration as a workaround.
 The public schema-resolution signature is unchanged; its documented boundary is
 now table-scoped instead of an unrelated global-version snapshot. Other public
 records, wire formats and supported write versions are unchanged.
+
+Commit: `b89d870`.
+
+## 2. COMMIT outcome classification and cleanup contract
+
+Lost-reply injection after real backend commits reproduced ten failing cases
+across the five catalog routes. The old code either wrapped the failure generically
+or retried a committed write when transport error text contained "conflict".
+
+All catalog COMMIT boundaries now classify completion before normal conflict
+handling. `DucklakeCommitOutcomeUnknownException` is not retryable and tells the
+producer to retain output/reconcile; its nullable attempted snapshot ID is only
+diagnostic. Explicit backend rollback/rejection signals keep existing retry rules.
+Transport states, timeouts and completion-unknown signals cannot be overridden by
+message text. Confirmed commits with connection-finalization failures use a
+separate non-retryable `DucklakePostCommitException`, including native Quack's
+remote-commit / empty-local-transaction boundary.
+
+Tests cover real Parquet output and one publication after a lost reply, pre-COMMIT
+rollback, snapshotless expiry, acknowledged commit followed by finalization failure,
+native Quack local 40001 after remote success, and policy/normal conflict retries.
+All five routes are exercised. These are deterministic boundary injections, not
+full network-partition qualification.
+
+Full `check -Dducklake.corpus.dirs=all --no-configuration-cache` passed **574 JUnit
+tests** (483 catalog, 51 SLT, 40 replay), zero failures/errors/skips, detekt and Java
+17 checkAbi; selected full corpus remains at **9,697 records**, zero failures.
+Existing record constructors/components and wire goldens still pass. The new
+exceptions are additive public API; no DTO or method signature changed.
+
+**Downstream adoption is still required:** [the cleanup/error contract](COMMIT-OUTCOME-CONTRACT.md)
+specifies exception mapping, quarantine/reconciliation, no blind republishing and
+no catch-all unlink. This repository doesn't perform producer filesystem cleanup
+or implement idempotency. Trino/Doris agents must adopt the contract before
+deployment; their repositories were not changed. A generic pre-COMMIT error is
+not an ownership guarantee, especially for shared/imported files or implicit DDL.

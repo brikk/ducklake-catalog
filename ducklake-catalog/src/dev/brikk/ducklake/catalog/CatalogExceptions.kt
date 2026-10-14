@@ -22,6 +22,27 @@ open class DucklakeException : RuntimeException {
 }
 
 /**
+ * COMMIT may have applied, but its completion could not be established. Not a retryable conflict.
+ * Preserve this attempt's output objects and reconcile through a fresh connection before retry
+ * or cleanup. [attemptedSnapshotId] is diagnostic, NOT an idempotency/ownership token.
+ */
+open class DucklakeCommitOutcomeUnknownException(
+    val operationDescription: String,
+    val attemptedSnapshotId: Long?,
+    cause: Throwable,
+) : DucklakeException(
+    "COMMIT outcome is unknown for $operationDescription" +
+        (attemptedSnapshotId?.let { " (attempted snapshot $it)" } ?: "") +
+        "; do not retry or delete output files until the outcome has been reconciled.", cause,
+)
+
+/** The backend acknowledged COMMIT, but connection finalization failed. Never retry or delete its output. */
+open class DucklakePostCommitException(
+    val operationDescription: String,
+    cause: Throwable,
+) : DucklakeException("COMMIT succeeded for $operationDescription, but connection finalization failed; do not retry or delete output files.", cause)
+
+/**
  * Thrown when the catalog database is reachable but its DuckLake metadata schema
  * (the `ducklake_*` tables, e.g. `ducklake_snapshot`) has not been created yet — i.e.
  * the catalog was never bootstrapped. The connector never issues the schema DDL itself;

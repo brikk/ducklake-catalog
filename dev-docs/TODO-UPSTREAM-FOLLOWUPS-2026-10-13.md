@@ -10,7 +10,7 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
    rename, unrelated DDL, multiple inline versions and snapshot expiration.
    Audit JVM schema resolution; fix only demonstrated local defects. Preserve
    historical values and distinguish native read/flush bugs from JVM failures.
-2. [ ] **Unknown COMMIT outcomes and cleanup** (DataFusion #369).
+2. [x] **Unknown COMMIT outcomes and cleanup** (DataFusion #369).
    Fault-inject failure before COMMIT versus a lost response after a successful
    commit. Specify/classify definite rollback versus unknown outcome; ensure the
    caller is not told to delete committed files or blindly republish. Coordinate
@@ -36,6 +36,7 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
 - Keep 1.1 writes disabled and current production/preview pins unchanged unless
   separately approved. Preserve public consumer contracts; use disposable fixtures.
 - Leave Trino/Doris work to their agents; stop session-owned test infrastructure.
-- User approved execution October 14. Item 1 is verified; see
+- User approved execution October 14. Items 1–2 are verified in the catalog; see
   [execution evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
-  Resume at item 2 after the item-1 commit. Item 5 remains deferred.
+  Downstream cleanup/error adoption is a handoff, not a claimed sibling fix.
+  Resume at item 3 after the item-2 commit. Item 5 remains deferred.

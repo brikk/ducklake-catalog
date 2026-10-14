@@ -881,7 +881,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 // sweep so a long-lived warehouse doesn't accumulate dead metadata.
                 deleteDeadSchemaViewMacroMetadata(ctx)
 
-                metadata.commit(ctx, conn)
+                commitMetadata(ctx, conn, "expire snapshots")
                 // Each DROP autocommits on its own; with autoCommit still false it would open an
                 // implicit transaction that is rolled back when the connection returns to the pool.
                 conn.autoCommit = true
@@ -1431,7 +1431,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 val schemaVersion = orZero(snapshot.schemaVersion)
                 recomputeTableStats(ctx, tableId, snapshotId, schemaVersion)
                 recomputeTableColumnStats(ctx, tableId, snapshotId, schemaVersion)
-                metadata.commit(ctx, conn)
+                commitMetadata(ctx, conn, "analyze table $tableId")
             }
             catch (e: Exception) {
                 rollbackQuietly(ctx, conn, e)
@@ -2317,7 +2317,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             try {
                 requireCatalogWritesSupported(ctx)
                 action(ctx)
-                metadata.commit(ctx, conn)
+                commitMetadata(ctx, conn, "catalog maintenance")
             } catch (e: Exception) {
                 rollbackQuietly(ctx, conn, e)
                 throw e
@@ -2469,6 +2469,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     @Volatile
     internal var beforeSnapshotInsertAction: Runnable = Runnable {}
 
+    /** Internal fault seam at the actual backend COMMIT boundary; never a consumer extension point. */
+    internal var backendCommitAction: ((MetadataQuery, DSLContext, Connection) -> Unit)? = null
+
+    private fun commitMetadata(ctx: DSLContext, connection: Connection, operation: String, snapshotId: Long? = null) {
+        CatalogCommitOutcomes.commit(operation, snapshotId) {
+            val action = backendCommitAction
+            if (action == null) metadata.commit(ctx, connection) else action(metadata, ctx, connection)
+        }
+    }
+
     /**
      * Executes a write operation within an atomic snapshot transaction.
      * Handles connection management, snapshot creation, change tracking,
@@ -2515,6 +2525,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
         val schver = DUCKLAKE_SCHEMA_VERSIONS.`as`("schver")
         val snapchg = DUCKLAKE_SNAPSHOT_CHANGES.`as`("snapchg")
+        var committed = false
         try {
             dataSource.connection.use { conn ->
                 conn.autoCommit = false
@@ -2614,7 +2625,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                             .execute()
                     }
 
-                    metadata.commit(txDsl, conn)
+                    commitMetadata(txDsl, conn, operationDescription, tx.getNewSnapshotId())
+                    committed = true
                 }
                 catch (e: Exception) {
                     rollbackQuietly(txDsl, conn, e)
@@ -2630,6 +2642,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
         }
         catch (e: SQLException) {
+            if (committed) throw DucklakePostCommitException(operationDescription, e)
             throw DucklakeException("Failed to $operationDescription", e)
         }
     }

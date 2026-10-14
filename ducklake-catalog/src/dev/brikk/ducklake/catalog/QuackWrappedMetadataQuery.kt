@@ -110,7 +110,13 @@ internal class QuackWrappedMetadataQuery(val metadataCatalogName: String) : Meta
 
     override fun commit(dsl: DSLContext, connection: java.sql.Connection) {
         dsl.fetch(wrap("COMMIT")) // a conflict is raised here; let it propagate to the classifier
-        connection.commit() // ends the (empty) local transaction so the pooled connection is clean
+        try {
+            connection.commit() // ends the (empty) local transaction so the pooled connection is clean
+        }
+        catch (e: java.sql.SQLException) {
+            // The remote COMMIT already succeeded. Even a local 40001 cannot undo it.
+            throw DucklakePostCommitException("finalize native Quack metadata connection", e)
+        }
     }
 
     override fun rollback(dsl: DSLContext, connection: java.sql.Connection) {
