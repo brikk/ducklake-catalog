@@ -69,6 +69,7 @@ jobs:
         if: matrix.backend == 'duckdb'
         run: |
           python -m unittest discover -s dev-docs/probes -p 'test_ducklake_11_fixtures.py' -v
+          python -m unittest discover -s dev-docs/probes -p 'test_ducklake_native_canaries.py' -v
           python dev-docs/probes/ducklake_11_fixture.py --temp-root "$RUNNER_TEMP/preview" --label locked-preview-fresh > fixture-preview.json
           python dev-docs/probes/ducklake_11_fixture.py --temp-root "$RUNNER_TEMP/preview" --version 1.0 --label locked-preview-1.0 > fixture-preview-10.json
           python dev-docs/probes/verify_ducklake_11_fixtures.py fixture-preview.json fixture-preview-10.json

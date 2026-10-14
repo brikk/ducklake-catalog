@@ -81,3 +81,39 @@ no catch-all unlink. This repository doesn't perform producer filesystem cleanup
 or implement idempotency. Trino/Doris agents must adopt the contract before
 deployment; their repositories were not changed. A generic pre-COMMIT error is
 not an ownership guarantee, especially for shared/imported files or implicit DDL.
+
+Commit: `c586309`.
+
+## 3. Lineage, statistics and BLOB native regression gates
+
+Added `dev-docs/probes/ducklake_lineage_stats_blob.py` with six isolated scenarios:
+sorted merges and updated-row merges (including history/change images/checkpoint),
+deleted-inline false-exact statistics, a live-inline statistics control, escaped
+plain/nested BLOB bytes with NULLs, and invalid UTF-8 BLOBs. Expected IDs, rows,
+aggregates and bytes are literal independent expectations. Raw Parquet bytes are
+checked after maintenance, not just the native logical scan.
+
+Every SQL error is a failed check, not a skip. The strict probe **exits 1** on all
+three sampled targets:
+
+| Target | Core / DuckLake | Format | Observed failures |
+|---|---|---|---|
+| Maintained Python 1.5.6 | `069cc9f9b5` / `ac7595b0` | 1.0 | Sorted/updated merge IDs/history/change images, false MIN after flush, BLOB reinterpretation/persistence, invalid-UTF read/merge |
+| Locked preview | `96063b9e39` / `e8924cfc9c` | Explicit 1.0 | Same; invalid-UTF checkpoint also fails |
+| Locked preview | Same | Fresh 1.1-dev1 | Same as explicit 1.0 |
+
+Concrete observations: retained live rows are 51–69, but after flushing a deleted
+inline value the aggregate reports **MIN=4, MAX=69, COUNT=19** rather than MIN=51.
+The live-inline control passes on all targets. Bytes `5c783431` (literal `\\x41`)
+become `41` (`A`) in scalar/STRUCT/LIST columns with `binary_as_string=true`, and
+maintenance persists those changed bytes into Parquet. NULL and plain-text
+controls remain intact. Invalid UTF-8 errors are retained as failed checks, even
+when a failed maintenance operation leaves the original bytes unchanged.
+
+Six harness unit tests pass on maintained and preview packages: exact-match
+control, changed ID, changed escape bytes, query errors, maintenance errors and
+NULL/empty/zero-byte distinction. The preview workflow adds these **harness**
+checks; it does not pretend the failing native engine gates pass. YAML and local
+documentation links were verified. No production implementation or pin change
+was made in this step. These failures remain release/RC qualification blockers,
+not fixed native behavior, and are now included in the acceptance runbook/README.

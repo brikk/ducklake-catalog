@@ -15,7 +15,7 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
    commit. Specify/classify definite rollback versus unknown outcome; ensure the
    caller is not told to delete committed files or blindly republish. Coordinate
    downstream cleanup obligations without editing sibling repositories.
-3. [ ] **Lineage, statistics and BLOB regression gates** (#1611/#1717/#1695).
+3. [x] **Lineage, statistics and BLOB regression gates** (#1611/#1717/#1695).
    Cover sorted/updated-row merges, deleted inline rows becoming falsely exact
    MIN/MAX bounds, and plain/nested BLOBs with `binary_as_string` enabled. Use
    independent expected IDs/rows/bytes; retain NULL semantics and explicit native
@@ -36,7 +36,8 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
 - Keep 1.1 writes disabled and current production/preview pins unchanged unless
   separately approved. Preserve public consumer contracts; use disposable fixtures.
 - Leave Trino/Doris work to their agents; stop session-owned test infrastructure.
-- User approved execution October 14. Items 1–2 are verified in the catalog; see
+- User approved execution October 14. Items 1–2 are verified in the catalog and
+  item 3 has strict gates plus explicit native failures; see
   [execution evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
   Downstream cleanup/error adoption is a handoff, not a claimed sibling fix.
-  Resume at item 3 after the item-2 commit. Item 5 remains deferred.
+  Resume at item 4 after the item-3 commit. Item 5 remains deferred.

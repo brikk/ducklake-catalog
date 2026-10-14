@@ -164,8 +164,9 @@ not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](d
   rehearsals. It preserves the 0.11.0 support contract and production pins.
   See the [prep results and remaining gates](dev-docs/DUCKLAKE-1.1-PREP-RESULTS.md) and
   [capability matrix](dev-docs/DUCKLAKE-1.1-CAPABILITIES.md).
-- Two strict native change-feed/delete-and-flush gates still fail on the sampled
-  maintained and locked-preview engines; passing JVM tests is not native qualification.
+- Strict native correctness gates still fail on the sampled maintained/locked-preview
+  engines, including change feeds/delete-and-flush, old inline schemas, merge lineage,
+  false-exact MIN/MAX and BLOB preservation. Passing JVM tests is not native qualification.
 - **Rollback requires a tested backup:** the preview write/checkpoint rehearsal made
   local metadata unreadable by 1.5.6 even while the DuckLake format stayed 1.0.
   See the [migration/rollback acceptance runbook](dev-docs/DUCKLAKE-1.1-ACCEPTANCE.md).
