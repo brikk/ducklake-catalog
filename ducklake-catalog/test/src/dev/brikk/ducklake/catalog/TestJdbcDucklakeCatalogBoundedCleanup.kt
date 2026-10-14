@@ -465,6 +465,35 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
         }
 
         @Test
+        fun expiryPreservesALegacyInlineBoundaryOnTheOwnedBackendTransaction() {
+            val physical = "ducklake_inlined_data_20_2"
+            exec("CREATE TABLE $physical (row_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, i INTEGER)")
+            try {
+                exec("INSERT INTO ducklake_snapshot (snapshot_id, schema_version, next_catalog_id, next_file_id) " +
+                    "VALUES (1,1,100,100), (2,1,100,100), (3,3,100,100)")
+                exec("INSERT INTO ducklake_schema_versions (table_id, schema_version, begin_snapshot) VALUES (20,1,1),(20,3,3)")
+                exec("INSERT INTO ducklake_inlined_data_tables (table_id, table_name, schema_version) VALUES (20,?,2)", physical)
+                exec("INSERT INTO $physical VALUES (0,3,NULL,11)")
+                catalog.expireSnapshots(setOf(2L))
+                assertThat(catalog.getSnapshot(2)).isNull()
+                assertThat(catalog.resolveSchemaVersionSnapshot(20, 2, 3)).isEqualTo(3L)
+                assertThat(catalog.readInlinedRowIds(20, 2, 3)).containsExactly(0L)
+                // Repeated expiry neither loses the boundary nor duplicates its standard ledger row.
+                catalog.expireSnapshots(setOf(2L))
+                val ctx = catalog.forConnection(connection)
+                val count = metadata.fetchOne(ctx, ctx.select(DSL.count()).from(DSL.table(DSL.name("ducklake_schema_versions")))
+                    .where(DSL.condition("table_id = 20 AND schema_version = 2")))!!.get(0, Long::class.java)
+                assertThat(count).isEqualTo(1L)
+            }
+            finally {
+                exec("DROP TABLE $physical")
+                exec("DELETE FROM ducklake_inlined_data_tables WHERE table_id = 20")
+                exec("DELETE FROM ducklake_schema_versions WHERE table_id = 20")
+                exec("DELETE FROM ducklake_snapshot WHERE snapshot_id IN (1,2,3)")
+            }
+        }
+
+        @Test
         fun readSessionPinsBothReadsAndRefusesEvenEmptyCancellation() {
             enqueue()
             DucklakeFileKind.entries.forEach { file(it, 1) }

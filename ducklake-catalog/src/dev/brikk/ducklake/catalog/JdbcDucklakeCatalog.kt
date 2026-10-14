@@ -848,6 +848,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 val maxId = readLatestSnapshotId(ctx)
                 require(maxId !in snapshotIds) { "cannot expire the latest snapshot ($maxId)" }
 
+                JdbcDucklakeSchemaVersionQueries(ctx, metadata).preserveInlineBoundaries(maxId) { tableId, version ->
+                    val inlined = inlinedDataTable(ctx, tableId, version)
+                    dynamicTableExists(ctx, inlined.name) &&
+                        metadata.fetchOne(ctx, ctx.selectOne().from(inlined.table).limit(1)) != null
+                }
+
                 // Delete the snapshot rows FIRST so the half-open survivor tests below see only the
                 // snapshots that REMAIN.
                 metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SNAPSHOT)
@@ -1978,7 +1984,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ): List<DucklakeInlinedChangeRow> {
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
         if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
-        val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, endSnapshot)
+        val sourceSchemaSnapshot = sourceSchemaSnapshot(inlined, tableId, schemaVersion, endSnapshot)
             ?: return emptyList()
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
         val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
@@ -2124,7 +2130,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
 
         if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
-        val sourceSchemaSnapshot = getSnapshotIdForSchemaVersion(tableId, schemaVersion, snapshotId)
+        val sourceSchemaSnapshot = sourceSchemaSnapshot(inlined, tableId, schemaVersion, snapshotId)
             ?: return emptyList()
 
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
@@ -2207,42 +2213,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     private fun getSnapshotIdForSchemaVersion(tableId: Long, schemaVersion: Long, snapshotId: Long): Long? {
-        // Prefer table-scoped schema version rows when available.
-        // Some catalogs include ducklake_schema_versions.table_id (DuckDB behavior),
-        // which gives an unambiguous snapshot where this table's schema version was introduced.
-        val schver = DUCKLAKE_SCHEMA_VERSIONS.`as`("schver")
-        try {
-            val tableScoped: Long? = dsl.select(schver.BEGIN_SNAPSHOT)
-                .from(schver)
-                .where(schver.TABLE_ID.eq(tableId))
-                .and(schver.SCHEMA_VERSION.eq(schemaVersion))
-                .and(schver.BEGIN_SNAPSHOT.le(snapshotId))
-                .orderBy(schver.BEGIN_SNAPSHOT.desc())
-                .limit(1)
-                .fetchOne(schver.BEGIN_SNAPSHOT)
-            if (tableScoped != null) {
-                return tableScoped
-            }
-        }
-        catch (e: DataAccessException) {
-            // Fallback for catalogs without table_id in ducklake_schema_versions or older metadata.
-            log.log(
-                System.Logger.Level.DEBUG,
-                "Could not resolve schema version via ducklake_schema_versions for table {0}: {1}",
-                tableId, e.message,
-            )
-        }
+        return JdbcDucklakeSchemaVersionQueries(dsl, metadata).resolve(tableId, schemaVersion, snapshotId)
+    }
 
-        // Backward-compatible fallback: resolve by snapshot.schema_version only.
-        val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
-        val fallback: Long? = dsl.select(snap.SNAPSHOT_ID)
-            .from(snap)
-            .where(snap.SCHEMA_VERSION.eq(schemaVersion))
-            .and(snap.SNAPSHOT_ID.le(snapshotId))
-            .orderBy(snap.SNAPSHOT_ID.desc())
-            .limit(1)
-            .fetchOne(snap.SNAPSHOT_ID)
-        return fallback
+    private fun sourceSchemaSnapshot(inlined: InlinedDataTable, tableId: Long, version: Long, snapshot: Long): Long? {
+        val resolved = getSnapshotIdForSchemaVersion(tableId, version, snapshot)
+        if (resolved == null && metadata.fetchOne(dsl, dsl.selectOne().from(inlined.table).limit(1)) != null) {
+            throw DucklakeCatalogCorruptionException("Cannot resolve inline schema $version for table $tableId: snapshot boundary evidence is missing")
+        }
+        return resolved
     }
 
     /**

@@ -83,8 +83,10 @@ interface DucklakeCatalog : AutoCloseable {
     fun getAllColumnsWithParentage(tableId: Long, snapshotId: Long): List<DucklakeColumn>
 
     /**
-     * Resolves the snapshot at which the given table schema version was introduced (bounded by
-     * [snapshotId]), or null when it cannot be determined. Lets readers of schema-versioned
+     * Resolves the table's column-tree snapshot for the requested schema version (bounded by
+     * [snapshotId]), or null when it cannot be determined. Unrelated global versions use the
+     * table's latest preceding change; legacy inline versions can resolve to their committing
+     * schema. Lets readers of schema-versioned
      * artifacts (e.g. `ducklake_inlined_data_<t>_<sv>` tables) load the column tree AS OF that
      * version for identity-based field mapping across nested schema evolution.
      */
@@ -172,6 +174,9 @@ interface DucklakeCatalog : AutoCloseable {
      * [listSnapshotChanges] therefore includes changes of expired snapshots; retaining a change
      * does not make its snapshot available for time travel. There is no safe conflict-history
      * pruning watermark shared with other engines, so expiry never removes those rows.
+     * Before deleting snapshot evidence, preserves resolvable legacy inline schema-version
+     * boundaries in the standard schema-version ledger. Ambiguous nonempty inline layouts
+     * reject expiry instead of guessing a column tree.
      * Then cascade-deletes the now-dead data/delete files (+ their column
      * stats, variant stats, and partition values), **scheduling** those files into
      * `ducklake_files_scheduled_for_deletion` (stored as absolute paths) for a later age-gated

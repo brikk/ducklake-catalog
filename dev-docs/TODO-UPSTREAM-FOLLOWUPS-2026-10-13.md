@@ -5,7 +5,7 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
 
 ## Work in order
 
-1. [ ] **Old inline schemas, expiration and flushes** (#1590/#1679).
+1. [x] **Old inline schemas, expiration and flushes** (#1590/#1679).
    Reproduce missing schema-version rows with native 1.5.6 catalogs; cover ALTER,
    rename, unrelated DDL, multiple inline versions and snapshot expiration.
    Audit JVM schema resolution; fix only demonstrated local defects. Preserve
@@ -36,4 +36,6 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
 - Keep 1.1 writes disabled and current production/preview pins unchanged unless
   separately approved. Preserve public consumer contracts; use disposable fixtures.
 - Leave Trino/Doris work to their agents; stop session-owned test infrastructure.
-- **Not started. Stop for user approval before item 1.**
+- User approved execution October 14. Item 1 is verified; see
+  [execution evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
+  Resume at item 2 after the item-1 commit. Item 5 remains deferred.
