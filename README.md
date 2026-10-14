@@ -174,6 +174,11 @@ not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](d
 Actual 1.1 implementation remains deferred until release-candidate artifacts/layouts
 are rechecked, using the [consumer contract](dev-docs/DUCKLAKE-1.1-CONSUMER-CONTRACT.md).
 
+For unreleased inline-schema/expiry fixes and PostgreSQL planning changes, see the
+[upstream follow-up log](dev-docs/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
+Producers upgrading must adopt the [COMMIT outcome and cleanup contract](dev-docs/COMMIT-OUTCOME-CONTRACT.md);
+an uncertain commit is not permission to retry or delete output files.
+
 ## Building
 
 Multi-module Gradle build. The toolchain is pinned in [`mise.toml`](mise.toml) / [`.sdkmanrc`](.sdkmanrc)

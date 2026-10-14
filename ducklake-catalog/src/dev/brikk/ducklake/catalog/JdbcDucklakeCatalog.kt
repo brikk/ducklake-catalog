@@ -1602,22 +1602,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val aggregates = linkedMapOf<Long, AggregatedColumnStats>()
         metadata.fetch(
             ctx,
-            ctx.select(
-                file.DATA_FILE_ID,
-                file.RECORD_COUNT,
-                colstats.COLUMN_ID,
-                colstats.COLUMN_SIZE_BYTES,
-                colstats.VALUE_COUNT,
-                colstats.NULL_COUNT,
-                colstats.CONTAINS_NAN,
-                colstats.MIN_VALUE,
-                colstats.MAX_VALUE,
-            )
-                .from(file)
-                .leftJoin(colstats)
-                .on(colstats.DATA_FILE_ID.eq(file.DATA_FILE_ID).and(colstats.TABLE_ID.eq(tableId)))
-                .where(file.TABLE_ID.eq(tableId))
-                .and(activeAt(file, snapshotId)),
+            fileColumnStatisticsQuery(ctx, tableId, snapshotId),
         ) { r ->
             val fileId = orZero(r.get(file.DATA_FILE_ID))
             val recordCount = r.get(file.RECORD_COUNT)
@@ -1637,6 +1622,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (!coveredFiles.getValue(columnId).containsAll(nonemptyFiles)) stats.merge(null, null)
         }
         return aggregates
+    }
+
+    /** Shared actual planning query, also exposed internally for prepared-plan regression checks. */
+    internal fun fileColumnStatisticsQuery(ctx: DSLContext, tableId: Long, snapshotId: Long): org.jooq.ResultQuery<*> {
+        val file = DUCKLAKE_DATA_FILE.`as`("file")
+        val stats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
+        return ctx.select(file.DATA_FILE_ID, file.RECORD_COUNT, stats.COLUMN_ID, stats.COLUMN_SIZE_BYTES,
+            stats.VALUE_COUNT, stats.NULL_COUNT, stats.CONTAINS_NAN, stats.MIN_VALUE, stats.MAX_VALUE)
+            .from(file).leftJoin(stats).on(stats.DATA_FILE_ID.eq(file.DATA_FILE_ID).and(stats.TABLE_ID.eq(tableId)))
+            .where(file.TABLE_ID.eq(tableId)).and(activeAt(file, snapshotId))
     }
 
     override fun getPartitionSpecs(tableId: Long, snapshotId: Long): List<DucklakePartitionSpec> {

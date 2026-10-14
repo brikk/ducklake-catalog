@@ -117,3 +117,54 @@ checks; it does not pretend the failing native engine gates pass. YAML and local
 documentation links were verified. No production implementation or pin change
 was made in this step. These failures remain release/RC qualification blockers,
 not fixed native behavior, and are now included in the acceptance runbook/README.
+
+Commit: `fb47ded`.
+
+## 4. PostgreSQL planning at scale
+
+Seeded a disposable PostgreSQL 18 catalog with **200,000 files, 5,000 tables,
+50,000 table-history rows and 1.6 million file-column statistics rows**. Captured
+actual catalog query builders, prepared them with JDBC-equivalent parameter types
+and ran each six times under forced custom and generic plans. Tests check the
+server's corresponding prepared-plan counters, row counts and EXPLAIN execution
+loops, not fragile elapsed-time thresholds. No physical data files or cleanup ran.
+
+The existing latest-table-path lookup repeated for every historical row:
+**240 lookups for 24 owners** in a 940-file page, in both plan modes. PostgreSQL's
+path lookup now uses one page-owner VALUES/LATERAL lookup with FETCH WITH TIES.
+It performs **24 lookups**, retaining duplicate-latest detection, missing/NULL
+boundary rejection and SQL path overflow sentinels. Other backends keep their
+existing SQL; no catalog indexes, schemas or format changes were introduced.
+
+Observed table-lookup times: custom **228 ms → 28 ms**, generic **236 ms → 27 ms**.
+These are synthetic observations, not warehouse SLAs. Page transfers remain
+**940 files + 24 table paths + 1 schema path**, with existing path-length caps.
+The actual file-statistics query returned 320 rows for 40 files/eight columns;
+maximum execution loops were 3 in both modes. No statistics aggregation fan-out
+like DataFusion #373 was reproduced here, so no speculative statistics SQL rewrite
+was made. Its query builder was factored for direct plan verification without
+changing its SQL semantics.
+
+All five bounded-cleanup routes still pass missing/duplicate/NULL-parent, exact
+path/collation, oversized-value, pinned-session and transfer-limit contracts.
+**C05 remains open:** PostgreSQL planner `ANALYZE` used to seed estimates is not
+catalog `analyzeTable`, and this benchmark is not a concurrent publication fix.
+
+## Final verification and handoff
+
+```sh
+mise exec -- ./gradlew check --rerun-tasks -Dducklake.corpus.dirs=all --no-configuration-cache
+```
+
+Passed **576 JUnit tests** (485 catalog, 51 SLT, 40 replay), zero failures/errors/
+skipped JUnit tests; detekt and Java 17 checkAbi. Forced full corpus passed
+**9,697 records**, zero failures (484 files discovered, 453 run; existing 31 file
+and 12 record skips unchanged). Native harness unit checks passed on both pinned
+packages; strict native probes retain the recorded failures and are not certified.
+
+Items 1–4 are executed locally. Item 5 is deliberately deferred until the October
+17–18 RC window, subject to the tentative calendar. Production dependencies,
+corpus/preview pins, public DTOs and supported write formats remain unchanged;
+1.1 writes remain disabled. Additive commit exceptions require downstream error/
+cleanup adoption before deployment. No sibling repository was edited; no push or
+publication was performed. Final item-4 commit contains this log and the plan checks.

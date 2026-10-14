@@ -273,6 +273,9 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
         fun missingAndDuplicateLatestParentsFailInsteadOfLosingReferences() = withUnconstrainedSchema {
             file(DucklakeFileKind.DATA, 1)
             listOf("table", "schema").forEach { parent ->
+                exec("UPDATE ducklake_$parent SET begin_snapshot = NULL")
+                assertCorrupt { catalog.listRetainedFileReferencePage(DucklakeFileKind.DATA, null, 1) }
+                exec("UPDATE ducklake_$parent SET begin_snapshot = 1")
                 exec("UPDATE ducklake_$parent SET ${parent}_id = 999")
                 assertCorrupt { catalog.listRetainedFileReferencePage(DucklakeFileKind.DATA, null, 1) }
                 exec("UPDATE ducklake_$parent SET ${parent}_id = ?", if (parent == "table") 20L else 10L)
@@ -557,14 +560,20 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
             assertThat(queries.listRetainedFileReferencePage(DucklakeFileKind.DATA, null, 2)).hasSize(2)
             assertThat(recording.rowCounts).containsExactly(2, 1, 1)
             assertThat(recording.fieldCounts).containsExactly(4, 4, 3)
-            assertThat(recording.sql[1]).contains("tab.table_id in (20)", "version.table_id = tab.table_id")
-                .containsPattern("limit 1|fetch next 1 rows only").containsPattern("limit 2|fetch next 2 rows only")
+            if (backend == Backend.POSTGRES) {
+                assertThat(recording.sql[1]).contains("lateral", "with ties", "values", "20")
+                    .containsPattern("limit 2|fetch next 2 rows only")
+            } else {
+                assertThat(recording.sql[1]).contains("tab.table_id in (20)", "version.table_id = tab.table_id")
+                    .containsPattern("limit 1|fetch next 1 rows only").containsPattern("limit 2|fetch next 2 rows only")
+            }
             assertThat(recording.sql[2]).contains("sch.schema_id in (10)", "version.schema_id = sch.schema_id")
                 .containsPattern("limit 1|fetch next 1 rows only").containsPattern("limit 2|fetch next 2 rows only")
-            assertThat(recording.sql.joinToString()).doesNotContain("select *", "join", "offset", "comment")
+            assertThat(recording.sql.joinToString()).doesNotContain("select *", "offset", "comment")
+            if (backend != Backend.POSTGRES) assertThat(recording.sql.joinToString()).doesNotContain("join")
             recording.sql.forEach { assertThat(it).contains("16385") }
             assertThat(queries.listRetainedFileReferencePage(DucklakeFileKind.DATA, 2, 2).single().pathRef.tableId).isEqualTo(21L)
-            assertThat(recording.sql[4]).contains("tab.table_id in (21)")
+            assertThat(recording.sql[4]).contains(if (backend == Backend.POSTGRES) "cast(21 as bigint)" else "tab.table_id in (21)")
             assertThat(recording.sql[5]).contains("sch.schema_id in (11)")
             assertThat(queries.listRetainedFileReferencePage(DucklakeFileKind.DATA, null, 3)).hasSize(3)
             assertThat(recording.rowCounts.takeLast(3)).containsExactly(3, 2, 2)

@@ -20,6 +20,8 @@ import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_METADATA
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_SCHEMA
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_TABLE
 import org.jooq.DSLContext
+import org.jooq.Field
+import org.jooq.ResultQuery
 import org.jooq.SQLDialect
 import org.jooq.impl.DSL
 import org.jooq.impl.SQLDataType
@@ -106,7 +108,9 @@ internal class JdbcDucklakeCleanupQueries(private val dsl: DSLContext, private v
         val path = DSL.substring(tab.PATH, 1, DucklakeCleanupLimits.MAX_PATH_LENGTH + 1)
         // Limit the projection as well as each latest-version lookup. Do not materialize history,
         // and do not join files to parents: missing/duplicate parents must fail, not drop files.
-        val query = dsl.select(tab.TABLE_ID, tab.SCHEMA_ID, path, tab.PATH_IS_RELATIVE).from(tab)
+        val query = if (dsl.dialect() == SQLDialect.POSTGRES) {
+            latestPostgresPaths(ids, tab, tab.TABLE_ID, tab.BEGIN_SNAPSHOT, listOf(tab.TABLE_ID, tab.SCHEMA_ID, path, tab.PATH_IS_RELATIVE))
+        } else dsl.select(tab.TABLE_ID, tab.SCHEMA_ID, path, tab.PATH_IS_RELATIVE).from(tab)
             .where(tab.TABLE_ID.`in`(ids))
             .and(tab.BEGIN_SNAPSHOT.eq(dsl.select(version.BEGIN_SNAPSHOT).from(version)
                 .where(version.TABLE_ID.eq(tab.TABLE_ID)).orderBy(version.BEGIN_SNAPSHOT.desc()).limit(1)))
@@ -116,6 +120,22 @@ internal class JdbcDucklakeCleanupQueries(private val dsl: DSLContext, private v
                 boundedPath(row.get(path)), row.get(tab.PATH_IS_RELATIVE))
         }
         return uniqueParents(rows, ids) { it.id }
+    }
+
+    /** One PG latest-version lookup per page owner, not one for each of its historical rows. */
+    private fun latestPostgresPaths(
+        ids: Set<Long>, table: org.jooq.Table<*>, id: Field<Long>, begin: Field<Long>, projection: List<Field<*>>,
+    ): ResultQuery<*> {
+        val requested = DSL.values(*ids.map { DSL.row(DSL.`val`(it).cast(SQLDataType.BIGINT)) }.toTypedArray()).`as`("ids", "id")
+        val requestedId = DSL.field(DSL.name("ids", "id"), Long::class.javaObjectType)
+        val latest = dsl.select(projection.map { it.`as`(it.name) } + begin).from(table)
+            .where(id.eq(requestedId)).orderBy(begin.desc()).limit(1).withTies().asTable("latest")
+        // WITH TIES exposes duplicate newest rows to uniqueParents; LIMIT 1 alone would hide corruption.
+        // A NULL newest begin still gives no valid parent, matching the old equality-to-subquery rule.
+        val fields = projection.map { DSL.field(DSL.name("latest", it.name), it.dataType).`as`(it.name) }
+        return dsl.select(fields).from(requested).crossJoin(DSL.lateral(latest))
+            .where(DSL.field(DSL.name("latest", begin.name), Long::class.javaObjectType).isNotNull)
+            .limit(ids.size + 1)
     }
 
     private fun schemaPaths(ids: Set<Long>): Map<Long, SchemaPath> {

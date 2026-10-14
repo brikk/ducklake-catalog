@@ -20,7 +20,7 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
    MIN/MAX bounds, and plain/nested BLOBs with `binary_as_string` enabled. Use
    independent expected IDs/rows/bytes; retain NULL semantics and explicit native
    failures rather than weakening goldens or copying old-engine bugs.
-4. [ ] **PostgreSQL planning at scale** (DataFusion #373).
+4. [x] **PostgreSQL planning at scale** (DataFusion #373).
    Exercise custom and generic prepared plans for file/statistics pages; measure
    fan-out and retain bounded SQL/path transfers. Don't port LATERAL/ASOF blindly
    across backends. C05 concurrent ANALYZE publication remains a separate backlog
@@ -36,8 +36,10 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
 - Keep 1.1 writes disabled and current production/preview pins unchanged unless
   separately approved. Preserve public consumer contracts; use disposable fixtures.
 - Leave Trino/Doris work to their agents; stop session-owned test infrastructure.
-- User approved execution October 14. Items 1–2 are verified in the catalog and
-  item 3 has strict gates plus explicit native failures; see
+- User approved execution October 14. Items 1–4 are executed locally; item 3 has
+  strict gates with explicit native failures, not native fixes. See
   [execution evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
   Downstream cleanup/error adoption is a handoff, not a claimed sibling fix.
-  Resume at item 4 after the item-3 commit. Item 5 remains deferred.
+  Commits: item 1 `b89d870`, item 2 `c586309`, item 3 `fb47ded`; item 4 is the
+  final log/plan-check commit. Final forced verification: 576 tests / 9,697 records.
+  Resume at item 5 in the October 17–18 RC window. C05 remains separate and open.
