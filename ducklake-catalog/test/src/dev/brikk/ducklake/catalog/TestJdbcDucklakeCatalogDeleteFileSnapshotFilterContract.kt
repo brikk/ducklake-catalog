@@ -226,6 +226,44 @@ class TestJdbcDucklakeCatalogDeleteFileSnapshotFilterContract {
     }
 
     @Test
+    fun sameSnapshotTransientVersionsRemainCandidatesForReaderSideFiltering() {
+        withDuckDb { c -> c.createStatement().use { st ->
+            st.execute("CREATE TABLE lake.test_schema.transient_cdc (id INTEGER, v INTEGER)")
+            st.execute("CALL lake.set_option('data_inlining_row_limit',0,table_name=>'transient_cdc',schema=>'test_schema')")
+            st.execute("INSERT INTO lake.test_schema.transient_cdc SELECT i,0 FROM range(3) r(i)")
+            st.execute("BEGIN; UPDATE lake.test_schema.transient_cdc SET v=1; DELETE FROM lake.test_schema.transient_cdc WHERE id=0; COMMIT")
+        } }
+        val updated = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "transient_cdc", updated)!!
+        val added = catalog.getDataFilesAddedBetween(table.tableId, updated, updated).single()
+        assertThat(added.beginSnapshot).isEqualTo(updated)
+        assertThat(added.recordCount).isEqualTo(3L) // Includes the uncommitted intermediate id=0,v=1.
+        val deletions = catalog.getDeletionsBetween(table.tableId, updated, updated)
+        assertThat(deletions.filter { it.dataFileBeginSnapshot == updated }).hasSize(1)
+        val transient = deletions.single { it.dataFileBeginSnapshot == updated }
+        assertThat(transient.currentDeletePath).isNotNull()
+        assertThat(transient.dataFilePath).isEqualTo(added.path)
+        assertThat(deletions.filter { it.dataFileBeginSnapshot < updated }).hasSize(1)
+        // Do not drop the whole new file: ids 1 and 2 are real postimages. Nor the whole old
+        // file: id 0 is a real deletion and ids 1 and 2 are preimages. Position filtering belongs
+        // to readers; the catalog must expose BOTH sides, with their origin snapshots intact.
+        withDuckDb { c -> c.createStatement().use { st ->
+            st.execute("DELETE FROM lake.test_schema.transient_cdc WHERE id=1")
+        } }
+        val later = catalog.currentSnapshotId
+        val laterDeletes = catalog.getDeletionsBetween(table.tableId, later, later)
+            .filter { it.dataFilePath == added.path }
+        assertThat(laterDeletes).hasSize(1)
+        // The new cumulative file is backdated to the first embedded delete snapshot;
+        // tagged positions, not a two-column predecessor subtraction, distinguish this window.
+        assertThat(laterDeletes.single().previousDeletePath).isEqualTo(laterDeletes.single().currentDeletePath)
+        assertThat(laterDeletes.single().currentDeletePath).isNotEqualTo(transient.currentDeletePath)
+        val current = catalog.getDataFiles(table.tableId, later).single()
+        assertThat(embeddedDeleteSnapshots(table, current, later)).containsExactly(updated, later)
+        assertThat(catalog.getDataFilesAddedBetween(table.tableId, updated, updated).single()).isEqualTo(added)
+    }
+
+    @Test
     fun unknownFormatGateIgnoresPartialMax() {
         val snapshot = catalog.currentSnapshotId
         val table = catalog.getTable("test_schema", "simple_table", snapshot)!!

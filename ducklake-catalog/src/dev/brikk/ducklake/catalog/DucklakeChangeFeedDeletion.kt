@@ -56,6 +56,12 @@ package dev.brikk.ducklake.catalog
  * Resolve a deleted position's row ID from the data file's embedded row-ID field when present;
  * otherwise use `rowIdStart + pos`. [rowIdStart] may be NULL for embedded lineage, exactly as in
  * [DucklakeDataFile.rowIdStart]. Delete-file positions are physical positions, not absolute row IDs.
+ *
+ * Candidates are not final CDC rows. A position inserted AND deleted in the same snapshot
+ * never existed in a committed state: suppress it on BOTH insertion/deletion sides before
+ * pairing updates. Compare the per-row origin and deletion snapshot (including embedded tags),
+ * not merely file begin snapshots. Later deletions must remain visible. Do not drop an entire
+ * candidate file because only some positions are transient.
  */
 @JvmRecord
 data class DucklakeChangeFeedDeletion(

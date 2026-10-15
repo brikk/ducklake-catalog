@@ -52,6 +52,17 @@ class NativeCanaryContract(unittest.TestCase):
         self.assertEqual(encoded([None, b"", b"\x00"]), [None, {"hex": ""}, {"hex": "00"}])
         self.assertEqual(encoded({"nested": [None, b"\\x41"]}), {"nested": [None, {"hex": "5c783431"}]})
 
+    def test_transient_cdc_images_and_duplicate_pairs_fail(self):
+        from ducklake_cdc_transient import changes
+
+        expected = [(3, 0, "delete", 0, 0)]
+        case = Case(FakeQuery([(3, 0, "update_postimage", 0, 1), (3, 0, "update_preimage", 0, 0)]))
+        changes(case, "cdc", 3, 3, expected)
+        self.assertFalse(case.checks["cdc"])
+        case = Case(FakeQuery(expected + expected))
+        changes(case, "cdc", 3, 3, expected)
+        self.assertFalse(case.checks["cdc"])
+
 
 if __name__ == "__main__":
     unittest.main()

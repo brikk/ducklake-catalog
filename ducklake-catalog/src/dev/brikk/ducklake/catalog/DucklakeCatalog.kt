@@ -441,6 +441,8 @@ interface DucklakeCatalog : AutoCloseable {
      * columns (by id) as of the end snapshot; each row's [DucklakeInlinedChangeRow.values] are
      * projected to them in order (null-filled where a column didn't exist in the row's schema
      * version). Empty when the inlined table doesn't exist.
+     * Candidate API: a version with equal begin/end snapshots never existed in a committed
+     * state and must not produce either CDC image. Consumers filter it before pairing images.
      */
     fun getInlinedChangesBetween(
         tableId: Long,
