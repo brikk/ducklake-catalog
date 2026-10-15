@@ -33,6 +33,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.time.Instant
+import java.util.function.Supplier
 
 /** Lost-ack injection happens AFTER a real backend commit, not by guessing a metadata shape. */
 class TestJdbcDucklakeCatalogCommitOutcomes {
@@ -129,6 +131,40 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
         fun close() {
             if (::catalog.isInitialized) catalog.close()
             server?.close()
+        }
+
+        @Test
+        fun readSessionHidesNewSnapshotsAndCdcEvenWhenFutureIdIsRequested() {
+            catalog.commitInsert(table.tableId, listOf(fragment))
+            Files.copy(output, output.resolveSibling("after-pin.parquet"))
+            val before = catalog.currentSnapshotId
+            var winner = -1L
+            catalog.readSession(Supplier {
+                assertThat(catalog.currentSnapshotId).isEqualTo(before) // Establish the remote MVCC snapshot.
+                val snapshots = catalog.listSnapshots()
+                val changes = catalog.listSnapshotChanges()
+                JdbcDucklakeCatalog(configuration).use { other ->
+                    other.commitInsert(table.tableId, listOf(fragment.copy(path = "after-pin.parquet")))
+                    winner = other.currentSnapshotId
+                }
+                assertThat(winner).isEqualTo(before + 1)
+                assertThat(catalog.currentSnapshotId).isEqualTo(before)
+                assertThat(catalog.listSnapshots()).isEqualTo(snapshots)
+                assertThat(catalog.listSnapshotChanges()).isEqualTo(changes)
+                assertThat(catalog.getSnapshot(winner)).isNull()
+                assertThat(catalog.getSnapshotAtOrBefore(Instant.now().plusSeconds(60))!!.snapshotId).isEqualTo(before)
+                assertThat(catalog.getDataFilesAddedBetween(table.tableId, winner, winner)).isEmpty()
+                assertThat(catalog.getDeletionsBetween(table.tableId, winner, winner)).isEmpty()
+                assertThat(catalog.getDataFiles(table.tableId, winner)).hasSize(1)
+                assertThat(catalog.readSession(Supplier { catalog.currentSnapshotId })).isEqualTo(before)
+            })
+            assertThat(catalog.currentSnapshotId).isEqualTo(winner)
+            assertThat(catalog.getSnapshot(winner)).isNotNull()
+            assertThat(catalog.getSnapshotAtOrBefore(catalog.getSnapshot(winner)!!.snapshotTime)!!.snapshotId).isEqualTo(winner)
+            assertThat(catalog.getSnapshotAtOrBefore(Instant.parse("1900-01-01T00:00:00Z"))).isNull()
+            assertThat(catalog.getDataFilesAddedBetween(table.tableId, winner, winner).single().path).isEqualTo("after-pin.parquet")
+            assertThat(catalog.getDataFiles(table.tableId, winner)).hasSize(2)
+            assertThat(Files.exists(output.resolveSibling("after-pin.parquet"))).isTrue()
         }
 
         @Test

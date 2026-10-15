@@ -35,6 +35,7 @@ October 17–18 is a planning window, not a newly confirmed release commitment.
 | Native change feeds/delete+flush | `ducklake_11_regressions.py` | Both strict gates must pass on the actual shipping engine/extension |
 | Transient CDC versions (UF-01) | `ducklake_cdc_transient.py` | Same-snapshot insert/delete emits no version; update/delete retains the true preimage only; later tagged deletes remain visible |
 | CDC user-name collisions (UF-02) | `ducklake_cdc_names.py` | User rowid/snapshot_id and existing suffixes do not shadow metadata or multiply update pairs; payload names remain unambiguous |
+| Quack transaction ceilings (UF-03) | `ducklake_quack_snapshot_ceiling.py`, five-route JVM read-session contract | Listings/time travel/CDC never reveal commits newer than the pin; explicit future versions rejected natively; post-session reads advance |
 | Old inline schemas | `ducklake_old_inline_schema.py` | Known values survive unrelated DDL and native flush; do not substitute NULL |
 | Merge lineage, exact stats and BLOB bytes | `ducklake_lineage_stats_blob.py` | Current/history/update images, live MIN/MAX and plain/nested BLOB bytes survive maintenance and session settings |
 | Expiration/cleanup | Scale fixture and five-backend bounded-cleanup tests | Liveness intact; larger memory-profiled scale gate and consumer traversal budgets remain required |
@@ -59,6 +60,7 @@ python3 dev-docs/probes/ducklake_11_migration.py \
 <candidate>/bin/python dev-docs/probes/ducklake_lineage_stats_blob.py --temp-root /tmp/opencode
 <candidate>/bin/python dev-docs/probes/ducklake_cdc_transient.py --temp-root /tmp/opencode
 <candidate>/bin/python dev-docs/probes/ducklake_cdc_names.py --temp-root /tmp/opencode
+<candidate>/bin/python dev-docs/probes/ducklake_quack_snapshot_ceiling.py --temp-root /tmp/opencode
 ```
 
 The migration rehearsal records downgrade attempts as observations and fails on

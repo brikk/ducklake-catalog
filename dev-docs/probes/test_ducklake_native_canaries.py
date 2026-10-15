@@ -63,6 +63,15 @@ class NativeCanaryContract(unittest.TestCase):
         changes(case, "cdc", 3, 3, expected)
         self.assertFalse(case.checks["cdc"])
 
+    def test_snapshot_ceiling_requires_the_specific_rejection(self):
+        from ducklake_quack_snapshot_ceiling import rejected
+
+        for error, passed in [(duckdb.Error("No snapshot found at version 4"), True),
+                              (duckdb.Error("connection lost"), False), (None, False)]:
+            case = Case(FakeQuery(rows=[(4,)], error=error))
+            rejected(case, "future", "test", 4)
+            self.assertEqual(case.checks["future"], passed)
+
 
 if __name__ == "__main__":
     unittest.main()

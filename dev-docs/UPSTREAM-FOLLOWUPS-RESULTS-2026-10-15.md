@@ -85,3 +85,46 @@ Verification: full `check` with all corpus directories passed: **591 JUnit tests
 zero failures/errors/skips; 9,697 corpus records, unchanged corpus skips, detekt
 and Java 17 checkAbi. Strict native probes exit 1 on all three sampled targets.
 Run `ducklake_cdc_names.py` with the same `--temp-root`/`--version` options as UF-01.
+
+## UF-03 — Quack snapshot ceilings (#1756)
+
+**Local timestamp lookup fixed; JVM pinned sessions pass all five routes;
+native Quack ceiling gate still fails.**
+
+The new five-route contract pins a read session, commits a competing real-Parquet
+append through another catalog, then checks head, snapshot/change listings,
+explicit future-ID lookup, timestamp lookup, file candidates/CDC and nested
+sessions. New metadata is invisible until the session ends, including when callers
+explicitly request the new ID. After release the new snapshot/files are visible.
+This passes on PostgreSQL, MySQL, local DuckDB, native Quack and Java Quack with
+one-connection pools. The explicit remote BEGIN in our Quack metadata adapter
+already prevents the native DuckLake metadata-session leak; no artificial head
+filter or new read-session semantics were added.
+
+These checks reproduced a **local timestamp-lookup defect** on local DuckDB and
+direct Java Quack: jOOQ 3.19 renders `TIMESTAMP(6) WITH TIME ZONE`, which DuckDB
+rejects. The DuckDB dialect now binds UTC ISO instant text and explicitly casts to
+`TIMESTAMPTZ`; PostgreSQL/MySQL retain their rendering. Instant formatting retains
+seconds at exact minutes. Cases verify a current lookup, exact snapshot timestamp,
+pre-history timestamp, pinned ceiling and visibility after release. No public API,
+time ordering/tie-break semantics, DTOs or dependency pins changed.
+
+`ducklake_quack_snapshot_ceiling.py` uses matched native peers in separate processes,
+two native clients, explicit BEGIN, independent live values and snapshots, future
+version rejection, timestamp time travel, timestamp/version CDC and post-rollback
+controls. Server startup/lifetime and teardown are bounded, including terminate/
+kill fallback. Only the specific no-such-visible-snapshot error satisfies a rejection
+check; a transport error does not. The harness has eight passing unit tests.
+
+Maintained peers (core `069cc9f9b5`, Quack `7e80f7f`, DuckLake `ac7595b0`) and
+locked-preview peers (core `96063b9e39`, Quack `974927a394`, DuckLake `e8924cfc9c`),
+preview with explicit 1.0 and fresh 1.1-dev1, all fail the strict native gate:
+the live table remains pinned at two rows, but snapshot listing reveals head 3,
+timestamp time travel/CDC returns three, and explicit future version/CDC requests
+succeed instead of being rejected. Repin/unpinned controls pass. These are not
+fixed by the JVM cast correction; qualify upstream #1756 on actual shipping peers.
+
+Verification: forced full `check --rerun-tasks` with all corpus directories passed:
+**596 JUnit tests**, zero failures/errors/skips; **9,697 corpus records**, unchanged
+corpus skips, detekt and Java 17 checkAbi. Strict native gates exited 1 on all three
+targets. Run `ducklake_quack_snapshot_ceiling.py` with the standard probe options.
