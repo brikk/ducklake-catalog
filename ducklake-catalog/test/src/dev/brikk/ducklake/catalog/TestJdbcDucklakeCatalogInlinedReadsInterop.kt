@@ -122,6 +122,35 @@ class TestJdbcDucklakeCatalogInlinedReadsInterop {
     }
 
     @Test
+    fun cdcIdentityCannotBeShadowedByUserNamesOrExistingSuffixes() {
+        var inserted = -1L
+        DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { st ->
+            st.execute("LOAD ducklake; LOAD postgres")
+            st.execute("ATTACH '${isolated.duckDbAttachUri}' AS lake (DATA_PATH '${isolated.dataDir.toAbsolutePath()}')")
+            st.execute("CREATE TABLE lake.test_schema.cdc_names " +
+                "(rowid_1 INTEGER,rowid BIGINT,snapshot_id_1 INTEGER,snapshot_id BIGINT,v INTEGER)")
+            st.execute("INSERT INTO lake.test_schema.cdc_names VALUES (7,0,70,0,1),(8,0,80,0,2)")
+            inserted = catalog.currentSnapshotId
+            st.execute("UPDATE lake.test_schema.cdc_names SET v=v+10")
+        } }
+        val updated = catalog.currentSnapshotId
+        val table = catalog.getTable("test_schema", "cdc_names", updated)!!
+        val columns = catalog.getTableColumns(table.tableId, updated)
+        assertThat(columns.map { it.columnName }).containsExactly("rowid_1", "rowid", "snapshot_id_1", "snapshot_id", "v")
+        assertThat(columns.map { it.columnId }).isEqualTo(catalog.getTableColumns(table.tableId, inserted).map { it.columnId })
+        val version = catalog.getInlinedDataInfos(table.tableId, updated).single().schemaVersion
+        val changes = catalog.getInlinedChangesBetweenDecoded(table.tableId, version, updated, updated, columns.map { it.columnId })
+        assertThat(changes).hasSize(4)
+        val pre = changes.filter { it.endSnapshot == updated }.sortedBy { it.rowId }
+        val post = changes.filter { it.beginSnapshot == updated }.sortedBy { it.rowId }
+        assertThat(pre.map { it.rowId }).containsExactly(0L, 1L)
+        assertThat(post.map { it.rowId }).containsExactly(0L, 1L)
+        assertThat(pre.map { it.values }).containsExactly(listOf<Any?>(7, 0L, 70, 0L, 1), listOf<Any?>(8, 0L, 80, 0L, 2))
+        assertThat(post.map { it.values }).containsExactly(listOf<Any?>(7, 0L, 70, 0L, 11), listOf<Any?>(8, 0L, 80, 0L, 12))
+        assertThat(post.map { it.endSnapshot }).containsOnlyNulls()
+    }
+
+    @Test
     fun onlyAMissingTableIsSilentEverythingElsePropagates() {
         val snapshot = catalog.currentSnapshotId
         val table = catalog.getTable("test_schema", "hostile", snapshot)!!

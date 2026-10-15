@@ -34,6 +34,7 @@ October 17–18 is a planning window, not a newly confirmed release commitment.
 | Native storage rollback | Migration probe: default 1.0 write/checkpoint, explicit migration, old reopen, pristine backup reopen | Document actual reopen failures and prove backup restore; never promise downgrade by swapping JDBC |
 | Native change feeds/delete+flush | `ducklake_11_regressions.py` | Both strict gates must pass on the actual shipping engine/extension |
 | Transient CDC versions (UF-01) | `ducklake_cdc_transient.py` | Same-snapshot insert/delete emits no version; update/delete retains the true preimage only; later tagged deletes remain visible |
+| CDC user-name collisions (UF-02) | `ducklake_cdc_names.py` | User rowid/snapshot_id and existing suffixes do not shadow metadata or multiply update pairs; payload names remain unambiguous |
 | Old inline schemas | `ducklake_old_inline_schema.py` | Known values survive unrelated DDL and native flush; do not substitute NULL |
 | Merge lineage, exact stats and BLOB bytes | `ducklake_lineage_stats_blob.py` | Current/history/update images, live MIN/MAX and plain/nested BLOB bytes survive maintenance and session settings |
 | Expiration/cleanup | Scale fixture and five-backend bounded-cleanup tests | Liveness intact; larger memory-profiled scale gate and consumer traversal budgets remain required |
@@ -57,6 +58,7 @@ python3 dev-docs/probes/ducklake_11_migration.py \
 <candidate>/bin/python dev-docs/probes/ducklake_old_inline_schema.py --temp-root /tmp/opencode
 <candidate>/bin/python dev-docs/probes/ducklake_lineage_stats_blob.py --temp-root /tmp/opencode
 <candidate>/bin/python dev-docs/probes/ducklake_cdc_transient.py --temp-root /tmp/opencode
+<candidate>/bin/python dev-docs/probes/ducklake_cdc_names.py --temp-root /tmp/opencode
 ```
 
 The migration rehearsal records downgrade attempts as observations and fails on

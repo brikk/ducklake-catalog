@@ -52,3 +52,36 @@ Run a probe using an explicitly selected pinned package, e.g.:
 
 Disposable local fixtures are removed at probe exit. Re-run on the actual RC engine,
 then obtain independent connector verification; a main-branch PR merge is not certification.
+
+## UF-02 — CDC user-name collisions (#1723)
+
+**JVM identity/value projection verified; native gate fails; no local rename applied.**
+
+`ducklake_cdc_names.py` tests both file and inline paths with user columns
+`rowid_1,rowid,snapshot_id_1,snapshot_id,v`. Two rows deliberately share user
+identity values 0,0. After a normal committed UPDATE (no transient rows), the
+independent expectation is four images, internal IDs 0,1 and the real snapshot.
+Both maintained and locked-preview engines (explicit 1.0 and fresh 1.1-dev1)
+instead emit **eight images** with apparent snapshot/row ID 0,0. `WHERE rowid=1`
+incorrectly returns nothing. Insertions/deletions also fail the positional
+metadata-plus-payload expectations. History and live-value controls pass.
+
+The JVM regression reads native-created inline versions through the existing
+decoded API. It verifies exactly four candidates, unchanged user names and field
+IDs, original 0/1 row IDs on both images, correct begin/end snapshots and distinct
+payload values. This API already carries identity separately from user values;
+it does not perform the faulty name-based CDC join. No speculative alias changes
+or public DTO/JSON changes were made.
+
+Compatibility/handoff: native #1723 reserves the public CDC `snapshot_id,rowid`
+outputs for metadata and suffixes colliding **payload** names, avoiding existing
+suffixes. Future native `SELECT *`/name-based consumers must qualify the actual
+output description; do not hardcode `rowid_1` for the user field if that name
+already exists. Pair images using internal snapshot and absolute row identity,
+never a user-named column. The JVM catalog retains original names and field IDs;
+connector SQL aliases/output naming are its agents' responsibility.
+
+Verification: full `check` with all corpus directories passed: **591 JUnit tests**,
+zero failures/errors/skips; 9,697 corpus records, unchanged corpus skips, detekt
+and Java 17 checkAbi. Strict native probes exit 1 on all three sampled targets.
+Run `ducklake_cdc_names.py` with the same `--temp-root`/`--version` options as UF-01.

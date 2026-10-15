@@ -62,11 +62,12 @@ def insert_delete(case):
     case.query("live_control", "SELECT id,v FROM lake.t ORDER BY id", [(1, 0), (2, 0)])
 
 
-def run(root, version):
+def run(root, version, scenarios=None):
     results = {"python_package": duckdb.__version__, "cases": {}, "checks": {}}
-    for name, scenario in {"update_delete_files": lambda x: update_delete(x, False),
-                           "update_delete_inline_tags": lambda x: update_delete(x, True),
-                           "insert_delete": insert_delete}.items():
+    scenarios = scenarios or {"update_delete_files": lambda x: update_delete(x, False),
+                              "update_delete_inline_tags": lambda x: update_delete(x, True),
+                              "insert_delete": insert_delete}
+    for name, scenario in scenarios.items():
         with duckdb.connect() as c:
             case = Case(c)
             try:

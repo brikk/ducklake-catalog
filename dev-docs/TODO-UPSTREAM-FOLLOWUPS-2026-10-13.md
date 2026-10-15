@@ -39,7 +39,7 @@ The scheduled RC refresh above takes precedence on October 17–18.
 | Done | ID | Priority / next investigation | Upstream reference |
 |---|---|---|---|
 | [x] | **UF-01** | **Catalog candidates verified; strict native gate fails.** Same-snapshot versions require reader-side suppression before pairing; later/tagged deletes covered. [Evidence/handoff](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-01--transient-cdc-rows-1675). | [#1675](https://github.com/duckdb/ducklake/pull/1675) |
-| [ ] | **UF-02** | **P1 — CDC name collisions:** user `rowid`, `snapshot_id` and pre-existing suffixed names must not change image pairing or multiply rows. Preserve field IDs and document any output-name differences. | [#1723](https://github.com/duckdb/ducklake/pull/1723) |
+| [x] | **UF-02** | **JVM field-ID/identity projection verified; native gate fails.** Four expected images become eight natively. Payload suffix compatibility documented; no local renames. [Evidence/handoff](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-02--cdc-user-name-collisions-1723). | [#1723](https://github.com/duckdb/ducklake/pull/1723) |
 | [ ] | **UF-03** | **P1 — Quack snapshot ceiling:** a pinned transaction must not list, time-travel to, or read CDC through commits newer than its snapshot. Exercise native and Java Quack read sessions; don't assume the native bug exists in our explicit remote transactions. | [#1756](https://github.com/duckdb/ducklake/pull/1756) |
 | [ ] | **UF-04** | **P1 — unsafe bucket pruning:** NaNs, nested signed zeros and partly foldable IN lists must keep matching files. Do not rehash existing partitions. Catalog/native checks here; engine hashing/pruning belongs to connector agents. | [#1696](https://github.com/duckdb/ducklake/pull/1696) |
 | [ ] | **UF-05** | **P2 — sorted compaction:** retain configured order across target-size rotation, repeated rewrites and merges; independently check row identity too. | [#1634](https://github.com/duckdb/ducklake/pull/1634) |
@@ -48,8 +48,8 @@ The scheduled RC refresh above takes precedence on October 17–18.
 | [ ] | **UF-08** | **P2 — flushable inline values:** negative intervals and unsupported scalar/nested VARIANT encodings must be safely rejected or stored via a qualified path; verify PG TIME_NS text precision. No 1.1 enablement. | [#1727](https://github.com/duckdb/ducklake/pull/1727), [#1769](https://github.com/duckdb/ducklake/pull/1769), [#1724](https://github.com/duckdb/ducklake/pull/1724) |
 | [ ] | **UF-09** | **P2 — import/type mapping:** verify MAP child position versus names, top-level-only hive mappings, new Parquet annotations and encrypted-import refusal. Catalog payload validation/native canaries here; Parquet import implementation remains a connector handoff. | [#1767](https://github.com/duckdb/ducklake/pull/1767), [#1700](https://github.com/duckdb/ducklake/pull/1700), [#1729](https://github.com/duckdb/ducklake/pull/1729), [#1726](https://github.com/duckdb/ducklake/pull/1726) |
 
-**Execution order: UF-01 → UF-02 → UF-03 → UF-04.** UF-01 is investigated and
-gated, not a fixed native engine. Continue at UF-02 with independent expected rows/IDs.
+**Execution order: UF-01 → UF-02 → UF-03 → UF-04.** UF-01/02 are investigated and
+gated, not fixed native engines. Continue at UF-03 with independent expected rows/IDs.
 
 Lower-priority upstream watch: collection/batched inline commits
 ([#1762](https://github.com/duckdb/ducklake/pull/1762), [#1765](https://github.com/duckdb/ducklake/pull/1765)),
