@@ -23,8 +23,8 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
 4. [x] **PostgreSQL planning at scale** (DataFusion #373).
    Exercise custom and generic prepared plans for file/statistics pages; measure
    fan-out and retain bounded SQL/path transfers. Don't port LATERAL/ASOF blindly
-   across backends. C05 concurrent ANALYZE publication remains a separate backlog
-   item, not implicitly fixed by a query-performance change.
+   across backends. C05 concurrent ANALYZE publication is tracked separately;
+   the query-performance change itself did not fix it.
 5. [ ] **Deferred RC refresh — October 17–18, if the calendar holds.**
    Confirm final engine/JDBC/extension pins and which fixes are actually bundled;
    rerun acceptance gates before explicitly scoping real 1.1 implementation.
@@ -42,4 +42,5 @@ provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
   Downstream cleanup/error adoption is a handoff, not a claimed sibling fix.
   Commits: item 1 `b89d870`, item 2 `c586309`, item 3 `fb47ded`; item 4 is the
   final log/plan-check commit. Final forced verification: 576 tests / 9,697 records.
-  Resume at item 5 in the October 17–18 RC window. C05 remains separate and open.
+  Resume at item 5 in the October 17–18 RC window. C05 was subsequently fixed
+  separately October 15; see [its compatibility report](FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md).

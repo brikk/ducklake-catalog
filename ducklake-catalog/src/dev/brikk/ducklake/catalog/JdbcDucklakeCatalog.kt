@@ -838,7 +838,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (snapshotIds.isEmpty()) {
             return ExpireSnapshotsResult(0, 0)
         }
-        // Plain catalog transaction — destructive GC, no new snapshot (mirrors analyzeTable).
+        // Plain catalog transaction — destructive GC, no new snapshot (unlike ANALYZE publication).
         dataSource.connection.use { conn ->
             conn.autoCommit = false
             val ctx = forConnection(conn)
@@ -1413,30 +1413,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun analyzeTable(tableId: Long) {
-        requireNotInReadSession("analyze table $tableId")
-        // Stats tables are mutable, non-snapshot-versioned side tables, so this is a plain catalog
-        // transaction — no new snapshot, no `changes_made` entry (see the interface contract). It
-        // mirrors `attemptWriteTransaction`'s connection handling without the snapshot/conflict
-        // machinery.
-        dataSource.connection.use { conn ->
-            conn.autoCommit = false
-            val ctx = forConnection(conn)
-            metadata.begin(ctx)
-            try {
-                requireCatalogWritesSupported(ctx)
-                val snap = DUCKLAKE_SNAPSHOT
-                val snapshot = ctx.selectFrom(snap).orderBy(snap.SNAPSHOT_ID.desc()).limit(1).fetchOne()
-                    ?: throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
-                val snapshotId = snapshot.snapshotId
-                val schemaVersion = orZero(snapshot.schemaVersion)
-                recomputeTableStats(ctx, tableId, snapshotId, schemaVersion)
-                recomputeTableColumnStats(ctx, tableId, snapshotId, schemaVersion)
-                commitMetadata(ctx, conn, "analyze table $tableId")
+        // Mutable statistics must join the SAME publication protocol as external/native writers.
+        // A metadata-only snapshot fences writers that prepared their absolute stats before us;
+        // row locks or a repeatable-read snapshot alone cannot invalidate those cached writes.
+        executeWriteTransaction("analyze table $tableId", recordEmptyChange = true) { tx ->
+            val ctx = tx.dsl()
+            val table = DUCKLAKE_TABLE
+            if (!ctx.fetchExists(ctx.selectOne().from(table).where(table.TABLE_ID.eq(tableId))
+                    .and(activeAt(table, tx.getCurrentSnapshotId())))) {
+                throw DucklakeEntityNotFoundException("table", tableId.toString())
             }
-            catch (e: Exception) {
-                rollbackQuietly(ctx, conn, e)
-                throw e
-            }
+            recomputeTableStats(ctx, tableId, tx.getCurrentSnapshotId(), tx.getSchemaVersion())
+            recomputeTableColumnStats(ctx, tableId, tx.getCurrentSnapshotId(), tx.getSchemaVersion())
         }
     }
 
@@ -1450,13 +1438,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private fun inlinedTablesForStats(ctx: DSLContext, tableId: Long, schemaVersion: Long): List<InlinedDataTable> {
         if (!dynamicTableExists(ctx, "ducklake_inlined_data_tables")) return emptyList()
         val inlined = DUCKLAKE_INLINED_DATA_TABLES
-        return ctx.selectDistinct(inlined.SCHEMA_VERSION).from(inlined)
-            .where(inlined.TABLE_ID.eq(tableId))
-            .and(inlined.SCHEMA_VERSION.le(schemaVersion))
-            .orderBy(inlined.SCHEMA_VERSION)
-            .fetch(inlined.SCHEMA_VERSION)
-            .filterNotNull()
-            .map { inlinedDataTable(ctx, tableId, it) }
+        val versions = mutableListOf<Long>()
+        var after: Long? = null
+        while (true) {
+            val page = ctx.selectDistinct(inlined.SCHEMA_VERSION).from(inlined)
+                .where(inlined.TABLE_ID.eq(tableId)).and(inlined.SCHEMA_VERSION.le(schemaVersion))
+                .and(after?.let { inlined.SCHEMA_VERSION.gt(it) } ?: DSL.noCondition())
+                .orderBy(inlined.SCHEMA_VERSION).limit(256).fetch(inlined.SCHEMA_VERSION).filterNotNull()
+            if (page.isEmpty()) break
+            require(versions.size + page.size <= 65536) { "Statistics inline-schema traversal budget exceeded" }
+            versions.addAll(page)
+            after = page.last()
+        }
+        return versions.map { inlinedDataTable(ctx, tableId, it) }
     }
 
     /**
@@ -1470,21 +1464,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private fun recomputeTableStats(ctx: DSLContext, tableId: Long, snapshotId: Long, schemaVersion: Long) {
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
-        var grossRecordCount = 0L
-        var totalFileSize = 0L
-        ctx.select(file.RECORD_COUNT, file.FILE_SIZE_BYTES)
+        val counts = ctx.select(DSL.sum(file.RECORD_COUNT), DSL.sum(file.FILE_SIZE_BYTES))
             .from(file)
             .where(file.TABLE_ID.eq(tableId))
             .and(activeAt(file, snapshotId))
-            .fetch()
-            .forEach { r ->
-                grossRecordCount += orZero(r.get(file.RECORD_COUNT))
-                totalFileSize += orZero(r.get(file.FILE_SIZE_BYTES))
-            }
-        grossRecordCount += countGrossInlinedRows(ctx, tableId, snapshotId, schemaVersion)
+            .fetchOne()!!
+        val grossRecordCount = (counts.get(0, Long::class.java) ?: 0L) + countGrossInlinedRows(ctx, tableId, snapshotId, schemaVersion)
+        val totalFileSize = counts.get(1, Long::class.java) ?: 0L
+
+        beforeAnalyzePublicationAction.run()
 
         val existing: DucklakeTableStatsRecord? = ctx.selectFrom(tabstats)
             .where(tabstats.TABLE_ID.eq(tableId))
+            .limit(2)
             .fetchOne()
         if (existing != null) {
             metadata.execute(ctx, ctx.update(tabstats)
@@ -1600,10 +1592,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val nonemptyFiles = mutableSetOf<Long>()
         val coveredFiles = mutableMapOf<Long, MutableSet<Long>>()
         val aggregates = linkedMapOf<Long, AggregatedColumnStats>()
-        metadata.fetch(
-            ctx,
-            fileColumnStatisticsQuery(ctx, tableId, snapshotId),
-        ) { r ->
+        forEachFileColumnStatistic(ctx, tableId, snapshotId) { r ->
             val fileId = orZero(r.get(file.DATA_FILE_ID))
             val recordCount = r.get(file.RECORD_COUNT)
             if (recordCount != 0L) nonemptyFiles.add(fileId)
@@ -1616,7 +1605,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     recordCount,
                 )
             }
-            null
         }
         for ((columnId, stats) in aggregates) {
             if (!coveredFiles.getValue(columnId).containsAll(nonemptyFiles)) stats.merge(null, null)
@@ -1625,13 +1613,42 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /** Shared actual planning query, also exposed internally for prepared-plan regression checks. */
-    internal fun fileColumnStatisticsQuery(ctx: DSLContext, tableId: Long, snapshotId: Long): org.jooq.ResultQuery<*> {
+    internal fun fileColumnStatisticsQuery(
+        ctx: DSLContext, tableId: Long, snapshotId: Long, after: Pair<Long, Long>? = null,
+    ): org.jooq.ResultQuery<*> {
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         val stats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
+        val columnKey = DSL.coalesce(stats.COLUMN_ID, DSL.inline(-1L))
+        val cursor = after?.let { (id, column) ->
+            file.DATA_FILE_ID.gt(id).or(file.DATA_FILE_ID.eq(id).and(columnKey.gt(column)))
+        } ?: DSL.noCondition()
         return ctx.select(file.DATA_FILE_ID, file.RECORD_COUNT, stats.COLUMN_ID, stats.COLUMN_SIZE_BYTES,
             stats.VALUE_COUNT, stats.NULL_COUNT, stats.CONTAINS_NAN, stats.MIN_VALUE, stats.MAX_VALUE)
             .from(file).leftJoin(stats).on(stats.DATA_FILE_ID.eq(file.DATA_FILE_ID).and(stats.TABLE_ID.eq(tableId)))
-            .where(file.TABLE_ID.eq(tableId)).and(activeAt(file, snapshotId))
+            .where(file.TABLE_ID.eq(tableId)).and(activeAt(file, snapshotId)).and(cursor)
+            .orderBy(file.DATA_FILE_ID, columnKey).limit(1025)
+    }
+
+    private fun forEachFileColumnStatistic(ctx: DSLContext, tableId: Long, snapshotId: Long, consume: (Record) -> Unit) {
+        val file = DUCKLAKE_DATA_FILE.`as`("file")
+        val stats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
+        fun key(row: Record): Pair<Long, Long> = requireNotNull(row.get(file.DATA_FILE_ID)) to (row.get(stats.COLUMN_ID) ?: -1L)
+        var after: Pair<Long, Long>? = null
+        var inspected = 0
+        var more = true
+        while (more) {
+            val page = metadata.fetch(ctx, fileColumnStatisticsQuery(ctx, tableId, snapshotId, after))
+            if (page.zipWithNext().any { (left, right) -> key(left) == key(right) }) {
+                throw DucklakeCatalogCorruptionException("Duplicate file-column statistics for table $tableId")
+            }
+            // One bounded lookahead row detects duplicates at a page boundary; never cap an unbounded fetch.
+            val batch = page.take(1024)
+            inspected += batch.size
+            require(inspected <= 4_194_304) { "Statistics file/column traversal budget exceeded" }
+            batch.forEach(consume)
+            after = batch.lastOrNull()?.let { key(it) }
+            more = page.size > 1024
+        }
     }
 
     override fun getPartitionSpecs(tableId: Long, snapshotId: Long): List<DucklakePartitionSpec> {
@@ -2464,6 +2481,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     @Volatile
     internal var beforeSnapshotInsertAction: Runnable = Runnable {}
 
+    /** Parks ANALYZE after reading counts but before mutable statistics publication (tests only). */
+    @Volatile
+    internal var beforeAnalyzePublicationAction: Runnable = Runnable {}
+
     /** Internal fault seam at the actual backend COMMIT boundary; never a consumer extension point. */
     internal var backendCommitAction: ((MetadataQuery, DSLContext, Connection) -> Unit)? = null
 
@@ -2490,6 +2511,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private fun executeWriteTransaction(
         operationDescription: String,
         registersFiles: Boolean = false,
+        recordEmptyChange: Boolean = false,
         action: WriteTransactionAction,
     ) {
         requireNotInReadSession(operationDescription)
@@ -2507,7 +2529,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             operationDescription,
             WriteTransactionRetry.RANDOM_JITTER,
         ) {
-            attemptWriteTransaction(operationDescription, action, transactionStartSnapshotId, registersFiles)
+            attemptWriteTransaction(operationDescription, action, transactionStartSnapshotId, registersFiles, recordEmptyChange)
         }
     }
 
@@ -2516,6 +2538,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         action: WriteTransactionAction,
         transactionStartSnapshotId: LongArray,
         registersFiles: Boolean,
+        recordEmptyChange: Boolean,
     ) {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
         val schver = DUCKLAKE_SCHEMA_VERSIONS.`as`("schver")
@@ -2597,7 +2620,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
                     // 4. Create new snapshot row (with final allocated IDs)
                     beforeSnapshotInsertAction.run()
-                    insertSnapshotRow(txDsl, tx, operationDescription)
+                    insertSnapshotRow(txDsl, tx)
 
                     // 5. ducklake_schema_versions: one row per table created/altered in this commit
                     // (upstream InsertNewSchema). View/schema DDL and DROP TABLE bump schema_version
@@ -2613,7 +2636,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     }
 
                     // 6. Insert snapshot changes (comma-separated per spec, one row per snapshot)
-                    if (!tx.getChanges().isEmpty()) {
+                    if (tx.getChanges().isNotEmpty() || recordEmptyChange) {
                         txDsl.insertInto(snapchg)
                             .set(snapchg.SNAPSHOT_ID, tx.getNewSnapshotId())
                             .set(snapchg.CHANGES_MADE, WriteChange.formatChangesMade(tx.getChanges()))
@@ -2630,7 +2653,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     // genuinely unexpected failures are wrapped.
                     findDucklakeException(e)?.let { throw it }
                     if (isMetadataPrimaryKeyConflict(e)) {
-                        throw snapshotConflictFromAnotherConnection(baseSnapshotId, operationDescription, e)
+                        throw snapshotConflictAfterRollback(txDsl, baseSnapshotId, operationDescription, e)
                     }
                     throw DucklakeException("Failed to $operationDescription", e)
                 }
@@ -2716,44 +2739,40 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    private fun insertSnapshotRow(ctx: DSLContext, tx: DucklakeWriteTransaction, operationDescription: String) {
+    private fun insertSnapshotRow(ctx: DSLContext, tx: DucklakeWriteTransaction) {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
-        try {
-            ctx.insertInto(snap)
-                .set(snap.SNAPSHOT_ID, tx.getNewSnapshotId())
-                // Upstream uses database NOW(). A raw CURRENT_TIMESTAMP field is portable across
-                // PostgreSQL, DuckDB/Quack and MySQL (unlike jOOQ's timestamptz cast rendering).
-                .set(snap.SNAPSHOT_TIME, DSL.field("CURRENT_TIMESTAMP", snap.SNAPSHOT_TIME.dataType))
-                .set(snap.SCHEMA_VERSION, tx.getSchemaVersion())
-                .set(snap.NEXT_CATALOG_ID, tx.getFinalNextCatalogId())
-                .set(snap.NEXT_FILE_ID, tx.getFinalNextFileId())
-                .execute()
-        }
-        catch (e: DataAccessException) {
-            val cause = findSqlException(e)
-            if (cause != null && isDuplicateKeyViolation(cause)) {
-                // The duplicate key has ABORTED this transaction (PostgreSQL: "current transaction is
-                // aborted"; DuckDB: "please ROLLBACK"), so the diagnostics must come from another
-                // connection — a read on `ctx` would throw and lose the duplicate-key cause, turning
-                // this retryable conflict into an opaque failure.
-                throw snapshotConflictFromAnotherConnection(tx.getCurrentSnapshotId(), operationDescription, e)
-            }
-            throw e
-        }
+        ctx.insertInto(snap)
+            .set(snap.SNAPSHOT_ID, tx.getNewSnapshotId())
+            // Upstream uses database NOW(). A raw CURRENT_TIMESTAMP field is portable across
+            // PostgreSQL, DuckDB/Quack and MySQL (unlike jOOQ's timestamptz cast rendering).
+            .set(snap.SNAPSHOT_TIME, DSL.field("CURRENT_TIMESTAMP", snap.SNAPSHOT_TIME.dataType))
+            .set(snap.SCHEMA_VERSION, tx.getSchemaVersion())
+            .set(snap.NEXT_CATALOG_ID, tx.getFinalNextCatalogId())
+            .set(snap.NEXT_FILE_ID, tx.getFinalNextFileId())
+            .execute()
     }
 
     /**
      * A [TransactionConflictException] for a snapshot-id collision, with the current snapshot and the
-     * intervening-changes summary read on a POOLED connection (the transaction that collided is
-     * aborted and cannot run queries any more).
+     * intervening-changes summary read on the owned connection AFTER rollback. Never borrow a
+     * second pool connection while holding the first (a one-connection catalog must retry too).
      */
-    private fun snapshotConflictFromAnotherConnection(
+    private fun snapshotConflictAfterRollback(
+        ctx: DSLContext,
         expectedSnapshotId: Long,
         operationDescription: String,
         cause: Throwable,
     ): TransactionConflictException {
-        val currentSnapshotId = readLatestSnapshotId(pooledDsl)
-        return transactionConflictException(pooledDsl, expectedSnapshotId, currentSnapshotId, operationDescription, cause)
+        return try {
+            val currentSnapshotId = readLatestSnapshotId(ctx)
+            transactionConflictException(ctx, expectedSnapshotId, currentSnapshotId, operationDescription, cause)
+        }
+        catch (diagnostic: DataAccessException) {
+            // A broken connection must not replace the actual publication conflict with a diagnostic error.
+            cause.addSuppressed(diagnostic)
+            TransactionConflictException("Concurrent DuckLake commit while attempting to $operationDescription " +
+                "from snapshot $expectedSnapshotId (diagnostics unavailable after rollback)", cause)
+        }
     }
 
     private fun transactionConflictException(

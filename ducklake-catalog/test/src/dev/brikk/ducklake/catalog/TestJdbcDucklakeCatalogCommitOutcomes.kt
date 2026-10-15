@@ -29,6 +29,10 @@ import java.lang.reflect.Proxy
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Lost-ack injection happens AFTER a real backend commit, not by guessing a metadata shape. */
 class TestJdbcDucklakeCatalogCommitOutcomes {
@@ -44,6 +48,7 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
     abstract class Contract(private val backend: Backend) {
         private var server: AutoCloseable? = null
         private lateinit var catalog: JdbcDucklakeCatalog
+        private lateinit var configuration: DucklakeCatalogConfig
         private lateinit var directory: Path
         private lateinit var table: DucklakeTable
         private lateinit var fragment: DucklakeWriteFragment
@@ -55,7 +60,7 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
             directory = root
             val config = DucklakeCatalogConfig().apply {
                 dataPath = root.resolve("data").toString()
-                maxCatalogConnections = 2
+                maxCatalogConnections = 1
             }
             when (backend) {
                 Backend.POSTGRES -> {
@@ -90,6 +95,7 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
                     }
                 }
             }
+            configuration = config
             catalog = JdbcDucklakeCatalog(config)
         }
 
@@ -105,6 +111,7 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
         fun prepareOutput() {
             catalog.backendCommitAction = null
             catalog.beforeSnapshotInsertAction = Runnable {}
+            catalog.beforeAnalyzePublicationAction = Runnable {}
             val name = "output_${sequence++}"
             catalog.createTable("main", name, listOf(TableColumnSpec.leaf("id", "int32", true)), null, null)
             val snapshot = catalog.currentSnapshotId
@@ -122,6 +129,42 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
         fun close() {
             if (::catalog.isInitialized) catalog.close()
             server?.close()
+        }
+
+        @Test
+        fun concurrentAppendForcesAnalyzeToRecomputeWithoutLosingCounters() {
+            catalog.commitInsert(table.tableId, listOf(fragment))
+            val otherPath = output.resolveSibling("two.parquet")
+            Files.copy(output, otherPath)
+            val read = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val attempts = AtomicInteger()
+            catalog.beforeAnalyzePublicationAction = Runnable {
+                if (attempts.getAndIncrement() == 0) {
+                    read.countDown()
+                    check(release.await(20, TimeUnit.SECONDS))
+                }
+            }
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val analyzed = executor.submit { catalog.analyzeTable(table.tableId) }
+                check(read.await(20, TimeUnit.SECONDS))
+                JdbcDucklakeCatalog(configuration).use { other ->
+                    other.commitInsert(table.tableId, listOf(fragment.copy(path = "two.parquet")))
+                }
+                release.countDown()
+                analyzed.get(20, TimeUnit.SECONDS)
+                assertThat(attempts.get()).isGreaterThanOrEqualTo(2)
+                assertThat(catalog.getTableStats(table.tableId)!!.recordCount).isEqualTo(2L)
+                assertThat(catalog.getDataFiles(table.tableId, catalog.currentSnapshotId)).hasSize(2)
+                assertThat(Files.exists(output) && Files.exists(otherPath)).isTrue()
+            }
+            finally {
+                release.countDown()
+                executor.shutdownNow()
+                check(executor.awaitTermination(20, TimeUnit.SECONDS))
+                catalog.beforeAnalyzePublicationAction = Runnable {}
+            }
         }
 
         @Test

@@ -183,8 +183,8 @@ interface DucklakeCatalog : AutoCloseable {
      * [physical cleanup][listFilesScheduledForDeletion]. Liveness uses the half-open
      * `[begin_snapshot, end_snapshot)` survivor test against the snapshots that REMAIN; files of a
      * fully-expired dropped table are caught via that table's id too, so no data file leaks.
-     * A plain catalog transaction — no new snapshot, no `changes_made` entry (matches `ANALYZE`;
-     * expiry is destructive GC, not a forward commit).
+     * A plain catalog transaction — no new snapshot or `changes_made` entry;
+     * expiry is destructive GC, not a forward commit (unlike statistics publication).
      *
      * Also GCs the dead *metadata* rows of fully-expired dropped tables/views/macros/schemas
      * (`ducklake_table` + column/stats/partition/sort/mapping rows; `ducklake_view`;
@@ -320,10 +320,13 @@ interface DucklakeCatalog : AutoCloseable {
      * refuse a column while its row is absent. A rebuild helps only when complete statistics exist;
      * publishing ambiguous NULL bounds merely to retain that operation would permit wrong query results.
      *
-     * These are mutable, non-snapshot-versioned side tables, so this runs in a plain catalog
-     * transaction and does NOT mint a new snapshot or record a `changes_made` entry (there is
-     * no stats change-type in the DuckLake vocabulary). Global bounds can drive optimizer rewrites;
-     * run `ANALYZE` while the table is quiescent for an exact result.
+     * These mutable, non-snapshot-versioned side tables participate in the standard snapshot
+     * commit/retry protocol: successful ANALYZE mints a metadata-only snapshot with an empty
+     * `changes_made` ledger row (no invented stats change-type). Data files, schema version and
+     * allocation high-water marks do not change. If another writer advances the head, all
+     * computed statistics are rolled back and recomputed against the new snapshot. This fences
+     * native writers that cached statistics before ANALYZE as well as this library's writers.
+     * A dropped target is rejected; ordinary retry exhaustion and uncertain-commit rules apply.
      */
     fun analyzeTable(tableId: Long)
 

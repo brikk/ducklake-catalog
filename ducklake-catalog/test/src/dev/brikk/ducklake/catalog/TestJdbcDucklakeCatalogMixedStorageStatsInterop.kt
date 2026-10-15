@@ -203,7 +203,7 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
 
         catalog.analyzeTable(table.tableId)
 
-        assertThat(catalog.currentSnapshotId).isEqualTo(liveSnapshot)
+        assertThat(catalog.currentSnapshotId).isEqualTo(liveSnapshot + 1) // Metadata-only ANALYZE publication.
         assertAccounting(table, 5L, 5L, nextRowId, source.fileSizeBytes)
         assertRowsAndAggregates(table, listOf(-100, 1, 2, 100, null))
         assertSuppressed(table)
@@ -221,7 +221,7 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
 
         catalog.analyzeTable(table.tableId)
 
-        assertThat(catalog.currentSnapshotId).isEqualTo(deletedSnapshot)
+        assertThat(catalog.currentSnapshotId).isEqualTo(deletedSnapshot + 1)
         assertThat(globalStats(table)).`as`("registrations and deleted inline rows must not prevent safe recovery")
             .containsExactly(listOf(idColumn.toString(), "false", null, "1", "2"))
         // Deleted, unflushed inline rows still contribute to gross accounting, but not global bounds.
@@ -281,13 +281,14 @@ class TestJdbcDucklakeCatalogMixedStorageStatsInterop {
             for (version in versions) {
                 val name = "ducklake_inlined_data_${table.tableId}_$version"
                 metadataSql("CREATE TABLE $name (row_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, id INTEGER)")
-                val begin = if (version == schemaVersion) snapshot + 1 else snapshot
+                // Stay in the future even after ANALYZE publishes its metadata-only next snapshot.
+                val begin = if (version == schemaVersion) snapshot + 2 else snapshot
                 metadataSql("INSERT INTO $name VALUES (99, $begin, NULL, 1000)")
                 metadataSql("INSERT INTO ducklake_inlined_data_tables (table_id, table_name, schema_version) " +
                     "VALUES (${table.tableId}, '$name', $version)")
             }
             catalog.analyzeTable(table.tableId)
-            assertThat(catalog.currentSnapshotId).isEqualTo(snapshot)
+            assertThat(catalog.currentSnapshotId).isEqualTo(snapshot + 1)
             assertAccounting(table, 2L, 2L, requireNotNull(source.rowIdStart) + 2, source.fileSizeBytes)
             assertThat(globalStats(table).single().takeLast(2)).containsExactly("1", "2")
         }

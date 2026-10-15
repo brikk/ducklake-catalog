@@ -178,6 +178,9 @@ For unreleased inline-schema/expiry fixes and PostgreSQL planning changes, see t
 [upstream follow-up log](dev-docs/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
 Producers upgrading must adopt the [COMMIT outcome and cleanup contract](dev-docs/COMMIT-OUTCOME-CONTRACT.md);
 an uncertain commit is not permission to retry or delete output files.
+Unreleased [C05 ANALYZE coordination](dev-docs/FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md)
+intentionally makes successful ANALYZE publish a metadata-only snapshot with an
+empty change ledger; consumers must not assume it leaves the snapshot head unchanged.
 
 ## Building
 
