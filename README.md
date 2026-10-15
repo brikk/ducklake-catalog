@@ -166,7 +166,9 @@ not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](d
   [capability matrix](dev-docs/DUCKLAKE-1.1-CAPABILITIES.md).
 - Strict native correctness gates still fail on the sampled maintained/locked-preview
   engines, including change feeds/delete-and-flush, old inline schemas, merge lineage,
-  false-exact MIN/MAX and BLOB preservation. Passing JVM tests is not native qualification.
+  false-exact MIN/MAX and BLOB preservation. New [UF-01–04 gates](dev-docs/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md)
+  also reproduce CDC identity/transient-image errors, native Quack snapshot leaks
+  and unsafe bucket pruning. Passing JVM tests is not native qualification.
 - **Rollback requires a tested backup:** the preview write/checkpoint rehearsal made
   local metadata unreadable by 1.5.6 even while the DuckLake format stayed 1.0.
   See the [migration/rollback acceptance runbook](dev-docs/DUCKLAKE-1.1-ACCEPTANCE.md).
@@ -181,6 +183,8 @@ an uncertain commit is not permission to retry or delete output files.
 Unreleased [C05 ANALYZE coordination](dev-docs/FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md)
 intentionally makes successful ANALYZE publish a metadata-only snapshot with an
 empty change ledger; consumers must not assume it leaves the snapshot head unchanged.
+The [UF-03 follow-up](dev-docs/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-03--quack-snapshot-ceilings-1756)
+fixes timestamp lookups on local DuckDB/direct Java Quack without changing read-session semantics.
 
 ## Building
 

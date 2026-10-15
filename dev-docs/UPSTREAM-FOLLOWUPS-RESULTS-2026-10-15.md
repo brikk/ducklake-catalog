@@ -128,3 +128,66 @@ Verification: forced full `check --rerun-tasks` with all corpus directories pass
 **596 JUnit tests**, zero failures/errors/skips; **9,697 corpus records**, unchanged
 corpus skips, detekt and Java 17 checkAbi. Strict native gates exited 1 on all three
 targets. Run `ducklake_quack_snapshot_ceiling.py` with the standard probe options.
+
+## UF-04 — unsafe bucket pruning (#1696)
+
+**Catalog candidate/partition transport verified; native pruning gate fails;
+no catalog rehash or engine-pruning implementation attempted.**
+
+`ducklake_bucket_pruning.py` covers FLOAT/DOUBLE signed NaNs, LIST/STRUCT/MAP
+nested NaNs and signed zeros, partially safe IN lists (with an AND case), NULLs,
+ordinary equality and top-level zero pruning. Literal expected keys are compared
+with both partitioned scans and independent **unpartitioned** copies. The probe
+checks stored file/bucket assignments remain unchanged; it never repairs hashes.
+
+All unpartitioned comparisons, live-row and NULL controls pass on all targets.
+The partitioned queries show actual wrong results:
+
+- Both engines: positive NaN equality sees only key 1, negative NaN equality only
+  key 2, when both must see 1,2. IN with NaN and 1.5 returns 1,3 instead of 1,2,3.
+- Both engines: LIST/MAP mixed IN returns nothing instead of keys 1,2; STRUCT
+  returns only key 2. One unsafe constant must invalidate the entire IN-derived
+  bucket restriction, not leave a partial list of safe bucket values.
+- Locked preview: nested zero equality loses the matching LIST/STRUCT/MAP row;
+  LIST/MAP nested NaN equality loses its matching row too. Maintained nested
+  equality controls pass, so those differences remain explicit rather than
+  pretending every upstream scenario fails on every sampled engine.
+
+There are **65 checks** per target: maintained passes 53, locked preview (both
+explicit 1.0 and fresh 1.1-dev1) passes 49. Strict probes exit 1. Maintained also
+fails a separate *performance* control: `IN (0,NULL)` reads 15 files instead of 1
+but returns the correct row. Ordinary positive/negative top-level zero pruning
+reads one file on both engines. Performance observations are not wrong-row evidence.
+
+The JVM PostgreSQL regression creates native-written bucketed NaN and LIST/STRUCT/
+MAP zero tables, verifies the field ID/transform/arity/spec, offers both files,
+compares catalog bucket payloads directly with bounded raw metadata reads, and
+checks no snapshot/file/partition mutation occurs. There is no catalog predicate
+hashing/pruning in this repository; no local production rewrite is warranted.
+Consumers must fall back conservatively on unsafe equality classes and mixed IN
+lists. Existing bucket assignments and the hash algorithm **must not change** to
+paper over pruning errors. Connector agents own their engine-side implementation.
+
+## Final verification / handoff
+
+Each UF step was verified and committed before proceeding. UF-01 is `e7d262b`,
+UF-02 `512b8df`, UF-03 `10b4a4a`; the UF-04 commit adds this final section.
+
+```sh
+mise exec -- ./gradlew check --rerun-tasks -Dducklake.corpus.dirs=all --no-configuration-cache
+<preview>/bin/python -m unittest discover -s dev-docs/probes -p 'test_*.py'
+```
+
+Final forced check passed **597 JUnit tests** (506 catalog, 51 SLT, 40 replay),
+zero failures/errors/skips; **9,697 corpus records**, zero failed (existing 31
+file/12 record skips retained). Detekt and Java 17 checkAbi passed, including frozen
+consumer/wire contracts. All **12 Python harness/fixture tests** passed on the
+locked preview; the strict engine probes are separate and intentionally nonzero.
+
+UF-01–04 investigation/regression work is executed. **The only reproduced local
+production fix is UF-03's DuckDB timestamp cast.** Native CDC, names, Quack ceiling
+and pruning failures remain release-qualification blockers and connector handoffs,
+not four claimed engine fixes. Re-run all four strict scripts on actual shipping
+artifacts at the October 17–18 RC checkpoint; old qualification failures also remain.
+No sibling code, production/preview/corpus pins, public DTOs or 1.1 write guards
+changed. No push or artifact publication is authorized by this work.

@@ -36,6 +36,7 @@ October 17–18 is a planning window, not a newly confirmed release commitment.
 | Transient CDC versions (UF-01) | `ducklake_cdc_transient.py` | Same-snapshot insert/delete emits no version; update/delete retains the true preimage only; later tagged deletes remain visible |
 | CDC user-name collisions (UF-02) | `ducklake_cdc_names.py` | User rowid/snapshot_id and existing suffixes do not shadow metadata or multiply update pairs; payload names remain unambiguous |
 | Quack transaction ceilings (UF-03) | `ducklake_quack_snapshot_ceiling.py`, five-route JVM read-session contract | Listings/time travel/CDC never reveal commits newer than the pin; explicit future versions rejected natively; post-session reads advance |
+| Safe bucket pruning (UF-04) | `ducklake_bucket_pruning.py` | FLOAT/DOUBLE NaNs, nested signed zeros/NaNs and mixed IN lists match unpartitioned controls; no stored bucket rehash |
 | Old inline schemas | `ducklake_old_inline_schema.py` | Known values survive unrelated DDL and native flush; do not substitute NULL |
 | Merge lineage, exact stats and BLOB bytes | `ducklake_lineage_stats_blob.py` | Current/history/update images, live MIN/MAX and plain/nested BLOB bytes survive maintenance and session settings |
 | Expiration/cleanup | Scale fixture and five-backend bounded-cleanup tests | Liveness intact; larger memory-profiled scale gate and consumer traversal budgets remain required |
@@ -61,6 +62,7 @@ python3 dev-docs/probes/ducklake_11_migration.py \
 <candidate>/bin/python dev-docs/probes/ducklake_cdc_transient.py --temp-root /tmp/opencode
 <candidate>/bin/python dev-docs/probes/ducklake_cdc_names.py --temp-root /tmp/opencode
 <candidate>/bin/python dev-docs/probes/ducklake_quack_snapshot_ceiling.py --temp-root /tmp/opencode
+<candidate>/bin/python dev-docs/probes/ducklake_bucket_pruning.py --temp-root /tmp/opencode
 ```
 
 The migration rehearsal records downgrade attempts as observations and fails on
@@ -100,7 +102,8 @@ actual shipping server/storage, including cancellation, leases and network recov
   fresh and migrated catalogs, snapshots/change feeds/stats/null/geometry cases,
   full checks and the actual release corpus. Preserve unknown/null semantics.
 - Re-run all strict native regression gates, including old inline schemas,
-  row lineage, false-exact aggregates and BLOB preservation. The sampled engines
+  row lineage, false-exact aggregates, BLOB preservation and UF-01–04 CDC/Quack/
+  pruning cases. The sampled engines
   currently fail; those failures cannot be waived by unchanged schema DDL.
 - Coordinate sibling-engine rollout and mixed worker/coordinator wire behavior;
   get their agents' verification, not an inferred result from this repository.

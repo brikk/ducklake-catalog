@@ -15,6 +15,9 @@ package dev.brikk.ducklake.catalog
 
 /**
  * Partition value for a data file. The partitionValue may be null when the source column value is NULL.
+ * A stored bucket value is not an equality-class identifier: equal NaNs or nested signed zeros
+ * can have different historical hashes. Predicate pruning must conservatively retain all possible
+ * matching buckets (including mixed IN lists with an unsafe constant), not rehash stored values.
  */
 @JvmRecord
 data class DucklakeFilePartitionValue(

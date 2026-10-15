@@ -41,15 +41,19 @@ The scheduled RC refresh above takes precedence on October 17–18.
 | [x] | **UF-01** | **Catalog candidates verified; strict native gate fails.** Same-snapshot versions require reader-side suppression before pairing; later/tagged deletes covered. [Evidence/handoff](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-01--transient-cdc-rows-1675). | [#1675](https://github.com/duckdb/ducklake/pull/1675) |
 | [x] | **UF-02** | **JVM field-ID/identity projection verified; native gate fails.** Four expected images become eight natively. Payload suffix compatibility documented; no local renames. [Evidence/handoff](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-02--cdc-user-name-collisions-1723). | [#1723](https://github.com/duckdb/ducklake/pull/1723) |
 | [x] | **UF-03** | **Five-route JVM ceilings verified; timestamp lookup fixed** for local DuckDB/Java Quack. Native Quack leak remains a strict failing gate, not a JVM transaction defect. [Evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-03--quack-snapshot-ceilings-1756). | [#1756](https://github.com/duckdb/ducklake/pull/1756) |
-| [ ] | **UF-04** | **P1 — unsafe bucket pruning:** NaNs, nested signed zeros and partly foldable IN lists must keep matching files. Do not rehash existing partitions. Catalog/native checks here; engine hashing/pruning belongs to connector agents. | [#1696](https://github.com/duckdb/ducklake/pull/1696) |
+| [x] | **UF-04** | **Catalog candidates/stored buckets verified; native gate fails.** NaN/mixed IN and preview nested-zero wrong rows reproduced against passing unpartitioned controls. No rehash; engine pruning is a connector handoff. [Evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-04--unsafe-bucket-pruning-1696). | [#1696](https://github.com/duckdb/ducklake/pull/1696) |
 | [ ] | **UF-05** | **P2 — sorted compaction:** retain configured order across target-size rotation, repeated rewrites and merges; independently check row identity too. | [#1634](https://github.com/duckdb/ducklake/pull/1634) |
 | [ ] | **UF-06** | **P2 — one-sided numeric stats:** preserve usable null information/known bounds without inventing missing endpoints or empty ranges. Keep C03's coverage/NaN safety rules; distinguish plan improvements from wrong results. | [#1713](https://github.com/duckdb/ducklake/pull/1713) |
 | [ ] | **UF-07** | **P2 — inline rename/lifecycle:** same-transaction rename+flush uses the current entry, and superseded empty tables are reclaimed without breaking old readers. Coordinate with canonical C06; no implicit MySQL DDL commits. | [#1737](https://github.com/duckdb/ducklake/pull/1737), [#1722](https://github.com/duckdb/ducklake/pull/1722), [#1764](https://github.com/duckdb/ducklake/pull/1764) |
 | [ ] | **UF-08** | **P2 — flushable inline values:** negative intervals and unsupported scalar/nested VARIANT encodings must be safely rejected or stored via a qualified path; verify PG TIME_NS text precision. No 1.1 enablement. | [#1727](https://github.com/duckdb/ducklake/pull/1727), [#1769](https://github.com/duckdb/ducklake/pull/1769), [#1724](https://github.com/duckdb/ducklake/pull/1724) |
 | [ ] | **UF-09** | **P2 — import/type mapping:** verify MAP child position versus names, top-level-only hive mappings, new Parquet annotations and encrypted-import refusal. Catalog payload validation/native canaries here; Parquet import implementation remains a connector handoff. | [#1767](https://github.com/duckdb/ducklake/pull/1767), [#1700](https://github.com/duckdb/ducklake/pull/1700), [#1729](https://github.com/duckdb/ducklake/pull/1729), [#1726](https://github.com/duckdb/ducklake/pull/1726) |
 
-**Execution order: UF-01 → UF-02 → UF-03 → UF-04.** UF-01–03 are investigated;
-native failures remain explicit. Continue at UF-04 with independent expected rows/IDs.
+**UF-01 → UF-02 → UF-03 → UF-04 executed sequentially.** Checked means the
+catalog investigation/gates/handoff are done, **not that native failures are fixed**.
+Only UF-03 required a local production correction (DuckDB timestamp lookup).
+Final forced verification: 597 JUnit tests / 9,697 corpus records; see the
+[execution report](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md). UF-05–09 are not started;
+the October 17–18 RC refresh remains the next scheduled checkpoint.
 
 Lower-priority upstream watch: collection/batched inline commits
 ([#1762](https://github.com/duckdb/ducklake/pull/1762), [#1765](https://github.com/duckdb/ducklake/pull/1765)),
