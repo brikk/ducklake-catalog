@@ -24,7 +24,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * The upstream v1.5 file shapes this library now writes (TODO-rectify-from-eval.md W-D3, W-D6, R-D2):
+ * The upstream v1.5 file shapes this library now writes (dev-docs/archive/TODO-rectify-from-eval.md W-D3, W-D6, R-D2):
  *
  *  - **snapshot-tagged delete files**: a second DELETE on a data file DELETES the superseded
  *    `ducklake_delete_file` row (scheduling its file) and registers ONE 3-column file back-dated to

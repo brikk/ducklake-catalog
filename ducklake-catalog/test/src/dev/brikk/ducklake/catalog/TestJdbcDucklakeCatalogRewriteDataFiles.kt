@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Catalog-layer acceptance tests for [DucklakeCatalog.rewriteDataFiles] — the non-partial /
  * Iceberg-style compaction primitive that backs `optimize` / `rewrite_data_files`
- * (dev-docs/DESIGN-maintenance.md § 7). These exercise the catalog half only: the merged file's
+ * (see [DucklakeCatalog.rewriteDataFiles]). These exercise the catalog half only: the merged file's
  * bytes are never produced (placeholder paths, never opened), so each test hand-builds the
  * registration fragment a corrected procedure would produce.
  *

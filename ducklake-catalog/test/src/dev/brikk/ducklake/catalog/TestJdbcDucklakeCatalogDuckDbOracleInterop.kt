@@ -23,7 +23,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * End-to-end oracle test (TODO-rectify-from-eval.md Q-5): THIS LIBRARY performs every catalog write
+ * End-to-end oracle test (dev-docs/archive/TODO-rectify-from-eval.md Q-5): THIS LIBRARY performs every catalog write
  * into a PostgreSQL-backed DuckLake, and STOCK DuckDB (`ATTACH 'ducklake:postgres:…'`) is the oracle
  * that reads everything back — schema and table DDL with nested columns, a view, column evolution and
  * comments, real Parquet data (written with DuckDB `COPY … (FIELD_IDS …)`, registered via

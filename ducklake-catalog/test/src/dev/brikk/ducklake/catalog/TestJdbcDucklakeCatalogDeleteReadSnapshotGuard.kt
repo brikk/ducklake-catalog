@@ -26,7 +26,7 @@ import java.sql.DriverManager
  * so a delete file another writer committed after that read — but before this commit — would be
  * superseded by a file that lacks its positions, resurrecting rows. The commit must therefore
  * abort, non-retryably, when a touched data file has a delete file newer than the read snapshot
- * (TODO-rectify-from-eval.md C-B3). Upstream's consolidated delete files keep the OLD
+ * (dev-docs/archive/TODO-rectify-from-eval.md C-B3). Upstream's consolidated delete files keep the OLD
  * `begin_snapshot` and carry the newest deletion in `partial_max`, so that column is checked too
  * (part of R-B4).
  *

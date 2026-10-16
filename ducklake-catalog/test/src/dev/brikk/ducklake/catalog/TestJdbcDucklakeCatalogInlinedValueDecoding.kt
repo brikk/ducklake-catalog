@@ -30,7 +30,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 /**
- * [DucklakeCatalog.readInlinedDataDecoded] / [InlinedValues] (TODO-rectify-from-eval.md R-D4): one
+ * [DucklakeCatalog.readInlinedDataDecoded] / [InlinedValues] (dev-docs/archive/TODO-rectify-from-eval.md R-D4): one
  * row of every inlinable DuckLake type written by DuckDB into a PostgreSQL-backed catalog — where
  * upstream stores text as BYTEA, temporals / wide integers / nested values as DuckDB text and
  * narrows small integers — decodes to the same canonical Java values the DuckDB-file backend

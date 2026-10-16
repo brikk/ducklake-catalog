@@ -1,5 +1,9 @@
 # DuckDB 2.0 / DuckLake readiness — 2026-10-08 refresh
 
+> Archived source/binary survey. Its hashes, pending work and line references
+> describe October 8. Use the [active TODO](../TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md)
+> and [acceptance runbook](../DUCKLAKE-1.1-ACCEPTANCE.md) for new qualification.
+
 **Bottom line: do not treat this as a JDBC version bump.** There are two reproduced
 breakages in our current SQL/layout assumptions, a new development catalog format,
 and a mixed-client migration hazard. Keep the qualified 1.5 lane while preparing an
@@ -68,7 +72,7 @@ The Oct 8 DuckDB release branch **still pins DuckLake `e8924cfc9c` and Quack
 changes merged into DuckLake main on Oct 5–8 are **source-head risks/fixes**, not
 proven to be inside the tested or final distributed extension.
 
-Reproduce with [the diagnostic probe](probes/duckdb2_readiness.py), using the pinned
+Reproduce with [the diagnostic probe](../probes/duckdb2_readiness.py), using the pinned
 preview in a virtual environment outside the project:
 
 ```

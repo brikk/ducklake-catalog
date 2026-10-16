@@ -23,7 +23,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * `ducklake_table_stats.record_count` is the GROSS row count (TODO-rectify-from-eval.md W-B2).
+ * `ducklake_table_stats.record_count` is the GROSS row count (dev-docs/archive/TODO-rectify-from-eval.md W-B2).
  * DuckDB folds `SELECT MIN(c)` / `MAX(c)` to the cached `ducklake_table_column_stats` bounds when
  * `record_count == live row count` — its proof that no row was ever deleted and the bounds are
  * still exact. A catalog that decrements `record_count` on DELETE keeps that equality true after

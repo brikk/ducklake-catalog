@@ -1,5 +1,8 @@
 # Upstream follow-up execution — 2026-10-14
 
+> Historical execution evidence. In particular, the C05-open wording below was
+> superseded by [the October 15 fix](FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md).
+
 Production pins and 1.1 write guards remain unchanged. Each verified step is
 committed independently; native qualification failures are not waived by JVM tests.
 
@@ -75,7 +78,7 @@ tests** (483 catalog, 51 SLT, 40 replay), zero failures/errors/skips, detekt and
 Existing record constructors/components and wire goldens still pass. The new
 exceptions are additive public API; no DTO or method signature changed.
 
-**Downstream adoption is still required:** [the cleanup/error contract](COMMIT-OUTCOME-CONTRACT.md)
+**Downstream adoption is still required:** [the cleanup/error contract](../../docs/COMMIT-OUTCOME-CONTRACT.md)
 specifies exception mapping, quarantine/reconciliation, no blind republishing and
 no catch-all unlink. This repository doesn't perform producer filesystem cleanup
 or implement idempotency. Trino/Doris agents must adopt the contract before

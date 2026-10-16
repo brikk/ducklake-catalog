@@ -23,7 +23,7 @@ import java.sql.DriverManager
 /**
  * `renameColumn` / `setColumnType` / `setFieldType` replace a `ducklake_column` row with a new
  * version. Every other attribute must carry over — above all `initial_default` and `default_value`
- * (TODO-rectify-from-eval.md W-B6): `initial_default` is what readers substitute for the column in
+ * (dev-docs/archive/TODO-rectify-from-eval.md W-B6): `initial_default` is what readers substitute for the column in
  * files written BEFORE an `ADD COLUMN ... DEFAULT x`, so discarding it changes the values DuckDB
  * returns for old rows.
  *

@@ -27,13 +27,10 @@ import java.sql.DriverManager
  * schema and table create/list/drop — to validate that the same jOOQ DSL we
  * run against PostgreSQL round-trips correctly against DuckDB-as-catalog.
  *
- * Why this exists: upstream Quack RPC still has multi-table-query and
- * UPDATE/DELETE limitations that block the connector's natural read/write
- * patterns from working end-to-end. We don't want to compromise our SQL to
- * work around those — they'll lift as Quack matures. In the meantime this
- * test proves that the SQL itself works against DuckDB, so when Quack
- * catches up the connector will Just Work without a second refactor. See
- * `dev-docs/TODO-WRITE-MODE.md § Quack Catalog Backend`.
+ * This isolates local DuckDB SQL behavior from remote transport behavior. Native
+ * Quack separately routes metadata queries through its wrapper and explicit server
+ * transactions; it is not qualified merely by this local smoke test. See
+ * `docs/COMPATIBILITY.md` for the maintained routes and their limits.
  *
  * Connection model: bootstrap the `.db` file via an in-process
  * DuckDB JDBC connection that ATTACHes it as a DuckLake catalog (creates the

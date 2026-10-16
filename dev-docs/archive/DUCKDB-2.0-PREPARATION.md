@@ -1,5 +1,8 @@
 # Safe DuckDB 2.0 preparation
 
+> Completed preparation log; historical pins, counts and pre-push status are not
+> current release guidance. Start with [the developer index](../README.md).
+
 Execution order requested on 2026-10-09. Keep the released dependency lane, do not
 publish unsupported-format writes, and commit each verified step separately.
 

@@ -22,7 +22,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * Behaviour tests for the DDL-side [DucklakeCatalog] methods that had no coverage (TODO-rectify-from-eval.md
+ * Behaviour tests for the DDL-side [DucklakeCatalog] methods that had no coverage (dev-docs/archive/TODO-rectify-from-eval.md
  * Q-5): [DucklakeCatalog.renameTable], [DucklakeCatalog.renameSchema], [DucklakeCatalog.addField],
  * [DucklakeCatalog.dropField], [DucklakeCatalog.getTableComment], [DucklakeCatalog.getColumnComments],
  * [DucklakeCatalog.getSortKeys] and [DucklakeCatalog.resolveSchemaVersionSnapshot].

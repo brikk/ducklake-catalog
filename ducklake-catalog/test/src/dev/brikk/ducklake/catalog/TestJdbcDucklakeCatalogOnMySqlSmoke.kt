@@ -39,8 +39,8 @@ import java.sql.DriverManager
  * then close DuckDB. [JdbcDucklakeCatalog] connects directly with `jdbc:mysql://.../<db>` — the
  * flaky DuckDB `mysql` extension is never used at runtime, so this test does not depend on it.
  *
- * Cross-engine (DuckDB reading a MySQL-backed catalog) is intentionally NOT tested — it is
- * deferred pending an upstream fix to DuckDB's `mysql` extension. See dev-docs/CATALOG-BACKENDS.md.
+ * Cross-engine reader behavior is outside this smoke test, as are general inline-type and
+ * transactional-DDL guarantees. See `docs/COMPATIBILITY.md` for the supported lane and limits.
  */
 class TestJdbcDucklakeCatalogOnMySqlSmoke {
     companion object {

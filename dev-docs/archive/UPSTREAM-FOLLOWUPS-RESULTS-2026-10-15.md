@@ -1,6 +1,9 @@
 # UF-01–UF-04 execution results — October 15
 
-Work is sequential, using the IDs in the [existing TODO](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md).
+> Historical execution evidence; native failures are not claimed fixed. The
+> [active upstream TODO](../TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md) owns pending work.
+
+Work is sequential, using the IDs in the [existing TODO](../TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md).
 Native failures below remain qualification failures, not fixed engine behavior.
 No connector repositories, production/preview pins or 1.1 write guards are changed.
 

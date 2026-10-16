@@ -22,7 +22,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * `ducklake_column_mapping.mapping_id` lives in the FILE id space (TODO-rectify-from-eval.md W-B3):
+ * `ducklake_column_mapping.mapping_id` lives in the FILE id space (dev-docs/archive/TODO-rectify-from-eval.md W-B3):
  * upstream allocates it from `ducklake_snapshot.next_file_id`, and a DuckDB session's name-map
  * cache only reloads mappings with `mapping_id >=` the `next_file_id` watermark it last saw. A
  * catalog-space id would be invisible to a long-lived session (and could later collide with a

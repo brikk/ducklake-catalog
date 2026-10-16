@@ -1,5 +1,8 @@
 # C05 — coordinate ANALYZE publication with catalog writers
 
+> Fix evidence retained for audit. Consumer behavior is summarized in
+> [the snapshot upgrade notes](../../docs/SNAPSHOT-UPGRADE.md).
+
 ## Reproduction
 
 Two deterministic PostgreSQL regressions reproduced wrong native query results

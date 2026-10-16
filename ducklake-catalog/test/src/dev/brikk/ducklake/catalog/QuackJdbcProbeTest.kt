@@ -20,8 +20,8 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * In-process JDBC-layer probes for the Quack-as-DuckLake-catalog plan tracked in
- * `dev-docs/TODO-WRITE-MODE.md § Quack Catalog Backend`.
+ * In-process JDBC-layer probes for Quack-as-DuckLake-catalog transport.
+ * Current supported routes are documented in `docs/COMPATIBILITY.md`.
  *
  * Two questions this test answers:
  *  1. Can the embedded DuckDB JDBC driver install + load the Quack extension

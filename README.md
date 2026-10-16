@@ -23,14 +23,9 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 Latest release: **0.12.0** (`main` is `0.13.0-SNAPSHOT`)
 
-The `0.10.0` upgrade requires nullable row-ID handling in consumers; see the
-[release and migration notes](dev-docs/RELEASE-0.10.0.md).
-
-For 0.11.0 transport setup and intentional maintenance/version-guard behavior
-changes, see the [0.11.0 release notes](dev-docs/RELEASE-0.11.0.md).
-
-Version 0.12.0 adds compatibility/regression preparation without enabling 1.1
-support or changing production dependencies; see the [0.12.0 release notes](dev-docs/RELEASE-0.12.0.md).
+See [user documentation](docs/README.md) for compatibility, producer contracts and
+[release notes](docs/releases/RELEASE-0.12.0.md). Consumers upgrading from before
+0.10.0 must adopt its [nullable row-ID contract](docs/releases/RELEASE-0.10.0.md).
 
 ### Gradle (Kotlin DSL)
 
@@ -149,7 +144,7 @@ metadata; the native Quack route uses DuckLake `ATTACH`, which can bootstrap mis
 metadata through the native extension. No 1.1 migration is enabled by this library.
 Quack serves metadata here; engines still need access to the actual Parquet data location.
 Direct Java transport is verified against the released 1.5.6/v1 server; this does
-not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](dev-docs/UPGRADE-DUCKDB-1.5.6-2026-10-10.md).
+not certify final DuckDB 2.0/v3 support. See [compatibility](docs/COMPATIBILITY.md).
 
 ## Compatibility status
 
@@ -159,80 +154,23 @@ not certify final DuckDB 2.0/v3 support. See the [upgrade verification report](d
 - **DuckLake 1.1 / DuckDB 2.0:** preparation only, **not supported write formats or
   final-artifact certification**. All 1.1 writes remain disabled. Known dev inline
   layout reads do not constitute full 1.1 schema/type/statistics support.
-- Version 0.12.0 adds flush/change-feed and expiration regressions,
-  provenance-aware layout fixtures, frozen consumer ABI/wire controls and migration
-  rehearsals. It preserves the 0.11.0 support contract and production pins.
-  See the [prep results and remaining gates](dev-docs/DUCKLAKE-1.1-PREP-RESULTS.md) and
-  [capability matrix](dev-docs/DUCKLAKE-1.1-CAPABILITIES.md).
-- Strict native correctness gates still fail on the sampled maintained/locked-preview
-  engines, including change feeds/delete-and-flush, old inline schemas, merge lineage,
-  false-exact MIN/MAX and BLOB preservation. New [UF-01–04 gates](dev-docs/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md)
-  also reproduce CDC identity/transient-image errors, native Quack snapshot leaks
-  and unsafe bucket pruning. Passing JVM tests is not native qualification.
+- Version 0.12.0 adds compatibility/regression preparation without changing the
+  0.11.0 production support contract or dependency pins.
+- Passing JVM tests or pinned native-preview CI does not qualify every native
+  correctness case. Source merges are not proof a fix is in a shipping binary.
 - **Rollback requires a tested backup:** the preview write/checkpoint rehearsal made
   local metadata unreadable by 1.5.6 even while the DuckLake format stayed 1.0.
-  See the [migration/rollback acceptance runbook](dev-docs/DUCKLAKE-1.1-ACCEPTANCE.md).
+  See [compatibility and rollback limits](docs/COMPATIBILITY.md).
 
-Actual 1.1 implementation remains deferred until release-candidate artifacts/layouts
-are rechecked, using the [consumer contract](dev-docs/DUCKLAKE-1.1-CONSUMER-CONTRACT.md).
+Before adopting development snapshots, read the
+[0.13.0-SNAPSHOT upgrade guidance](docs/SNAPSHOT-UPGRADE.md), including uncertain
+COMMIT handling and ANALYZE's intentional metadata-only snapshots.
 
-For unreleased inline-schema/expiry fixes and PostgreSQL planning changes, see the
-[upstream follow-up log](dev-docs/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
-Producers upgrading must adopt the [COMMIT outcome and cleanup contract](dev-docs/COMMIT-OUTCOME-CONTRACT.md);
-an uncertain commit is not permission to retry or delete output files.
-Unreleased [C05 ANALYZE coordination](dev-docs/FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md)
-intentionally makes successful ANALYZE publish a metadata-only snapshot with an
-empty change ledger; consumers must not assume it leaves the snapshot head unchanged.
-The [UF-03 follow-up](dev-docs/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-03--quack-snapshot-ceilings-1756)
-fixes timestamp lookups on local DuckDB/direct Java Quack without changing read-session semantics.
+## Development
 
-## Building
-
-Multi-module Gradle build. The toolchain is pinned in [`mise.toml`](mise.toml) / [`.sdkmanrc`](.sdkmanrc)
-(JDK 25). Note that `build-logic` itself is compiled for JVM 25, so the JVM that *launches* Gradle
-must already be 25 — the Foojay toolchain resolver only covers the compile/test toolchain. Use
-`mise` (or an activated `mise` shell) so the right JDK is on `PATH`:
-
-```shell
-mise install                          # once: fetch the pinned JDK
-mise exec -- ./gradlew build          # compile + test (Docker/Podman required for Testcontainers)
-mise exec -- ./gradlew publishToMavenLocal
-```
-
-Running `./gradlew` from a JDK 21 (or older) shell fails at configuration time with
-"Dependency requires at least JVM runtime version 25".
-
-The catalog module's jOOQ bindings under `ducklake-catalog/generated/` are checked into git;
-only regeneration needs Docker. See [`ducklake-catalog/README.md`](ducklake-catalog/README.md).
-
-## CI
-
-The separate `.github/workflows/duckdb2-preview.yml` lane checks pinned **native**
-layout/migration canaries, matched Quack peers and versioned local fixtures. It is
-not full JVM DuckDB 2.0 or DuckLake 1.1 qualification. The
-[October 8 assessment](dev-docs/UPSTREAM-DUCKDB-2.0-2026-10-08.md) is historical;
-the [prep results](dev-docs/DUCKLAKE-1.1-PREP-RESULTS.md) record current findings and limits.
-
-`.github/workflows/ci.yml` runs `./gradlew check` (compile, detekt, `checkAbi`, all tests including
-the Testcontainers PostgreSQL/MySQL and DuckDB-oracle interop tests) on every pull request and push
-to `main`, and replays the **full** upstream DuckLake sqllogictest corpus nightly (the PR job runs
-the starter set). Trigger the workflow manually with `full_corpus` to replay everything on demand.
-
-## Releasing
-
-- **Snapshot** — every push to `main` (version `*-SNAPSHOT`) publishes via
-  `.github/workflows/publish-snapshot.yml`.
-- **Release** — set the module versions to a non-SNAPSHOT value, commit (`Release x.y.z`), and
-  push a `v<version>` tag. `.github/workflows/publish-release.yml` uploads the Central Portal
-  deployment bundle as **AUTOMATIC**: the portal validates and releases it to Maven Central with
-  no manual "Publish" click (and the workflow does not wait for it). Then bump `main` to the
-  next `-SNAPSHOT`.
-- **Stuck deployment** — `.github/workflows/publish-pending-deployment.yml` (manual dispatch)
-  drives the Central Portal Publisher API directly: `status`, `publish`, or `drop` a
-  deployment by ID, for the rare case a bundle is left waiting on the portal.
-
-Both workflows read the Central Portal user token + PGP signing key from org secrets
-(`KOTLIN_TOOLCHAIN_*`), mapped to vanniktech's `ORG_GRADLE_PROJECT_*` properties.
+[Developer documentation](dev-docs/README.md) contains build/test instructions,
+release procedures, active work and the historical archive. It is separate from
+the public [user guides](docs/README.md).
 
 ## License
 

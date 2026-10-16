@@ -1,7 +1,8 @@
 # Frozen 0.11.0 Java consumer
 
-`Catalog011Consumer.class.base64` is Java 17 bytecode compiled from the adjacent
-source **against the Maven Central 0.11.0 JAR**, not the working project's classes.
+[`Catalog011Consumer.class.base64`](../ducklake-catalog/test/resources/compat/Catalog011Consumer.class.base64)
+is Java 17 bytecode compiled from the [fixture source](../ducklake-catalog/test/resources/compat/Catalog011Consumer.java)
+**against the Maven Central 0.11.0 JAR**, not the working project's classes.
 The test loads it against current classes, exercising old constructor/accessor
 descriptors. Recompiling it against a changed library would defeat that test.
 

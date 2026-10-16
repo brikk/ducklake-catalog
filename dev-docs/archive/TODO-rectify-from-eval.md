@@ -1,5 +1,9 @@
 # TODO — rectify findings from the 2026-09 eval
 
+> Historical tracker, superseded by the developer backlog and upstream TODO linked
+> from [the developer index](../README.md). Line numbers and status prose below
+> describe their original baselines, not the current implementation.
+
 Findings from a correctness / upstream-parity review of `ducklake-catalog` against the DuckDB
 `ducklake` extension (`references/ducklake`, v1.5-variegata @ d8a1881) and pg_ducklake
 (`references/pg_ducklake` @ e43c6b8). Line numbers are as of commit `b83d2ce`.

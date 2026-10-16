@@ -23,7 +23,7 @@ import java.util.concurrent.Executors
 import java.util.function.Supplier
 
 /**
- * [DucklakeCatalog.readSession] (TODO-rectify-from-eval.md R-D1): every read on the calling thread
+ * [DucklakeCatalog.readSession] (dev-docs/archive/TODO-rectify-from-eval.md R-D1): every read on the calling thread
  * inside the block sees ONE snapshot of the catalog, even while another writer commits or physically
  * deletes rows in between; other threads and reads after the block see the latest state; writes
  * inside a session are refused; nesting reuses the outer session.

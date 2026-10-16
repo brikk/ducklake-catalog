@@ -1,5 +1,8 @@
 # DuckLake 1.1 preparation — 2026-10-12
 
+> Completed preparation plan. The pending artifact refresh is managed in the
+> [active upstream TODO](../TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md), not this checklist.
+
 ## Goal and baseline
 
 Prepare tests, fixtures and compatibility contracts now; implement/enable actual
@@ -59,7 +62,7 @@ fixtures are source-only, not binary qualification.
 
 **Exit:** documented changes and consumer obligations; no premature 1.1 write enablement.
 
-**Contract:** [consumer specification](DUCKLAKE-1.1-CONSUMER-CONTRACT.md). Preserve
+**Contract:** [consumer specification](../DUCKLAKE-1.1-CONSUMER-CONTRACT.md). Preserve
 old records; plan an opt-in companion/envelope seam. A frozen published-0.11.0
 Java consumer, record-component locks and JSON controls guard current contracts.
 
@@ -72,7 +75,7 @@ Java consumer, record-component locks and JSON controls guard current contracts.
 
 **Exit:** clear upgrade/rollback boundaries and final-artifact release gates.
 
-**Runbook:** [acceptance and rollback](DUCKLAKE-1.1-ACCEPTANCE.md). Native rehearsal
+**Runbook:** [acceptance and rollback](../DUCKLAKE-1.1-ACCEPTANCE.md). Native rehearsal
 uses disposable copies and separate pinned engines; JVM guards/contracts remain
 strict. The T−3/T−4 final-artifact refresh is intentionally deferred, not omitted.
 
@@ -84,7 +87,7 @@ strict. The T−3/T−4 final-artifact refresh is intentionally deferred, not om
   before reporting completion. Record SHAs/results. **Do not push without permission.**
 - Leave sibling repositories to their agents; tear down session-owned test infrastructure.
 - Reference: [existing preparation log](DUCKDB-2.0-PREPARATION.md),
-  [assessment](UPSTREAM-DUCKDB-2.0-2026-10-08.md), [release notes](RELEASE-0.11.0.md).
+  [assessment](UPSTREAM-DUCKDB-2.0-2026-10-08.md), [release notes](../../docs/releases/RELEASE-0.11.0.md).
 - **Prep executed:** see [results and commit handoff](DUCKLAKE-1.1-PREP-RESULTS.md).
   Step 1 `94c13de`, step 2 `e42888f`, step 3 `c86c7e9`; step 4 is the final log/runbook
   commit. Forced checks passed 533 tests and 9,697 corpus records. Native #1587/#1662

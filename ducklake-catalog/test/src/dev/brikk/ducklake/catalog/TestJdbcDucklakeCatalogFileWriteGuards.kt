@@ -23,7 +23,7 @@ import java.sql.DriverManager
 
 /**
  * File-writing operations are refused on catalogs this library cannot write correctly
- * (TODO-rectify-from-eval.md W-B7, W-D8): an ENCRYPTED lake (every file needs a per-file key we
+ * (dev-docs/archive/TODO-rectify-from-eval.md W-B7, W-D8): an ENCRYPTED lake (every file needs a per-file key we
  * do not produce — upstream then throws "Database is encrypted, but file ... does not have an
  * encryption key" for the whole table) and a pre-0.4 spec version (row shapes differ; upstream
  * migrates on ATTACH). Metadata-only DDL keeps working on supported encrypted catalogs,

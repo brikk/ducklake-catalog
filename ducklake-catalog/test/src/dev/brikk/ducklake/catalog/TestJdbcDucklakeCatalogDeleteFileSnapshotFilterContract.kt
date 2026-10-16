@@ -22,7 +22,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * Pins the read-side contract for delete files (TODO-rectify-from-eval.md R-B1): a reader must
+ * Pins the read-side contract for delete files (dev-docs/archive/TODO-rectify-from-eval.md R-B1): a reader must
  * apply `_ducklake_internal_snapshot_id <= S` to EVERY delete file that carries the column, and
  * must not use `ducklake_delete_file.partial_max` as the gate.
  *

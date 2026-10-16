@@ -1,5 +1,8 @@
 # DuckDB 1.5.6 and Java Quack JDBC 0.8.0
 
+> Historical upgrade verification. Current supported driver/transport choices
+> are in [compatibility](../../docs/COMPATIBILITY.md).
+
 ## Artifacts and scope
 
 - DuckDB JDBC: `org.duckdb:duckdb_jdbc:1.5.6.0`.

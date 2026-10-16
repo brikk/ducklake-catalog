@@ -135,7 +135,7 @@ interface DucklakeCatalog : AutoCloseable {
      * `partial_max` — upstream leaves it NULL on multi-snapshot delete files written by
      * `flush_inlined_data`, so its absence proves nothing (see
      * [DucklakeDataFile.deleteFilePartialMax]). Engines already reject unknown delete-file formats
-     * up front, so this is a defensive double-gate. See dev-docs/DESIGN-maintenance.md § 6.
+     * up front, so this is a defensive double-gate; [DucklakeChangeFeedDeletion] defines the reader contract.
      */
     fun hasPartialDeleteFilesRequiringSnapshotFilter(tableId: Long, snapshotId: Long): Boolean
 
@@ -849,7 +849,7 @@ interface DucklakeCatalog : AutoCloseable {
      * Compaction primitive: atomically register the merged [fragments] (begin = the new snapshot)
      * and **end-snapshot** the source data files in [sourceDataFileIds] (and any active delete file
      * attached to them) at that same new snapshot — the non-partial / Iceberg-style `optimize` /
-     * `rewrite_data_files` shape (see dev-docs/DESIGN-maintenance.md § 7).
+     * `rewrite_data_files` shape. The materialization and history contract follows below.
      *
      * Contract: the merged fragments must hold **exactly the live rows** of the retired sources
      * (deletes already applied) and carry each row's original DuckLake row id in an embedded
@@ -890,7 +890,7 @@ interface DucklakeCatalog : AutoCloseable {
 
     /**
      * Partial-emitting ("merge_adjacent") compaction primitive — the variant that reclaims sources
-     * IMMEDIATELY (dev-docs/DESIGN-maintenance.md § 7). Each [mergedFiles] entry physically carries a
+     * IMMEDIATELY. Each [mergedFiles] entry physically carries a
      * per-row `_ducklake_internal_snapshot_id` column (each row tagged with its source file's
      * begin_snapshot), so it serves time-travel reads across `[beginSnapshot, now]` on its own; it is
      * registered **back-dated** to that entry's `beginSnapshot` with its `partialMax`. The source

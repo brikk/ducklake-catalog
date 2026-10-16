@@ -42,7 +42,7 @@ data class DucklakeInterval(val months: Long, val days: Long, val micros: Long)
 
 /**
  * Decodes the PHYSICAL values a DuckLake metadata backend hands back for inlined-data rows into one
- * canonical Java representation per DuckLake type (TODO-rectify-from-eval.md R-D4).
+ * canonical Java representation per DuckLake type (dev-docs/archive/TODO-rectify-from-eval.md R-D4).
  *
  * Upstream stores inlined rows in backend-native types that differ from the logical DuckLake types
  * and reinterprets them on read (`postgres_metadata_manager.cpp` `GetColumnTypeInternal` /

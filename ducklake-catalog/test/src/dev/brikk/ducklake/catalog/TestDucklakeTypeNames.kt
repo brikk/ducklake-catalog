@@ -18,7 +18,7 @@ import org.assertj.core.api.Assertions.assertThatCode
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 
-/** [DucklakeTypeNames] vs upstream `common/ducklake_types.cpp` (TODO-rectify-from-eval.md W-D9). */
+/** [DucklakeTypeNames] vs upstream `common/ducklake_types.cpp` (dev-docs/archive/TODO-rectify-from-eval.md W-D9). */
 class TestDucklakeTypeNames {
     @Test
     fun baseNamesAreCaseInsensitiveAndCanonicalisedLowercase() {

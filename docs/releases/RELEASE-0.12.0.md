@@ -54,9 +54,9 @@ the strict native correctness gates above remain failing.
 Local release-version checks at 0.12.0 also passed; generated POMs and Gradle
 metadata for all three published modules contain 0.12.0 and no snapshot references.
 
-See [the execution evidence](DUCKLAKE-1.1-PREP-RESULTS.md),
-[capability matrix](DUCKLAKE-1.1-CAPABILITIES.md),
-[consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) and
-[migration/rollback acceptance runbook](DUCKLAKE-1.1-ACCEPTANCE.md).
+See [the execution evidence](../../dev-docs/archive/DUCKLAKE-1.1-PREP-RESULTS.md),
+[capability matrix](../../dev-docs/archive/DUCKLAKE-1.1-CAPABILITIES.md),
+[consumer contract](../../dev-docs/DUCKLAKE-1.1-CONSUMER-CONTRACT.md) and
+[migration/rollback acceptance runbook](../../dev-docs/DUCKLAKE-1.1-ACCEPTANCE.md).
 The [0.11.0 notes](RELEASE-0.11.0.md) retain the maintenance/transport behavior
 changes; consumers predating 0.10.0 must still adopt its nullable row-ID contract.

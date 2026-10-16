@@ -25,7 +25,7 @@ import java.sql.DriverManager
 
 /**
  * Behaviour tests for the data-file-side [DucklakeCatalog] methods that had no coverage
- * (TODO-rectify-from-eval.md Q-5): [DucklakeCatalog.getDataFilesAddedBetween], [DucklakeCatalog.getDataFilesByIds],
+ * (dev-docs/archive/TODO-rectify-from-eval.md Q-5): [DucklakeCatalog.getDataFilesAddedBetween], [DucklakeCatalog.getDataFilesByIds],
  * [DucklakeCatalog.listReferencedFilePaths], [DucklakeCatalog.getLatestDataFileFormat],
  * [DucklakeCatalog.getTableDataFileFormat], [DucklakeCatalog.getDataPath] and
  * [DucklakeCatalog.getPartitionNameMaps].

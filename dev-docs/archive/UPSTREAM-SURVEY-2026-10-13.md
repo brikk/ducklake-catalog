@@ -1,5 +1,8 @@
 # Upstream survey — 2026-10-13
 
+> Historical survey. Main-branch merges are not shipping-binary qualification;
+> current work is tracked in the [upstream TODO](../TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md).
+
 ## Bottom line
 
 **Current 1.0 correctness is still moving; this is not just 1.1 feature work.**

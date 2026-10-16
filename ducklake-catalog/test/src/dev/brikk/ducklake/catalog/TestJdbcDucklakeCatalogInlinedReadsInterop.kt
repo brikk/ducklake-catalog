@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test
 import java.sql.DriverManager
 
 /**
- * Inlined-data reads (TODO-rectify-from-eval.md R-B5, C-B4). DuckDB creates the per-table
+ * Inlined-data reads (dev-docs/archive/TODO-rectify-from-eval.md R-B5, C-B4). DuckDB creates the per-table
  * `ducklake_inlined_data_<t>_<sv>` tables with QUOTED identifiers, so a column named `My Col` or
  * `select` is stored exactly so; the library must quote user-derived identifiers when it projects
  * them. And the only error a reader may treat as "no rows" is the table not existing — any other

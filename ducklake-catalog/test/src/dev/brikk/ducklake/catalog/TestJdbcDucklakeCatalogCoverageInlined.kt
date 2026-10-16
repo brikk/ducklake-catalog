@@ -24,7 +24,7 @@ import java.sql.DriverManager
 
 /**
  * Behaviour tests for the inlined-data [DucklakeCatalog] methods that had no coverage
- * (TODO-rectify-from-eval.md Q-5): [DucklakeCatalog.hasInlinedDeletes],
+ * (dev-docs/archive/TODO-rectify-from-eval.md Q-5): [DucklakeCatalog.hasInlinedDeletes],
  * [DucklakeCatalog.getInlinedFileDeletesBetween], [DucklakeCatalog.readInlinedBeginSnapshots] and
  * [DucklakeCatalog.flushInlinedData].
  *

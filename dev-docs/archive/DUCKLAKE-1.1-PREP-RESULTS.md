@@ -1,5 +1,9 @@
 # DuckLake 1.1 preparation results — 2026-10-12
 
+> Historical verification evidence for the October 12 samples. Later follow-ups
+> are indexed in [the archive](README.md); current gates live in the
+> [acceptance runbook](../DUCKLAKE-1.1-ACCEPTANCE.md).
+
 This is preparation, not 1.1 write support or final DuckDB 2.0 qualification.
 Production engine, extension/corpus and preview-lock pins remain unchanged.
 
@@ -74,7 +78,7 @@ the verified 9,697-record baseline; a forced full replay will run at final hando
 
 ## Step 2 — versioned fixtures
 
-Five labelled captures matched [the committed fixture](probes/ducklake-11-fixtures.json)
+Five labelled captures matched [the committed fixture](../probes/ducklake-11-fixtures.json)
 exactly: maintained 1.0, locked preview explicit 1.0, locked preview fresh dev,
 bundled candidate source and development-main source. Four verifier tests passed,
 including negative provenance/layout controls. The native-preview CI adds the
@@ -88,7 +92,7 @@ JVM models changed.
 
 ## Step 3 — API/wire specification and compatibility fixtures
 
-[The consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) chooses new opt-in
+[The consumer contract](../DUCKLAKE-1.1-CONSUMER-CONTRACT.md) chooses new opt-in
 metadata envelopes rather than changing existing records, with explicit unknown
 parentage, exactness and row-group semantics. No public models or interfaces were
 modified. A Java 17 fixture compiled against the published 0.11.0 Maven JAR links
@@ -115,7 +119,7 @@ DuckLake format remains 1.0, the metadata `.db` storage rises to version 69 and
 boundary. This is recorded as an unsafe downgrade, not a promised capability or a
 reason to weaken the probe. The untouched backup restored all original state.
 
-[The acceptance runbook](DUCKLAKE-1.1-ACCEPTANCE.md) covers writer draining,
+[The acceptance runbook](../DUCKLAKE-1.1-ACCEPTANCE.md) covers writer draining,
 consistent backups, real migration versus synthetic guard tests, backend/transport
 qualification and RC go/no-go gates. Final/unknown version-string regressions
 confirm that 1.1 cannot be enabled merely by relabelling a catalog.

@@ -22,7 +22,7 @@ import java.nio.file.Path
 import java.sql.DriverManager
 
 /**
- * Concurrent commits on a LOCAL DUCKDB catalog file (TODO-rectify-from-eval.md C-B1). DuckDB's
+ * Concurrent commits on a LOCAL DUCKDB catalog file (dev-docs/archive/TODO-rectify-from-eval.md C-B1). DuckDB's
  * JDBC driver reports constraint / transaction conflicts with `SQLState = null`, `errorCode = 0`
  * and messages unlike PostgreSQL's — and it auto-aborts the transaction, so a naive `rollback()`
  * afterwards throws and would mask the real error. Both must be handled for the optimistic

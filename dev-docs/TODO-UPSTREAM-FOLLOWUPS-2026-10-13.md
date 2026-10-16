@@ -1,86 +1,69 @@
-# Upstream follow-ups — short TODO
+# Upstream follow-ups
 
-Baseline: released catalog **0.12.0**, main **0.13.0-SNAPSHOT**. Findings and
-provenance: [October 13 survey](UPSTREAM-SURVEY-2026-10-13.md).
+Active queue; stable UF IDs are unchanged. For other review work use
+[BACKLOG.md](BACKLOG.md). Consumer support lives in [compatibility](../docs/COMPATIBILITY.md).
 
-## Work in order
+## Next checkpoint — October 18
 
-1. [x] **Old inline schemas, expiration and flushes** (#1590/#1679).
-   Reproduce missing schema-version rows with native 1.5.6 catalogs; cover ALTER,
-   rename, unrelated DDL, multiple inline versions and snapshot expiration.
-   Audit JVM schema resolution; fix only demonstrated local defects. Preserve
-   historical values and distinguish native read/flush bugs from JVM failures.
-2. [x] **Unknown COMMIT outcomes and cleanup** (DataFusion #369).
-   Fault-inject failure before COMMIT versus a lost response after a successful
-   commit. Specify/classify definite rollback versus unknown outcome; ensure the
-   caller is not told to delete committed files or blindly republish. Coordinate
-   downstream cleanup obligations without editing sibling repositories.
-3. [x] **Lineage, statistics and BLOB regression gates** (#1611/#1717/#1695).
-   Cover sorted/updated-row merges, deleted inline rows becoming falsely exact
-   MIN/MAX bounds, and plain/nested BLOBs with `binary_as_string` enabled. Use
-   independent expected IDs/rows/bytes; retain NULL semantics and explicit native
-   failures rather than weakening goldens or copying old-engine bugs.
-4. [x] **PostgreSQL planning at scale** (DataFusion #373).
-   Exercise custom and generic prepared plans for file/statistics pages; measure
-   fan-out and retain bounded SQL/path transfers. Don't port LATERAL/ASOF blindly
-   across backends. C05 concurrent ANALYZE publication is tracked separately;
-   the query-performance change itself did not fix it.
-5. [ ] **Deferred RC refresh — October 17–18, if the calendar holds.**
-   Confirm final engine/JDBC/extension pins and which fixes are actually bundled;
-   rerun acceptance gates before explicitly scoping real 1.1 implementation.
+- [ ] Refresh DuckDB 2.0 release calendar and usable RC/final/JDBC/Python artifacts.
+- [ ] Record the **actual** core/DuckLake/Quack hashes and catalog layout separately
+  from release-branch source pins; rerun the [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md).
+- [ ] Only then explicitly scope real DuckLake 1.1 implementation. Keep writes disabled
+  until separately approved and qualified; do not infer support from preview CI.
 
-## New queue — October 15 upstream refresh
+Last check, **October 16**: tentative release October 21; JDBC still 1.5.6.0.
+Release-branch source pins DuckLake `4e923e26` and Quack `e7a9be3f8c`, but the
+new Python `2.0.0.dev2610151406` actually contains core `d4355d01c5`, DuckLake
+`80e6155e41`, Quack `974927a394`. Its UF-01–04 gates still fail; merge-lineage and
+fresh inline smoke pass. This observation does not change the committed preview lock.
+The old-inline fix #1590 was closed unmerged and moved to
+[PeterVanHolland/ducklake#34](https://github.com/PeterVanHolland/ducklake/pull/34), still open at that check.
 
-Stable **UF-xx** work IDs below do not renumber the canonical C/H/B/N review IDs.
-These are reproduction/parity candidates, **not confirmed JVM defects**. Fix only
-what fails locally; native/connector-only failures become explicit gates/handoffs.
-The scheduled RC refresh above takes precedence on October 17–18.
+## Pending candidates — reproduce before fixing
 
-| Done | ID | Priority / next investigation | Upstream reference |
-|---|---|---|---|
-| [x] | **UF-01** | **Catalog candidates verified; strict native gate fails.** Same-snapshot versions require reader-side suppression before pairing; later/tagged deletes covered. [Evidence/handoff](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-01--transient-cdc-rows-1675). | [#1675](https://github.com/duckdb/ducklake/pull/1675) |
-| [x] | **UF-02** | **JVM field-ID/identity projection verified; native gate fails.** Four expected images become eight natively. Payload suffix compatibility documented; no local renames. [Evidence/handoff](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-02--cdc-user-name-collisions-1723). | [#1723](https://github.com/duckdb/ducklake/pull/1723) |
-| [x] | **UF-03** | **Five-route JVM ceilings verified; timestamp lookup fixed** for local DuckDB/Java Quack. Native Quack leak remains a strict failing gate, not a JVM transaction defect. [Evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-03--quack-snapshot-ceilings-1756). | [#1756](https://github.com/duckdb/ducklake/pull/1756) |
-| [x] | **UF-04** | **Catalog candidates/stored buckets verified; native gate fails.** NaN/mixed IN and preview nested-zero wrong rows reproduced against passing unpartitioned controls. No rehash; engine pruning is a connector handoff. [Evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md#uf-04--unsafe-bucket-pruning-1696). | [#1696](https://github.com/duckdb/ducklake/pull/1696) |
-| [ ] | **UF-05** | **P2 — sorted compaction:** retain configured order across target-size rotation, repeated rewrites and merges; independently check row identity too. | [#1634](https://github.com/duckdb/ducklake/pull/1634) |
-| [ ] | **UF-06** | **P2 — one-sided numeric stats:** preserve usable null information/known bounds without inventing missing endpoints or empty ranges. Keep C03's coverage/NaN safety rules; distinguish plan improvements from wrong results. | [#1713](https://github.com/duckdb/ducklake/pull/1713) |
-| [ ] | **UF-07** | **P2 — inline rename/lifecycle:** same-transaction rename+flush uses the current entry, and superseded empty tables are reclaimed without breaking old readers. Coordinate with canonical C06; no implicit MySQL DDL commits. | [#1737](https://github.com/duckdb/ducklake/pull/1737), [#1722](https://github.com/duckdb/ducklake/pull/1722), [#1764](https://github.com/duckdb/ducklake/pull/1764) |
-| [ ] | **UF-08** | **P2 — flushable inline values:** negative intervals and unsupported scalar/nested VARIANT encodings must be safely rejected or stored via a qualified path; verify PG TIME_NS text precision. No 1.1 enablement. | [#1727](https://github.com/duckdb/ducklake/pull/1727), [#1769](https://github.com/duckdb/ducklake/pull/1769), [#1724](https://github.com/duckdb/ducklake/pull/1724) |
-| [ ] | **UF-09** | **P2 — import/type mapping:** verify MAP child position versus names, top-level-only hive mappings, new Parquet annotations and encrypted-import refusal. Catalog payload validation/native canaries here; Parquet import implementation remains a connector handoff. | [#1767](https://github.com/duckdb/ducklake/pull/1767), [#1700](https://github.com/duckdb/ducklake/pull/1700), [#1729](https://github.com/duckdb/ducklake/pull/1729), [#1726](https://github.com/duckdb/ducklake/pull/1726) |
+These are not confirmed JVM defects. Native/connector-only failures become strict
+gates and handoffs; connector agents own Trino/Doris code. The artifact checkpoint
+takes precedence over this optional queue. UF-05–09 have not started.
 
-**UF-01 → UF-02 → UF-03 → UF-04 executed sequentially.** Checked means the
-catalog investigation/gates/handoff are done, **not that native failures are fixed**.
-Only UF-03 required a local production correction (DuckDB timestamp lookup).
-Final forced verification: 597 JUnit tests / 9,697 corpus records; see the
-[execution report](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md). UF-05–09 are not started;
-the October 17–18 RC refresh remains the next scheduled checkpoint.
+| ID | Scope | Upstream |
+|---|---|---|
+| UF-05 | Sorted compaction across size rotation/repeated rewrites; independently verify row IDs | [#1634](https://github.com/duckdb/ducklake/pull/1634) |
+| UF-06 | One-sided numeric bounds/null information without inventing missing endpoints; retain C03 safety | [#1713](https://github.com/duckdb/ducklake/pull/1713) |
+| UF-07 | Rename+flush/lifecycle and old readers; coordinate with C06 MySQL implicit-DDL atomicity | [#1737](https://github.com/duckdb/ducklake/pull/1737), [#1722](https://github.com/duckdb/ducklake/pull/1722), [#1764](https://github.com/duckdb/ducklake/pull/1764) |
+| UF-08 | Unflushable intervals/scalar or nested VARIANT; PG TIME_NS precision; reject or qualify a safe storage path | [#1727](https://github.com/duckdb/ducklake/pull/1727), [#1769](https://github.com/duckdb/ducklake/pull/1769), [#1724](https://github.com/duckdb/ducklake/pull/1724) |
+| UF-09 | MAP/hive field mapping, Parquet annotations and encrypted-import refusal; catalog validation/native gates here | [#1767](https://github.com/duckdb/ducklake/pull/1767), [#1700](https://github.com/duckdb/ducklake/pull/1700), [#1729](https://github.com/duckdb/ducklake/pull/1729), [#1726](https://github.com/duckdb/ducklake/pull/1726) |
 
-Lower-priority upstream watch: collection/batched inline commits
-([#1762](https://github.com/duckdb/ducklake/pull/1762), [#1765](https://github.com/duckdb/ducklake/pull/1765)),
-bounded compaction lookup SQL ([#1763](https://github.com/duckdb/ducklake/pull/1763))
-and SQLite conflict-check retry ([#1753](https://github.com/duckdb/ducklake/pull/1753)).
-Benchmark before proposing local changes; SQLite isn't a new qualified JVM backend.
-Avoid giant SQL text without replacing it with an unbounded metadata fetch.
+Watch without speculative porting: batched inline commits #1762/#1765, compaction
+lookup SQL #1763, SQLite retry #1753 (not a new JVM backend), and later import/
+statistics/migration batches. Benchmark first; replacing giant SQL with an unbounded
+metadata fetch is not a fix.
 
-Refresh provenance: DuckLake main `a457bcc918ce5c66d1495853b707f0d4dced4395`;
-maintained v1.5 `343df36a` and 2.0 bundle `80e6155e` are unchanged. #1590 remains
-open, latest JDBC is 1.5.6.0, newest format is still 1.1-dev1. These main-only merges
-do not prove fixes are in our maintained or final shipping artifacts. Recheck at RC.
+## Completed investigations and local fixes
 
-## Rules / handoff
+Checked means the scoped catalog work is executed, **not that native engines are fixed**.
 
-- Verify targeted regressions and full checks for fixes; commit each verified step
-  with its results before proceeding. Do not push without permission.
-- Keep 1.1 writes disabled and current production/preview pins unchanged unless
-  separately approved. Preserve public consumer contracts; use disposable fixtures.
-- Leave Trino/Doris work to their agents; stop session-owned test infrastructure.
-- User approved execution October 14. Items 1–4 are executed locally; item 3 has
-  strict gates with explicit native failures, not native fixes. See
-  [execution evidence](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md).
-  Downstream cleanup/error adoption is a handoff, not a claimed sibling fix.
-  Commits: item 1 `b89d870`, item 2 `c586309`, item 3 `fb47ded`; item 4 is the
-  final log/plan-check commit `7023be5`. That run passed 576 tests / 9,697 records.
-  Resume at item 5 in the October 17–18 RC window. C05 was subsequently fixed
-  separately in `3ae1c18` October 15, with 589 tests / 9,697 records verified; see
-  [its compatibility report](FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md).
-  The UF queue is the next optional regression/fix work; do not postpone the RC refresh for it.
+| Done | ID / scope | Commit / evidence |
+|---|---|---|
+| [x] | Original 1: legacy inline schema/expiry boundaries | `b89d870` |
+| [x] | Original 2: unknown/acknowledged COMMIT classifications | `c586309`; consumer cleanup adoption still required |
+| [x] | Original 3: lineage/statistics/BLOB strict native gates | `fb47ded`; native failures retained |
+| [x] | Original 4: PostgreSQL page-owner lookup planning | `7023be5` |
+| [x] | C05 / remaining C14: coordinated ANALYZE publication and one-connection diagnostics | `3ae1c18` |
+| [x] | UF-01: transient CDC candidates and reader handoff | `e7d262b` |
+| [x] | UF-02: CDC user-name collisions / JVM identity projection | `512b8df` |
+| [x] | UF-03: five-route ceilings; local DuckDB/Java Quack timestamp fix | `10b4a4a` |
+| [x] | UF-04: unsafe bucket-pruning gates; stored buckets unchanged | `b8dded3` |
+
+Evidence: [October 14](archive/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md),
+[C05](archive/FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md),
+[UF-01–04](archive/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md).
+Last forced code verification: **597 JUnit tests / 9,697 corpus records**; native
+gates remain separate. No stable release after 0.12.0 is implied by these snapshots.
+
+## Execution rules
+
+Preserve production/preview/corpus pins and public consumer contracts unless an
+upgrade is approved. Verify targeted regressions and full checks for fixes; commit
+each verified step before proceeding, and push only with authorization. Bound SQL
+pages/path transfers and traversal before destructive effects. Leave sibling code
+to its agents and stop session-owned infrastructure. See [the agent guide](AGENT-GUIDE.md).

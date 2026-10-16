@@ -51,7 +51,7 @@ runtimeOnly("org.duckdb:duckdb_jdbc:1.5.6.0")
 
 The replay artifact resolves DuckDB JDBC 1.5.6.0. Align any separately pinned native
 client/server fixtures in consumers too. Quack transports metadata here; readers
-still need access to Parquet data. See [the 1.5.6 upgrade report](UPGRADE-DUCKDB-1.5.6-2026-10-10.md)
+still need access to Parquet data. See [the 1.5.6 upgrade report](../../dev-docs/archive/UPGRADE-DUCKDB-1.5.6-2026-10-10.md)
 for direct-driver coverage and exact artifact provenance.
 
 ## Verification and limits

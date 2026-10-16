@@ -25,7 +25,7 @@ import java.sql.DriverManager
  * Two DROP paths whose metadata shape upstream's catalog loader validates strictly — a bad row
  * from either takes the WHOLE lake down for DuckDB (`Failed to load DuckLake - ...`), not just
  * the affected object. Each test therefore ends by ATTACHing the catalog in stock DuckDB and
- * querying it (TODO-rectify-from-eval.md W-B4, W-B5).
+ * querying it (dev-docs/archive/TODO-rectify-from-eval.md W-B4, W-B5).
  *
  *  - [dropColumn] must end-snapshot every transitive descendant of a nested column. A one-level
  *    cascade leaves grandchildren active with a dangling `parent_column`, which upstream rejects

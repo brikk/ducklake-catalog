@@ -1,5 +1,8 @@
 # Snapshot expiration must preserve conflict history — fixed 2026-10-09
 
+> Historical fix evidence. The retained-history contract remains in force; this
+> report is not an open implementation task.
+
 Tracked as **UP2-09** in the [2.0 readiness assessment](UPSTREAM-DUCKDB-2.0-2026-10-08.md).
 This applies to our existing 1.5.5 lane, not only DuckDB 2.0.
 

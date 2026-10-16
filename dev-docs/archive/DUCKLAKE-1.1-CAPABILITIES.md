@@ -1,6 +1,10 @@
 # Sampled DuckLake layouts and capabilities
 
-Evidence: [immutable observations](probes/ducklake-11-fixtures.json), captured
+> Frozen October 12 observations, not a live compatibility matrix. Keep their
+> provenance aligned with the immutable probe fixtures. For current support, see
+> [compatibility](../../docs/COMPATIBILITY.md).
+
+Evidence: [immutable observations](../probes/ducklake-11-fixtures.json), captured
 2026-10-12. **Do not infer capabilities from the dev version string.**
 
 | Target | Evidence | Inline metadata names | Exactness flags / file row groups | Parent schemas |

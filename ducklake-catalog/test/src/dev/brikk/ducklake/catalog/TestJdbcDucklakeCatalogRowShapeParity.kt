@@ -22,7 +22,7 @@ import java.sql.DriverManager
 
 /**
  * Row-shape parity with upstream for the catalog rows this library writes
- * (TODO-rectify-from-eval.md W-D1, W-D5, W-D7):
+ * (dev-docs/archive/TODO-rectify-from-eval.md W-D1, W-D5, W-D7):
  *  - `ducklake_schema_versions` gets one row per CREATED or ALTERED table, none for view/schema DDL
  *    or DROP TABLE; comments bump `schema_version` (a DuckDB session caches the catalog per version);
  *  - `ducklake_table_column_stats.contains_nan` is an explicit `false` for float columns;

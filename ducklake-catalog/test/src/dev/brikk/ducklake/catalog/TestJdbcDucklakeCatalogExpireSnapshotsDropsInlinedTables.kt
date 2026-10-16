@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test
 import java.sql.DriverManager
 
 /**
- * `expireSnapshots` GC of a fully-expired dropped table (TODO-rectify-from-eval.md C-B5, R-D5): the
+ * `expireSnapshots` GC of a fully-expired dropped table (dev-docs/archive/TODO-rectify-from-eval.md C-B5, R-D5): the
  * metadata rows go in one transaction and the physical `ducklake_inlined_data_<t>_<sv>` /
  * `ducklake_inlined_delete_<t>` tables are DROPped afterwards — DDL cannot live inside the
  * transaction because MySQL commits implicitly on it. This test runs on PostgreSQL and proves the

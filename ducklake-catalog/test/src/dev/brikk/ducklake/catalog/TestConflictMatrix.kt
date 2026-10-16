@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * The change-vs-change matrix, entry by entry, against upstream ducklake v1.5
- * `DuckLakeTransactionState::CheckForConflicts` (TODO-rectify-from-eval.md W-D2, C-D2, R-B4).
+ * `DuckLakeTransactionState::CheckForConflicts` (dev-docs/archive/TODO-rectify-from-eval.md W-D2, C-D2, R-B4).
  * "Other" transactions are described by their `changes_made` text exactly as upstream writes it.
  */
 class TestConflictMatrix {

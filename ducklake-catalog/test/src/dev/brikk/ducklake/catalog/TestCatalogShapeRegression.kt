@@ -23,8 +23,8 @@ import org.junit.jupiter.api.Test
 /**
  * Pins the documented spec-vs-reality differences between the published
  * DuckLake markdown spec and the columns DuckDB's ducklake extension
- * actually creates on first attach. Each method here corresponds to one
- * entry in `TODO-WRITE-MODE.md § Reality Check: Spec vs Actual Catalog Shape`.
+ * actually creates on first attach. Regeneration and review are documented in
+ * `dev-docs/SCHEMA-CODEGEN.md`.
  *
  * If a future DuckLake version changes the catalog DDL — drops one of
  * these columns, renames it, moves it to a different table, or adds new

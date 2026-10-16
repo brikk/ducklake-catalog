@@ -22,7 +22,7 @@ import java.nio.file.Path
 import java.sql.DriverManager
 
 /**
- * Concurrent commits on a MYSQL catalog (TODO-rectify-from-eval.md C-B2). Two writers that start
+ * Concurrent commits on a MYSQL catalog (dev-docs/archive/TODO-rectify-from-eval.md C-B2). Two writers that start
  * from the same base snapshot allocate the same `schema_id` from `next_catalog_id`; under
  * REPEATABLE READ the loser's in-transaction lineage check cannot see the winner, so the collision
  * surfaces as `Duplicate entry '<id>' for key 'ducklake_schema.PRIMARY'` on the loser's INSERT —
