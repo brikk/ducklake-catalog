@@ -3,25 +3,26 @@
 Active queue; stable UF IDs are unchanged. For other review work use
 [BACKLOG.md](BACKLOG.md). Consumer support lives in [compatibility](../docs/COMPATIBILITY.md).
 
-## Next checkpoint — October 18
+## Next checkpoint — shipping artifacts (target October 21)
 
 - [ ] Refresh DuckDB 2.0 release calendar and usable RC/final/JDBC/Python artifacts.
 - [ ] Record the **actual** core/DuckLake/Quack hashes and catalog layout separately
   from release-branch source pins; rerun the [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md).
-- [ ] Only then explicitly scope real DuckLake 1.1 implementation. Keep writes disabled
-  until separately approved and qualified; do not infer support from preview CI.
+- [ ] Qualify richer 1.1 metadata, other backends and any future write scope beyond
+  the limited read tier. Keep writes disabled until separately approved and qualified;
+  do not infer support from preview CI.
 
-Last check, **October 16**: tentative release October 21; JDBC still 1.5.6.0.
-Release-branch source pins DuckLake `4e923e26` and Quack `e7a9be3f8c`, but the
-new Python `2.0.0.dev2610151406` actually contains core `d4355d01c5`, DuckLake
-`80e6155e41`, Quack `974927a394`. Its UF-01–04 gates still fail; merge-lineage and
-fresh inline smoke pass. This observation does not change the committed preview lock.
-The old-inline fix #1590 was closed unmerged and moved to
-[PeterVanHolland/ducklake#34](https://github.com/PeterVanHolland/ducklake/pull/34), still open at that check.
+**Executed October 20 target:** staged CLI alpha49096, core `2ec7e8401c`, signed
+DuckLake `417a9117f5`, signed Quack `e7a9be3f8c`. Shipping/JDBC artifact availability
+must still be refreshed; no maintained or preview lock was moved. October 21 is the
+release target directly confirmed to the requester. The legacy-inline read/flush
+work moved from #1590 to [PeterVanHolland/ducklake#34](https://github.com/PeterVanHolland/ducklake/pull/34);
+qualify actual old catalogs rather than treating a new-format smoke test as closure.
 
 **October 20 direct-Java checkpoint:** [alpha49096 qualification](QUACK-2.0-QUALIFICATION.md)
 verifies released `quack-jdbc 0.8.0` on actual protocol v3, operating on 1.0 metadata
-without DuckDB JDBC. Final-1.1 inline reads and writes remain rejected. This does not
+without DuckDB JDBC. The subsequent [read tier](FINAL-1.1-READ-RESULTS.md) enables
+limited, explicit final-1.1 reads; all 1.1 writes remain rejected. This does not
 qualify branch-tip Quack `f96420ed`, final shipping artifacts or general 1.1 support.
 
 ## Pending candidates — reproduce before fixing

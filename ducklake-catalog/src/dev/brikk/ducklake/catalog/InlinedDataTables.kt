@@ -46,6 +46,10 @@ internal object InlinedDataTables {
         "1.1-dev1" -> DEV_COLUMNS
         else -> throw DucklakeInvalidOperationException("Unknown inlined metadata layout for catalog version $version")
     }
+
+    /** Final-1.1 names are read-only opt-in; createTableSql still uses the separate DDL descriptor. */
+    fun readMetadataColumns(version: String?, enableFinal11Reads: Boolean): MetadataColumns =
+        if (version == "1.1" && enableFinal11Reads) DEV_COLUMNS else metadataColumns(version)
     /** Upstream `DuckLakeUtil::IsInlinedSystemColumn`. */
     private val SYSTEM_COLUMNS = setOf("row_id", "begin_snapshot", "end_snapshot", "_ducklake_internal_snapshot_id", "_ducklake_internal_row_id")
 

@@ -39,8 +39,9 @@ package dev.brikk.ducklake.catalog
  *    The password slot supplies the Quack token. Both routes require initialized remote
  *    metadata and do not turn the Quack catalog into Trino's Parquet scan engine.
  *
- * Every backend must already hold an initialized DuckLake catalog (spec version 0.4 or 1.0, created
- * by attaching it once from DuckDB); this library never bootstraps or migrates the schema.
+ * Every backend must already hold an initialized DuckLake catalog (0.4/1.0 for writes;
+ * limited final-1.1 reads require [enableFinal11Reads]). This library never bootstraps
+ * or migrates the schema.
  */
 class DucklakeCatalogConfig {
     var catalogDatabaseUrl: String? = null
@@ -48,4 +49,11 @@ class DucklakeCatalogConfig {
     var catalogDatabasePassword: String? = null
     var dataPath: String? = null
     var maxCatalogConnections: Int = 10
+
+    /**
+     * Opt in to the conservative direct-Java-Quack final-1.1 reader: root-schema catalogs only, no legacy MIN/MAX
+     * bounds or range pruning. All reads must run inside readSession on an owned snapshot. Does not enable any 1.1 writes
+     * or migration; existing record/wire shapes omit advisory 1.1 metadata.
+     */
+    var enableFinal11Reads: Boolean = false
 }

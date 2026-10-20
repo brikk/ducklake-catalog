@@ -3,7 +3,8 @@
 ## Supported lane
 
 - Latest stable catalog release: **0.12.0**; development: **0.13.0-SNAPSHOT**.
-- Catalog format: **DuckLake 1.0**. DuckLake 1.1 writes remain disabled.
+- Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
+  explicit opt-in on development code. DuckLake 1.1 writes remain disabled.
 - Maintained DuckDB: **1.5.6**; JDBC: **1.5.6.0**.
 - Optional direct Java Quack JDBC: **0.8.0**, qualified against the maintained server.
 - Published libraries target **Java 17**. Building the repository requires JDK 25.
@@ -43,14 +44,16 @@ registration into encrypted catalogs is rejected.
 
 ## DuckDB 2.0 / DuckLake 1.1
 
-Preparation is **not final-artifact or full JVM certification**. Known dev inline
-layout reads do not establish general schema/type/statistics/nested-schema support.
+The [conservative final-1.1 reader](READING-1.1.md) requires direct Java Quack and
+an owned read session, rejects nested-schema history, and suppresses legacy bounds/
+pruning. This is **not final-artifact or full JVM certification**, nor general
+schema/type/statistics/nested-schema support.
 Passing pinned native-preview CI is not passing every strict correctness gate.
 
 The [staged alpha49096 direct-Java qualification](../dev-docs/QUACK-2.0-QUALIFICATION.md)
 verified `quack-jdbc 0.8.0` negotiating protocol v3 and operating on 1.0 metadata,
-without DuckDB JDBC. This is useful preview evidence, not final 2.0/1.1 support:
-final-1.1 inline reads and all 1.1 writes remain explicitly unsupported.
+without DuckDB JDBC. Subsequent read-tier tests add final-1.1 coverage with explicit
+unsupported cases. Default-off final inline reads and all 1.1 writes remain guarded.
 
 Native probes have reproduced CDC, inline-flush, statistics, BLOB, lineage and
 bucket-pruning failures on specific sampled engines. Results depend on actual

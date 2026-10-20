@@ -27,7 +27,11 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /** Owns only disposable files/processes. Both native peers use the supplied CLI, never embedded JDBC. */
-internal class PreviewQuackServer(private val format: String) : AutoCloseable {
+internal class PreviewQuackServer(
+    private val format: String,
+    private val reportLabel: String = format,
+    private val migrateFrom10: Boolean = false,
+) : AutoCloseable {
     private val cli = Path.of(System.getProperty("ducklake.preview.cli")).toAbsolutePath()
     private val root = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-quack-v3-$format-")
     private val reports = Files.createDirectories(Path.of(System.getProperty("ducklake.preview.reports")))
@@ -38,6 +42,8 @@ internal class PreviewQuackServer(private val format: String) : AutoCloseable {
     private val port = ServerSocket(0).use { it.localPort }
     private var process: Process? = null
     private var sequence = 0
+    var seededSnapshotId: Long = -1
+        private set
 
     val url: String get() = "jdbc:quack://127.0.0.1:$port"
 
@@ -51,13 +57,15 @@ internal class PreviewQuackServer(private val format: String) : AutoCloseable {
             val provenance = rows("LOAD quack; LOAD ducklake; SELECT extension_name,extension_version,installed_from " +
                 "FROM duckdb_extensions() WHERE extension_name IN ('quack','ducklake') AND loaded ORDER BY 1")
             assertThat(provenance).containsExactly(listOf("ducklake", DUCKLAKE, "core"), listOf("quack", QUACK, "core"))
+            val seedFormat = if (migrateFrom10) "1.0" else format
             execute("LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +
-                "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',DUCKLAKE_VERSION '$format'); " +
+                "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',DUCKLAKE_VERSION '$seedFormat'); " +
                 "CREATE TABLE lake.scalar_seed(i INTEGER); INSERT INTO lake.scalar_seed VALUES (11),(22); " +
                 "CREATE TABLE lake.nested_seed AS SELECT {'a':42::INTEGER,'b':[1::INTEGER,NULL]} AS s, " +
                 "MAP([1::INTEGER],[{'v':'x'}]) AS m; DETACH lake")
+            if (migrateFrom10) seedAndMigrate()
 
-            val builder = command(database).redirectErrorStream(true).redirectOutput(reports.resolve("server-$format.log").toFile())
+            val builder = command(database).redirectErrorStream(true).redirectOutput(reports.resolve("server-$reportLabel.log").toFile())
             val server = builder.start().also { process = it }
             server.outputStream.write(("SET extension_directories=[${literal(extensions.toString())}]; " +
                 "LOAD ducklake; LOAD quack; SELECT * FROM quack_serve('quack://127.0.0.1:$port/',token:='$token');\n").toByteArray())
@@ -65,7 +73,7 @@ internal class PreviewQuackServer(private val format: String) : AutoCloseable {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             var failure: Exception? = null
             while (System.nanoTime() < deadline) {
-                check(server.isAlive) { "Preview server exited; inspect server-$format.log" }
+                check(server.isAlive) { "Preview server exited; inspect server-$reportLabel.log" }
                 try {
                     connection().use { c ->
                         assertThat(c.metaData.driverVersion).isEqualTo("0.8.0")
@@ -76,7 +84,7 @@ internal class PreviewQuackServer(private val format: String) : AutoCloseable {
                         assertThat(jdbcRows(c, "SELECT value FROM ducklake_metadata WHERE key='version'")).containsExactly(listOf(format))
                         assertThat(jdbcRows(c, "SELECT current_setting('allow_unsigned_extensions')")).containsExactly(listOf("false"))
                     }
-                    Files.writeString(reports.resolve("provenance-$format.txt"),
+                    Files.writeString(reports.resolve("provenance-$reportLabel.txt"),
                         "cli=$cli\ncli_sha256=${sha256(cli)}\ncore=$CORE\nversion=$VERSION\n" +
                             "ducklake=$DUCKLAKE\nquack=$QUACK\nformat=$format\ndriver=0.8.0\n" +
                             "driver_sha256=$DRIVER_SHA256\nprotocol=3\nunsigned=false\n")
@@ -95,11 +103,28 @@ internal class PreviewQuackServer(private val format: String) : AutoCloseable {
 
     fun connection(): Connection = DriverManager.getConnection(url, Properties().apply { setProperty("token", token) })
 
-    fun catalog(): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
+    private fun seedAndMigrate() {
+        require(format == "1.1")
+        val attach = "LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +
+            "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',DUCKLAKE_VERSION '1.0'); "
+        execute(attach + "CREATE TABLE lake.migrate_seed(i INTEGER,v VARCHAR); " +
+            "CALL lake.set_option('data_inlining_row_limit',0,table_name=>'migrate_seed'); " +
+            "INSERT INTO lake.migrate_seed VALUES (1,'file'),(2,'file'),(3,'file'); " +
+            "CALL lake.set_option('data_inlining_row_limit',10,table_name=>'migrate_seed'); " +
+            "INSERT INTO lake.migrate_seed VALUES (100,'old'); " +
+            "ALTER TABLE lake.migrate_seed ADD COLUMN x INTEGER; INSERT INTO lake.migrate_seed VALUES (101,'new',7)")
+        seededSnapshotId = rows(attach + "SELECT max(snapshot_id) FROM meta.ducklake_snapshot").single().single()!!.toLong()
+        // This is explicit native migration of a disposable copy, never an action by the JVM reader.
+        execute("LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +
+            "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',AUTOMATIC_MIGRATION TRUE); DETACH lake")
+    }
+
+    fun catalog(enableFinal11Reads: Boolean = false): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
         catalogDatabaseUrl = url
         catalogDatabasePassword = token
         dataPath = data.toString()
         maxCatalogConnections = 1
+        this.enableFinal11Reads = enableFinal11Reads
     })
 
     fun native(sql: String): List<List<String?>> = rows("LOAD quack; LOAD ducklake; " +

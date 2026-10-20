@@ -24,6 +24,11 @@ COMMIT handling apply. The deprecated row-count argument remains ignored.
 
 ## Other changes
 
+- Final-1.1 reads can be [explicitly enabled](READING-1.1.md) for direct Java Quack.
+  The mode requires `readSession`, supports no nested-schema history, omits legacy
+  bounds/range pruning and rejects unqualified inline projections. It does not
+  migrate a catalog or enable any 1.1 writes; the flag defaults off.
+
 - Older inline schema-version resolution and snapshot-expiry boundary preservation
   are safer. Ambiguous evidence fails explicitly rather than silently dropping rows.
 - PostgreSQL cleanup hierarchy lookups are bounded per page owner, without changing

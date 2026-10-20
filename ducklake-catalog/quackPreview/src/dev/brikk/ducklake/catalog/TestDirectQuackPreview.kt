@@ -332,6 +332,26 @@ class TestDirectQuackPreview {
     }
 
     @Test
+    fun optInFinal11ReaderReturnsNativeScalarAndNestedInlineValuesWithoutPublishing() {
+        modern.catalog(enableFinal11Reads = true).use { c ->
+            assertThatThrownBy { c.currentSnapshotId }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("readSession")
+            val before = c.readSession(Supplier { c.currentSnapshotId })
+            c.readSession(Supplier {
+                val table = c.getTable("main", "scalar_seed", before)!!
+                val columns = c.getTableColumns(table.tableId, before)
+                val version = c.getInlinedDataInfos(table.tableId, before).single().schemaVersion
+                assertThat(c.readInlinedDataDecoded(table.tableId, version, before, columns)).containsExactly(listOf(11), listOf(22))
+                assertThat(c.readInlinedRowIds(table.tableId, version, before)).containsExactly(0L, 1L)
+                val nested = c.getTable("main", "nested_seed", before)!!
+                val info = c.getInlinedDataInfos(nested.tableId, before).single()
+                assertThat(c.readInlinedDataDecoded(nested.tableId, info.schemaVersion, before, c.getTableColumns(nested.tableId, before)))
+                    .containsExactly(listOf(linkedMapOf("a" to 42, "b" to listOf(1, null)), linkedMapOf(1 to linkedMapOf("v" to "x"))))
+            })
+            c.readSession(Supplier { assertThat(c.currentSnapshotId).isEqualTo(before) })
+        }
+    }
+
+    @Test
     fun final11CatalogIsReachableButUnsupportedInlineReadsAndWritesRemainExplicitlyGuarded() {
         modern.catalog().use { c ->
             assertThat(c.getSpecVersion()).isEqualTo("1.1")

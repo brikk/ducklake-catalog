@@ -1,0 +1,82 @@
+# First final-1.1 read tier — October 20
+
+Implements the conservative legacy adapter allowed by the
+[consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md), **not** richer metadata
+envelopes or write support. User setup/limits are in [Reading 1.1](../docs/READING-1.1.md).
+
+## Scope
+
+`enableFinal11Reads=true` is explicit and defaults off. It is accepted only for
+direct Java Quack; every read requires an owned `readSession`. The first read in
+that transaction validates the actual parent-schema column and rejects any
+persisted nested-schema history. A native change cannot race a successful
+autocommit preflight into returning flattened hierarchy: unowned reads are refused.
+The validation marker is removed on session exit, including failure.
+
+The read-only inline descriptor recognizes final `1.1`. The DDL descriptor and
+`DucklakeSpecVersions.WRITABLE` remain unchanged. Unknown versions, missing shape,
+unsupported projections and failed queries are not guessed into empty data.
+Existing physical inline tables must expose the actual first three BIGINT metadata
+columns. The namespace-scoped check transfers at most three rows with capped name/
+type projections, so later user columns cannot impersonate an unmigrated prefix.
+
+Existing DTOs/Java descriptors/wire shapes are preserved. File-stat queries project
+NULL endpoints for this tier before aggregation; range pruning retains all active
+files. Flags, row groups and schema parentage are not silently invented in legacy
+models. 1.0 behavior/SQL remain unchanged with the default configuration.
+
+## Reproduction and coverage
+
+The first opt-in native test failed with `Unknown inlined metadata layout ... 1.1`
+before implementing the reader. The new negative missing-system-column case also
+reproduced an empty read outside a session; the opt-in tier now refuses unowned
+reads and propagates physical query failures in owned sessions. This contains that
+hazard for the new reader; it does not close the whole legacy C09 finding.
+
+The opt-in suite uses **the same exact signed alpha49096 target** as
+[direct-v3 qualification](QUACK-2.0-QUALIFICATION.md): core `2ec7e8401c`, DuckLake
+`417a9117f5`, Quack `e7a9be3f8c`, published Java driver 0.8.0 with its release digest
+and negotiated protocol 3 asserted. No DuckDB JDBC is on the test JVM classpath.
+
+Added real native final-1.1 coverage:
+
+- Scalar and STRUCT/LIST/MAP inline data, NULLs, BLOB escape bytes, misleading legacy
+  user-column names and independent expected row/snapshot IDs.
+- Exact decimal/unsigned values, UUID, finite DATE/timestamps, pre-epoch nanoseconds,
+  UTC timestamp instants and NaN preservation.
+- Multiple inline schemas, ADD/rename/unrelated DDL, current/history rows and CDC.
+- Native flush plus later inline inserts, partition/file/delete descriptors and
+  count estimates, checked against native current/historical rows.
+- Explicit native **1.0→1.1 migration** of a disposable same-CLI seed with old Parquet
+  and two inline schema versions. The JVM reads five preserved row IDs without
+  moving the snapshot head or performing the migration itself. This is not proof
+  for every older engine/backend migration.
+- TRUE/FALSE/NULL exactness inputs all suppress legacy bounds; pruning retains the
+  possible match and does not change file registrations.
+- Pinned native-write/flush visibility, validation refresh at the next session, and
+  rejection of active/retired nested schemas and malformed final layouts.
+- Non-NULL initial defaults, type evolution, empty ordinary projections and
+  unqualified payload types fail explicitly; genuine stored NULLs stay NULL.
+- Default-off compatibility, route restriction, unchanged DDL descriptor and final
+  1.1 write rejection, including retained real output after rejected registration.
+
+## Verification
+
+```sh
+mise exec -- ./gradlew check :ducklake-catalog:quackPreviewTest --rerun-tasks \
+  -Dducklake.corpus.dirs=all \
+  -Pducklake.preview.cli=/absolute/path/to/alpha49096/duckdb \
+  --no-configuration-cache --no-daemon
+```
+
+Final forced checks passed **598 maintained JUnit tests** (507 catalog, 51 SLT,
+40 replay) plus **31 opt-in preview tests**, zero failures/errors/skipped JUnit
+tests. Full corpus passed **9,697 records**, zero failed; existing 31 file/12 record
+skips remain. Detekt and Java 17 checkAbi passed (7,728 classes, 17 artifacts),
+including frozen released-Java-consumer, record-component and JSON controls.
+Documentation checks verified 193 local links/anchors across 37 Markdown files.
+
+All fixtures own their processes and temporary catalogs/extensions; they were
+removed after verification. Nothing writes production metadata or changes
+maintained/preview/corpus pins. Other catalog backends and the newer branch-tip
+Quack build remain outside this opt-in qualification.

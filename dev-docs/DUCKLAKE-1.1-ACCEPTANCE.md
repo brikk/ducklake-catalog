@@ -1,8 +1,10 @@
 # Migration, rollback and RC acceptance runbook
 
-**Preparation only.** Actual 1.1 support and the final-artifact refresh are deferred
-to T−3/T−4. The previously checked DuckDB release date was October 21, 2026;
-October 17–18 is a planning window, not a newly confirmed release commitment.
+**Limited read tier, not full support.** [Opt-in final-1.1 reads](../docs/READING-1.1.md)
+are qualified on the staged direct-Java peer. Richer metadata, other backends, writes
+and shipping-artifact/migration certification remain gated below. October 21, 2026
+is the release target directly confirmed to the requester; dates do not replace
+artifact verification.
 
 ## Before touching a real catalog
 
@@ -90,9 +92,10 @@ PostgreSQL/MySQL avoid this `.db` storage-format boundary, but require separate
 real migration/restore tests (including nested text inline types and DDL semantics).
 Quack must qualify the matched native peers **and** direct Java driver against the
 actual shipping server/storage, including cancellation, leases and network recovery.
-The [staged alpha49096 direct-Java check](QUACK-2.0-QUALIFICATION.md) verifies v3
-catalog behavior on 1.0 and safe rejection on final 1.1, without DuckDB JDBC. It does
-not close final-1.1 implementation, shipping-artifact or failure-recovery gates.
+The [staged alpha49096 direct-Java baseline](QUACK-2.0-QUALIFICATION.md) verifies v3
+without DuckDB JDBC. The subsequent [read tier](FINAL-1.1-READ-RESULTS.md) adds
+conservative final-1.1 reads and safe rejection of unqualified cases. Neither closes
+shipping-artifact, richer-metadata, other-backend or failure-recovery gates.
 
 ## Go/no-go at T−3/T−4
 
@@ -106,8 +109,9 @@ not close final-1.1 implementation, shipping-artifact or failure-recovery gates.
   full checks and the actual release corpus. Preserve unknown/null semantics.
 - Re-run all strict native regression gates, including old inline schemas,
   row lineage, false-exact aggregates, BLOB preservation and UF-01–04 CDC/Quack/
-  pruning cases. The sampled engines
-  currently fail; those failures cannot be waived by unchanged schema DDL.
+  pruning cases. Results depend on exact sampled builds; newer binaries pass more
+  gates than the frozen preview. Neither unchanged DDL nor a source merge waives a
+  failing case or qualifies every shipping engine/connector.
 - Coordinate sibling-engine rollout and mixed worker/coordinator wire behavior;
   get their agents' verification, not an inferred result from this repository.
 - Publish support only when the shipping artifacts and all claimed cases pass.

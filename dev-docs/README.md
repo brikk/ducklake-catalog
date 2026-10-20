@@ -10,7 +10,8 @@ live in [the user documentation](../docs/README.md).
 | [Upstream TODO](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md) | Active UF IDs and the pending DuckDB 2.0 / DuckLake RC checkpoint |
 | [Review backlog](BACKLOG.md) | Remaining catalog, harness and delivery review candidates; preserves canonical IDs |
 | [1.1 acceptance](DUCKLAKE-1.1-ACCEPTANCE.md) | Artifact qualification, migration/rollback rehearsal and go/no-go gates |
-| [Future consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) | Opt-in 1.1 API/wire design; not implemented support |
+| [Future consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) | Richer 1.1 metadata envelope/wire design; not yet implemented |
+| [Final-1.1 read results](FINAL-1.1-READ-RESULTS.md) | Conservative direct-Java read tier and explicit unsupported cases; no writes |
 
 ## Working on the repository
 

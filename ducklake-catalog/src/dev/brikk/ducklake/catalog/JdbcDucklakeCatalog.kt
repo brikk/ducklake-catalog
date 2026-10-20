@@ -101,13 +101,28 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     /** Pool-backed context: each statement checks out a connection and autocommits. */
     private val pooledDsl: DSLContext
+    private val final11ReadsEnabled: Boolean
 
     /** Set on a thread for the duration of [readSession]: every read on that thread uses it. */
     private val readSessionDsl: ThreadLocal<DSLContext?> = ThreadLocal()
+    private val validatedReadSession: ThreadLocal<DSLContext?> = ThreadLocal()
 
     /** The context reads use: the thread's pinned read session if one is open, else the pool. */
     private val dsl: DSLContext
-        get() = readSessionDsl.get() ?: pooledDsl
+        get() {
+            val session = readSessionDsl.get()
+            if (final11ReadsEnabled && session == null) {
+                throw DucklakeInvalidOperationException("enableFinal11Reads requires readSession for validation and reads on one snapshot")
+            }
+            val ctx = session ?: pooledDsl
+            if (final11ReadsEnabled && validatedReadSession.get() !== ctx) {
+                Final11ReadCompatibility.requireReadableLayout(ctx, globalMetadataValue("version", ctx))
+                // Never cache this across read sessions or autocommit calls. It must describe the
+                // owned transaction's view, not stale instance-level migration/hierarchy metadata.
+                if (session != null) validatedReadSession.set(ctx)
+            }
+            return ctx
+        }
 
     // Retained only for diagnostics (the "catalog not initialized" message). Never used for
     // connection — the pool already holds the parsed URL.
@@ -117,9 +132,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         @Suppress("SENSELESS_COMPARISON")
         if (config == null) throw NullPointerException("config is null")
 
+        this.final11ReadsEnabled = config.enableFinal11Reads
+
         val hikariConfig = HikariConfig()
         val configuredUrl: String = requireNotNull(config.catalogDatabaseUrl) {
             "DucklakeCatalogConfig.catalogDatabaseUrl is required (jdbc:postgresql://…, jdbc:duckdb:…)"
+        }
+        if (final11ReadsEnabled && !configuredUrl.startsWith("jdbc:quack:")) {
+            throw DucklakeInvalidOperationException("Final-1.1 reads are currently qualified only through direct Java Quack (jdbc:quack:)")
         }
         val dialectInferenceUrl: String
         val metadataQuery: MetadataQuery
@@ -241,6 +261,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 return action.get()
             }
             finally {
+                validatedReadSession.remove()
                 readSessionDsl.remove()
                 try {
                     metadata.rollback(sessionDsl, conn) // nothing to commit; release the snapshot
@@ -312,7 +333,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         // An actual missing-table error has already poisoned a pinned transaction. Expected
         // absence is checked without failing SQL beforehand; a race/error must escape instead.
-        if (readSessionDsl.get() != null) throw e
+        // The opt-in reader also fails closed after a successful existence probe. A binder
+        // diagnostic naming a ducklake_* column must never masquerade as an empty result.
+        if (readSessionDsl.get() != null || final11ReadsEnabled) throw e
         log.log(System.Logger.Level.DEBUG, "{0}: {1} does not exist ({2})", what, tableName, sqlException.message)
     }
 
@@ -1276,6 +1299,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun findDataFileIdsInRange(tableId: Long, snapshotId: Long, predicate: ColumnRangePredicate): List<Long> {
+        val ctx = dsl
+        if (conservativeFinal11Read(ctx)) {
+            // Old DTOs have no endpoint exactness. Until a richer reader qualifies each polarity,
+            // do not let any 1.1 bound exclude a matching file (including defaults/NaNs/unknowns).
+            val file = DUCKLAKE_DATA_FILE.`as`("file")
+            return ctx.select(file.DATA_FILE_ID).from(file).where(file.TABLE_ID.eq(tableId))
+                .and(activeAt(file, snapshotId)).orderBy(file.DATA_FILE_ID).fetch(file.DATA_FILE_ID)
+        }
         val columnId = predicate.columnId
 
         val col = DUCKLAKE_COLUMN.`as`("col")
@@ -1625,12 +1656,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ): org.jooq.ResultQuery<*> {
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         val stats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
+        val conservative = conservativeFinal11Read(ctx)
+        val minValue = if (conservative) DSL.field("NULL", String::class.java).`as`(stats.MIN_VALUE) else stats.MIN_VALUE
+        val maxValue = if (conservative) DSL.field("NULL", String::class.java).`as`(stats.MAX_VALUE) else stats.MAX_VALUE
         val columnKey = DSL.coalesce(stats.COLUMN_ID, DSL.inline(-1L))
         val cursor = after?.let { (id, column) ->
             file.DATA_FILE_ID.gt(id).or(file.DATA_FILE_ID.eq(id).and(columnKey.gt(column)))
         } ?: DSL.noCondition()
         return ctx.select(file.DATA_FILE_ID, file.RECORD_COUNT, stats.COLUMN_ID, stats.COLUMN_SIZE_BYTES,
-            stats.VALUE_COUNT, stats.NULL_COUNT, stats.CONTAINS_NAN, stats.MIN_VALUE, stats.MAX_VALUE)
+            stats.VALUE_COUNT, stats.NULL_COUNT, stats.CONTAINS_NAN, minValue, maxValue)
             .from(file).leftJoin(stats).on(stats.DATA_FILE_ID.eq(file.DATA_FILE_ID).and(stats.TABLE_ID.eq(tableId)))
             .where(file.TABLE_ID.eq(tableId)).and(activeAt(file, snapshotId)).and(cursor)
             .orderBy(file.DATA_FILE_ID, columnKey).limit(1025)
@@ -2007,6 +2041,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             ?: return emptyList()
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
         val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
+        requireConservativeInlineProjection(tableId, endSnapshot, allSourceColumns, columnIds)
         val rowIdField = inlined.rowId
         val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columnIds, "c", decode)
 
@@ -2135,6 +2170,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private fun textCastIfNeeded(field: Field<*>, type: String): Field<*> =
         if (dialect != SQLDialect.DUCKDB && type in TEXT_CAST_TYPES) DSL.cast(field, org.jooq.impl.SQLDataType.VARCHAR) else field
 
+    private fun requireConservativeInlineProjection(tableId: Long, snapshotId: Long, source: List<DucklakeColumn>, ids: List<Long>) {
+        if (!conservativeFinal11Read(dsl)) return
+        val target = getTableColumns(tableId, snapshotId).associateBy { it.columnId }
+        val requested = ids.map { id -> target[id]
+            ?: throw DucklakeInvalidOperationException("Unknown final-1.1 requested column $id at snapshot $snapshotId") }
+        val children = source.filter { it.parentColumn != null }.groupBy { it.parentColumn!! }
+        val sourceTypes = source.filter { it.parentColumn == null }.associate { it.columnId to resolveColumnType(it, children) }
+        Final11ReadCompatibility.requireProjection(source, requested, sourceTypes)
+    }
+
     private fun readInlinedDataInternal(
         tableId: Long,
         schemaVersion: Long,
@@ -2143,6 +2188,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         decode: Boolean,
     ): List<List<Any?>> {
         if (columns.isEmpty()) {
+            if (final11ReadsEnabled) throw DucklakeInvalidOperationException("Opt-in reader requires a nonempty projection; use countInlinedRows for counts")
             return emptyList()
         }
 
@@ -2154,6 +2200,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
         val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
+        requireConservativeInlineProjection(tableId, snapshotId, allSourceColumns, columns.map { it.columnId })
         val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columns.map { it.columnId }, "c", decode)
 
         return try {
@@ -2248,8 +2295,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * codegen doesn't know about. Bundles the table reference with its `begin_snapshot` /
      * `end_snapshot` fields so the per-method setup dance reduces to one line.
      */
-    private fun inlinedDataTable(ctx: DSLContext, tableId: Long, schemaVersion: Long): InlinedDataTable =
-        InlinedDataTable.of(tableId, schemaVersion, InlinedDataTables.metadataColumns(globalMetadataValue("version", ctx)))
+    private fun inlinedDataTable(ctx: DSLContext, tableId: Long, schemaVersion: Long): InlinedDataTable {
+        val version = globalMetadataValue("version", ctx)
+        val table = InlinedDataTable.of(tableId, schemaVersion, InlinedDataTables.readMetadataColumns(version, final11ReadsEnabled))
+        if (final11ReadsEnabled && version == "1.1") Final11ReadCompatibility.requireInlineLayout(ctx, table.name)
+        return table
+    }
+
+    private fun conservativeFinal11Read(ctx: DSLContext): Boolean =
+        final11ReadsEnabled && globalMetadataValue("version", ctx) == "1.1"
 
     private data class InlinedDataTable(
         val name: String,

@@ -1,5 +1,10 @@
 # 1.1 consumer contract — specification, not implementation
 
+The richer envelopes below remain a specification. A first
+[conservative legacy read tier](../docs/READING-1.1.md) is implemented as an opt-in
+direct-Java adapter: it omits bounds and rejects unrepresentable/unqualified cases
+rather than adding facts to the old records. It enables no 1.1 writes.
+
 ## Compatibility decision
 
 Preserve existing `DucklakeSchema`, `DucklakeDataFile`, `DucklakeFileColumnStats`
@@ -66,5 +71,5 @@ record-component lock prevents accidental expansion. Old statistics JSON preserv
 unknown versus false/zero. Existing `TestJacksonWireFormat` goldens cover the
 other DTOs. The fixture's source and Maven JAR SHA-256 are recorded beside it.
 
-This does not claim full ABI scanning or finalize new envelope code. Actual 1.1
-model/API/schema/write implementation remains deferred.
+This does not claim full ABI scanning or finalize new envelope code. Richer 1.1
+model/envelope and write implementation remains separate from the limited legacy reader.

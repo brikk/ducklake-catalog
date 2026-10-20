@@ -153,9 +153,10 @@ also verifies v3 catalog operations on 1.0 metadata without changing maintained 
 - **Maintained, qualified lane:** DuckLake **1.0**, DuckDB/JDBC **1.5.6 / 1.5.6.0**,
   with optional direct Java Quack JDBC **0.8.0**. The catalog library targets Java 17;
   building it requires JDK 25.
-- **DuckLake 1.1 / DuckDB 2.0:** preparation only, **not supported write formats or
-  final-artifact certification**. All 1.1 writes remain disabled. Known dev inline
-  layout reads do not constitute full 1.1 schema/type/statistics support.
+- **DuckLake 1.1 / DuckDB 2.0:** a [limited opt-in read tier](docs/READING-1.1.md)
+  is available through direct Java Quack for root-schema catalogs. It is not full
+  1.1 schema/type/statistics support or final-artifact certification. All 1.1 writes
+  remain disabled.
 - Version 0.12.0 adds compatibility/regression preparation without changing the
   0.11.0 production support contract or dependency pins.
 - Passing JVM tests or pinned native-preview CI does not qualify every native

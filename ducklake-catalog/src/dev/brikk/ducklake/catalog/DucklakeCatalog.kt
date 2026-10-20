@@ -259,7 +259,8 @@ interface DucklakeCatalog : AutoCloseable {
 
     /**
      * Find data file IDs whose column statistics overlap with the given range.
-     * Used for predicate pushdown — files outside the range are pruned.
+     * Used for predicate pushdown; unknown bounds retain candidates, so this is not an exact
+     * matching-row set. The opt-in conservative final-1.1 reader returns all active file IDs.
      */
     fun findDataFileIdsInRange(tableId: Long, snapshotId: Long, predicate: ColumnRangePredicate): List<Long>
 
@@ -289,7 +290,8 @@ interface DucklakeCatalog : AutoCloseable {
      * based on column types resolved internally. Missing statistics rows in nonempty files make
      * that column's counts and bounds unknown, including older files without an added column's
      * statistics; absence is not proof of an all-NULL value or a particular default. Empty files
-     * are neutral. Columns with no statistics rows in any active file are omitted.
+     * are neutral. Columns with no statistics rows in any active file are omitted. The opt-in
+     * final-1.1 reader omits both endpoints because these records cannot carry 1.1 exactness.
      */
     fun getColumnStats(tableId: Long, snapshotId: Long): List<DucklakeColumnStats>
 
@@ -482,6 +484,8 @@ interface DucklakeCatalog : AutoCloseable {
      * nested values as DuckDB text, `time` as `java.sql.Time`, …; see [InlinedValues]). Prefer
      * [readInlinedDataDecoded], which normalises them; this form is kept for consumers that carry
      * their own converter.
+     * With [DucklakeCatalogConfig.enableFinal11Reads], reads require an owned [readSession] and
+     * unqualified default/type-evolution or payload projections are rejected, not guessed as NULL.
      */
     fun readInlinedData(tableId: Long, schemaVersion: Long, snapshotId: Long, columns: List<DucklakeColumn>): List<List<Any?>>
 

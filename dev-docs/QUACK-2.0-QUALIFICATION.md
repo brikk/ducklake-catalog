@@ -1,5 +1,9 @@
 # Direct Java Quack on staged DuckDB 2.0 — October 20
 
+This records the transport baseline in `ff2dc27`, before opt-in final-1.1 reads.
+The subsequent [read tier](../docs/READING-1.1.md) and
+[read verification](FINAL-1.1-READ-RESULTS.md) extend that baseline without enabling writes.
+
 **Direct Java transport works on the tested v3 peer. This is not full DuckLake 1.1
 support or final DuckDB 2.0 JDBC certification.** No runtime dependencies, supported
 write formats, corpus pins or existing native-preview locks were changed.
@@ -67,11 +71,11 @@ and disposable catalogs/extensions are removed even on setup failure.
 COMMIT injections are controlled boundary tests, not proof of arbitrary network
 partition, cancellation, heartbeat/lease or server-crash recovery.
 
-## 1.1 remains a separate implementation gate
+## 1.1 boundary at the transport baseline
 
-Basic 1.1 version/table/column metadata is reachable over the driver. However, the
-library recognizes the previously prepared `1.1-dev1` inline layout but not the
-final format, so **final-1.1 inline reads currently fail explicitly**. CREATE,
+At `ff2dc27`, basic 1.1 version/table/column metadata was reachable over the driver.
+The library recognized the previously prepared `1.1-dev1` inline layout but not the
+final format, so **final-1.1 inline reads failed explicitly**. CREATE,
 ANALYZE and expiration against final 1.1 are rejected with the unsupported-version
 exception before publication; native seed rows and head remain unchanged.
 

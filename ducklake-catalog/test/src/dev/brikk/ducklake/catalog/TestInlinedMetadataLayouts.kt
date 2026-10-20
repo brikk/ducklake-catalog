@@ -37,6 +37,19 @@ class TestInlinedMetadataLayouts {
     }
 
     @Test
+    fun final11ReadNamesRequireOptInAndDoNotEnableDdlOrOtherTransports() {
+        assertThat(InlinedDataTables.readMetadataColumns("1.1", true)).isEqualTo(InlinedDataTables.metadataColumns("1.1-dev1"))
+        assertThatThrownBy { InlinedDataTables.readMetadataColumns("1.1", false) }.isInstanceOf(DucklakeInvalidOperationException::class.java)
+        assertThatThrownBy { InlinedDataTables.createTableSql("t", emptyList(), SQLDialect.DUCKDB, "1.1") }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java)
+        assertThat(DucklakeCatalogConfig().enableFinal11Reads).isFalse()
+        assertThatThrownBy { JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
+            catalogDatabaseUrl = "jdbc:duckdb:"
+            enableFinal11Reads = true
+        }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("direct Java Quack")
+    }
+
+    @Test
     fun readsFollowExternallyRenamedMetadataWithoutEnablingDevWrites() {
         TestingDucklakePostgreSqlCatalogServer().use { server ->
             val fixture = JdbcDucklakeCatalogTestDataGenerator.generateIsolatedCatalog(server, "inlined-layouts")
