@@ -19,6 +19,7 @@ live in [the user documentation](../docs/README.md).
 - [Release process](RELEASING.md): snapshot/release publishing and verification.
 - [Schema codegen](SCHEMA-CODEGEN.md): regenerate the checked-in jOOQ bindings.
 - [Frozen consumer fixture](FROZEN-CONSUMER.md): reproduce the release-compiled ABI fixture.
+- [Direct Java Quack / staged 2.0](QUACK-2.0-QUALIFICATION.md): v3 qualification without DuckDB JDBC; 1.1 remains gated.
 - [Probe index](probes/README.md): native scripts, immutable locks and interpretation.
 
 ## History, not another task queue

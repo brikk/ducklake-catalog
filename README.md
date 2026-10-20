@@ -145,6 +145,8 @@ metadata through the native extension. No 1.1 migration is enabled by this libra
 Quack serves metadata here; engines still need access to the actual Parquet data location.
 Direct Java transport is verified against the released 1.5.6/v1 server; this does
 not certify final DuckDB 2.0/v3 support. See [compatibility](docs/COMPATIBILITY.md).
+An opt-in [staged 2.0 direct-Java qualification](dev-docs/QUACK-2.0-QUALIFICATION.md)
+also verifies v3 catalog operations on 1.0 metadata without changing maintained pins.
 
 ## Compatibility status
 

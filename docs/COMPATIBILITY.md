@@ -47,6 +47,11 @@ Preparation is **not final-artifact or full JVM certification**. Known dev inlin
 layout reads do not establish general schema/type/statistics/nested-schema support.
 Passing pinned native-preview CI is not passing every strict correctness gate.
 
+The [staged alpha49096 direct-Java qualification](../dev-docs/QUACK-2.0-QUALIFICATION.md)
+verified `quack-jdbc 0.8.0` negotiating protocol v3 and operating on 1.0 metadata,
+without DuckDB JDBC. This is useful preview evidence, not final 2.0/1.1 support:
+final-1.1 inline reads and all 1.1 writes remain explicitly unsupported.
+
 Native probes have reproduced CDC, inline-flush, statistics, BLOB, lineage and
 bucket-pruning failures on specific sampled engines. Results depend on actual
 core/extension hashes, not just a version string or a main-branch merge. See the

@@ -90,6 +90,9 @@ PostgreSQL/MySQL avoid this `.db` storage-format boundary, but require separate
 real migration/restore tests (including nested text inline types and DDL semantics).
 Quack must qualify the matched native peers **and** direct Java driver against the
 actual shipping server/storage, including cancellation, leases and network recovery.
+The [staged alpha49096 direct-Java check](QUACK-2.0-QUALIFICATION.md) verifies v3
+catalog behavior on 1.0 and safe rejection on final 1.1, without DuckDB JDBC. It does
+not close final-1.1 implementation, shipping-artifact or failure-recovery gates.
 
 ## Go/no-go at T−3/T−4
 

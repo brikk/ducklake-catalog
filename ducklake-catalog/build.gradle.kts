@@ -67,7 +67,7 @@ detekt {
     buildUponDefaultConfig = true
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
     baseline = file("detekt-baseline.xml")
-    source.setFrom("src", "test", "testFixtures")
+    source.setFrom("src", "test", "testFixtures", "quackPreview")
 }
 
 // JDK 17 ABI so this library is consumable by the Doris fe-connector plugin,
@@ -90,6 +90,41 @@ sourceSets {
     named("testFixtures") {
         java.setSrcDirs(listOf("testFixtures/src"))
         resources.setSrcDirs(listOf("testFixtures/resources"))
+    }
+}
+
+// Opt-in direct Java Quack qualification against an explicitly supplied native preview CLI.
+// Deliberately independent of testRuntimeClasspath: no DuckDB JDBC/native client in this JVM.
+val quackPreview = sourceSets.create("quackPreview") {
+    kotlin.setSrcDirs(listOf("quackPreview/src"))
+    java.setSrcDirs(emptyList<String>())
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+configurations[quackPreview.implementationConfigurationName].extendsFrom(configurations.implementation.get())
+kotlin.target.compilations.named("quackPreview") {
+    associateWith(kotlin.target.compilations.getByName("main"))
+}
+dependencies {
+    add(quackPreview.implementationConfigurationName, platform(libs.junit.bom))
+    add(quackPreview.implementationConfigurationName, libs.junit.jupiter.api)
+    add(quackPreview.implementationConfigurationName, libs.assertj.core)
+    add(quackPreview.runtimeOnlyConfigurationName, libs.junit.jupiter.engine)
+    add(quackPreview.runtimeOnlyConfigurationName, libs.junit.platform.launcher)
+    add(quackPreview.runtimeOnlyConfigurationName, libs.quack.jdbc)
+}
+tasks.register<Test>("quackPreviewTest") {
+    group = "verification"
+    description = "Qualifies direct quack-jdbc 0.8.0 against the exact staged alpha49096 CLI (no DuckDB JDBC)."
+    testClassesDirs = quackPreview.output.classesDirs
+    classpath = quackPreview.runtimeClasspath
+    val cli = providers.gradleProperty("ducklake.preview.cli")
+    inputs.property("previewCli", cli.orElse("not supplied"))
+    outputs.upToDateWhen { false }
+    doFirst {
+        require(cli.isPresent) { "Supply -Pducklake.preview.cli=/absolute/path/to/alpha49096/duckdb" }
+        systemProperty("ducklake.preview.cli", cli.get())
+        systemProperty("ducklake.preview.reports", layout.buildDirectory.dir("reports/quack-preview").get().asFile.absolutePath)
     }
 }
 

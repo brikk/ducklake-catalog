@@ -38,6 +38,11 @@ or of every strict native correctness gate.
 
 ## CI lanes
 
+The opt-in `:ducklake-catalog:quackPreviewTest` task tests direct Java Quack against
+an explicitly supplied staged 2.0 CLI without putting DuckDB JDBC on its classpath.
+It is not run by default CI, does not skip when configuration is missing, and does
+not change the maintained pins. See [exact target and reproduction](QUACK-2.0-QUALIFICATION.md).
+
 - [CI](../.github/workflows/ci.yml): `check` on PRs/pushes, starter corpus in ordinary
   runs and full corpus nightly. Manual `full_corpus` requests replay everything.
 - [Pinned native preview](../.github/workflows/duckdb2-preview.yml): locked native

@@ -19,6 +19,11 @@ fresh inline smoke pass. This observation does not change the committed preview 
 The old-inline fix #1590 was closed unmerged and moved to
 [PeterVanHolland/ducklake#34](https://github.com/PeterVanHolland/ducklake/pull/34), still open at that check.
 
+**October 20 direct-Java checkpoint:** [alpha49096 qualification](QUACK-2.0-QUALIFICATION.md)
+verifies released `quack-jdbc 0.8.0` on actual protocol v3, operating on 1.0 metadata
+without DuckDB JDBC. Final-1.1 inline reads and writes remain rejected. This does not
+qualify branch-tip Quack `f96420ed`, final shipping artifacts or general 1.1 support.
+
 ## Pending candidates — reproduce before fixing
 
 These are not confirmed JVM defects. Native/connector-only failures become strict
