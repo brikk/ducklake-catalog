@@ -29,7 +29,7 @@ class TestJdbcDucklakeCatalogExpirationScale {
         DriverManager.getConnection("jdbc:duckdb:").use { native ->
             native.createStatement().use { st ->
                 st.execute("INSTALL ducklake; LOAD ducklake")
-                st.execute("ATTACH 'ducklake:$file' AS lake (DATA_PATH '$directory/data')")
+                st.execute("ATTACH 'ducklake:$file' AS lake (DATA_PATH '$directory/data', DUCKLAKE_VERSION '1.0')")
             }
         }
         val config = DucklakeCatalogConfig().apply { catalogDatabaseUrl = "jdbc:duckdb:$file" }

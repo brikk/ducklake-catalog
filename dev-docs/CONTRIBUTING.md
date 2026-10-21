@@ -11,6 +11,7 @@ older fails during configuration. Published library bytecode targets Java 17.
 
 ```sh
 mise install
+python3 dev-docs/probes/prepare_corpus_data.py
 mise exec -- ./gradlew build
 mise exec -- ./gradlew publishToMavenLocal
 ```
@@ -24,6 +25,7 @@ Tests need Docker/Podman for Testcontainers. The checked-in
 Run focused regressions first. Before completing a code fix, run:
 
 ```sh
+python3 dev-docs/probes/prepare_corpus_data.py
 mise exec -- ./gradlew check --rerun-tasks -Dducklake.corpus.dirs=all --no-configuration-cache
 ```
 
@@ -38,17 +40,26 @@ or of every strict native correctness gate.
 
 ## CI lanes
 
-The opt-in `:ducklake-catalog:quackPreviewTest` task tests direct Java Quack against
-an explicitly supplied staged 2.0 CLI without putting DuckDB JDBC on its classpath.
-It is not run by default CI, does not skip when configuration is missing, and does
-not change the maintained pins. See [exact target and reproduction](QUACK-2.0-QUALIFICATION.md).
+`:ducklake-catalog:quackPreviewTest` tests direct Java Quack against an explicitly
+supplied official 2.0 CLI without putting DuckDB JDBC on its classpath. CI runs it
+with a checksum-verified release CLI; it fails rather than skips if configuration
+is absent. The default explicit target is `release`; the frozen staged target is
+available with `-Pducklake.quack.target=alpha49096`. See [shipping qualification](UPGRADE-DUCKDB-2.0.0.md).
+
+Full replay also uses eight small, checksum-pinned nested DuckDB fixtures. The
+preparation script downloads only these files at the corpus's nested gitlink into
+`ducklake-test-corpus-replay/build/corpus-duckdb`, without fetching the whole DuckDB
+tree or editing upstream data. Override with `-Dducklake.corpus.duckdb.root=/checkout/duckdb`.
+The 1.5.6 JDBC configuration is an isolated historical inline-defect producer only;
+it never joins maintained, replay, published or direct-Java qualification classpaths.
 
 - [CI](../.github/workflows/ci.yml): `check` on PRs/pushes, starter corpus in ordinary
   runs and full corpus nightly. Manual `full_corpus` requests replay everything.
-- [Pinned native preview](../.github/workflows/duckdb2-preview.yml): locked native
-  layout/migration checks, matched Quack peers and fixture/harness tests. This is
-  not full JVM DuckDB 2.0 or DuckLake 1.1 qualification. Independently run the strict
-  probes listed in the [probe index](probes/README.md).
+- [Pinned native qualification](../.github/workflows/duckdb2-preview.yml): separate
+  frozen-preview and shipping-release targets on local/PostgreSQL metadata. The
+  release target adds strict native correctness and old-to-final migration gates;
+  historical preview/layout locks remain unchanged. This is not connector or full
+  DuckLake 1.1 write certification.
 
 Stop session-owned containers, servers and build daemons after verification.
 See [the agent guide](AGENT-GUIDE.md) for commit/safety requirements and

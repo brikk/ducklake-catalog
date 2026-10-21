@@ -48,8 +48,21 @@ jobs:
       - name: Set up Gradle (with caching)
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Prepare checksum-pinned nested corpus data
+        run: python3 dev-docs/probes/prepare_corpus_data.py
+
       - name: Build, lint and test every module
         run: ./gradlew check --no-configuration-cache --stacktrace --continue
+
+      - name: Install checksum-pinned official DuckDB 2.0 CLI
+        run: |
+          mkdir -p /tmp/opencode/duckdb-release
+          curl --fail --location --retry 3 https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-cli-linux-amd64.tar.gz -o /tmp/opencode/duckdb-release/cli.tar.gz
+          echo 'c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc  /tmp/opencode/duckdb-release/cli.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/opencode/duckdb-release/cli.tar.gz -C /tmp/opencode/duckdb-release duckdb
+
+      - name: Qualify shipping Java Quack v3 and conservative 1.1 reads
+        run: ./gradlew :ducklake-catalog:quackPreviewTest -Pducklake.preview.cli=/tmp/opencode/duckdb-release/duckdb --no-configuration-cache --stacktrace
 
       - name: Full-corpus replay (manual opt-in)
         if: github.event_name == 'workflow_dispatch' && inputs.full_corpus
@@ -62,6 +75,8 @@ jobs:
           name: test-reports-${{ github.run_id }}
           path: |
             **/build/reports/tests/test/
+            **/build/reports/tests/quackPreviewTest/
+            **/build/reports/quack-preview/
             **/build/reports/detekt/
           if-no-files-found: ignore
           retention-days: 14
@@ -84,6 +99,9 @@ jobs:
 
       - name: Set up Gradle (with caching)
         uses: gradle/actions/setup-gradle@v6
+
+      - name: Prepare checksum-pinned nested corpus data
+        run: python3 dev-docs/probes/prepare_corpus_data.py
 
       - name: Replay the full DuckLake corpus through the DuckDB oracle
         run: ./gradlew :ducklake-test-corpus-replay:test -Dducklake.corpus.dirs=all --no-configuration-cache --stacktrace

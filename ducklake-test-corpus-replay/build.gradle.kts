@@ -99,6 +99,8 @@ tasks.withType<Test> {
     maxHeapSize = "2g"
     // Corpus location for tests; overridable for CI layouts.
     systemProperty("ducklake.corpus.root", layout.projectDirectory.dir("ducklake/test/sql").asFile.absolutePath)
+    systemProperty("ducklake.corpus.duckdb.root", System.getProperty("ducklake.corpus.duckdb.root")
+        ?: layout.buildDirectory.dir("corpus-duckdb").get().asFile.absolutePath)
     // Directory selection: default starter set; "-Dducklake.corpus.dirs=all" for the full corpus.
     System.getProperty("ducklake.corpus.dirs")?.let { systemProperty("ducklake.corpus.dirs", it) }
 }

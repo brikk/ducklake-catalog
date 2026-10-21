@@ -19,14 +19,18 @@ class TestNightlyCatalogLineage {
             "compaction/compaction_per_thread_output.test" to setOf(61),
             "rewrite_data_files/test_rewrite_transaction_conflict.test" to setOf(135),
             "stats/min_max_nested_leaf_rewrite_corruption.test" to setOf(47, 53, 59),
-            "stats/min_max_optimization_compaction.test" to setOf(48, 90, 151, 162),
-            "stats/min_max_optimization_deletes.test" to setOf(80),
+            "stats/min_max_optimization_compaction.test" to setOf(51, 93, 154, 165),
+            "stats/min_max_optimization_deletes.test" to setOf(83),
         )
         val root = Path.of("ducklake")
         TestingDucklakePostgreSqlCatalogServer().use { server ->
             cases.entries.forEachIndexed { index, (path, lines) ->
-                val file = SltParser.parse(path, Files.readString(root.resolve("test/sql/$path")))
+                // This mirror qualifies the writable 1.0 catalog API, not the opt-in 1.1 reader.
+                // Upstream golden rows stay unchanged; only the metadata-format/backend axis changes.
+                val file = SltParser.parse(path, Files.readString(root.resolve("test/sql/$path"))
+                    .replace("(DATA_PATH", "(DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE, DATA_PATH"))
                 val queries = file.records.filterIsInstance<SltQuery>().filter { it.line in lines }.map { it.sql }.toSet()
+                assertThat(queries).`as`("$path target record positions must still identify all intended queries").hasSize(lines.size)
                 val database = "lineage_$index"
                 server.createDatabase(database)
                 val uri = server.getDuckDbAttachUri(database).removePrefix("ducklake:")

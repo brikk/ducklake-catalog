@@ -19,6 +19,10 @@ TOKEN="${QUACK_TOKEN:-ducklake-test-token}"
     # allow_other_hostname is required to bind to 0.0.0.0 — Quack refuses
     # non-localhost binds by default. Safe here because the container's network
     # namespace makes 0.0.0.0 mean "this container's interfaces only".
-    printf "SELECT * FROM quack_serve('quack://0.0.0.0:%s/', token := '%s', allow_other_hostname := true);\n" "$PORT" "$TOKEN"
+    # The host port is published ONLY on 127.0.0.1 by the fixture. DuckDB 2.0 defaults a
+    # non-loopback bind to TLS, but clients correctly choose HTTP for that loopback endpoint.
+    # This explicit plaintext mode is confined to the private test-container namespace;
+    # production remote TLS defaults/signature verification are not changed.
+    printf "SELECT * FROM quack_serve('quack://0.0.0.0:%s/', token := '%s', allow_other_hostname := true, disable_ssl := true);\n" "$PORT" "$TOKEN"
     exec sleep infinity
 } | duckdb

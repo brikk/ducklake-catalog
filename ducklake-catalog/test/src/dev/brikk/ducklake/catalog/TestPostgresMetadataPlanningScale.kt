@@ -42,7 +42,7 @@ class TestPostgresMetadataPlanningScale {
         server = TestingDucklakePostgreSqlCatalogServer()
         DriverManager.getConnection("jdbc:duckdb:").use { conn -> conn.createStatement().use { st ->
             st.execute("INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres")
-            st.execute("ATTACH '${server.getDuckDbAttachUri()}' AS lake (DATA_PATH '$directory/data')")
+            st.execute("ATTACH '${server.getDuckDbAttachUri()}' AS lake (DATA_PATH '$directory/data', DUCKLAKE_VERSION '1.0')")
         } }
         DriverManager.getConnection(server.getJdbcUrl(), server.getUser(), server.getPassword()).use { conn ->
             conn.createStatement().use { st ->

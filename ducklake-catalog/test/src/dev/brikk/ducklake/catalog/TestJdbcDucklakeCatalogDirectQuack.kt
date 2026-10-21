@@ -42,7 +42,7 @@ class TestJdbcDucklakeCatalogDirectQuack {
                     statement.execute("INSTALL quack; LOAD quack; INSTALL ducklake; LOAD ducklake")
                     statement.execute("CREATE SECRET (TYPE quack, TOKEN '${server.getToken()}')")
                     statement.execute("ATTACH '${server.getDucklakeAttachUri()}' AS lake " +
-                        "(DATA_PATH '$dataDir', METADATA_CATALOG 'direct_driver_meta')")
+                        "(DATA_PATH '$dataDir', METADATA_CATALOG 'direct_driver_meta', DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE)")
                     statement.execute("CREATE TABLE lake.main.native_seed(i INTEGER)")
                     statement.execute("INSERT INTO lake.main.native_seed VALUES (11), (22)")
                     statement.execute("CREATE TABLE lake.main.native_nested AS SELECT " +
@@ -210,7 +210,7 @@ class TestJdbcDucklakeCatalogDirectQuack {
             connection.createStatement().use { statement ->
                 statement.executeQuery("SELECT version()").use { rows ->
                     assertThat(rows.next()).isTrue()
-                    assertThat(rows.getString(1)).isEqualTo("v1.5.6")
+                    assertThat(rows.getString(1)).isEqualTo("v2.0.0")
                 }
             }
         }

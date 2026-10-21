@@ -27,7 +27,7 @@ class TestSnapshotTimestampOrdering {
         val metadata = root.resolve("meta.db")
         val data = root.resolve("data")
         DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { st ->
-            st.execute("INSTALL ducklake; LOAD ducklake; ATTACH 'ducklake:$metadata' AS lake (DATA_PATH '$data'); DETACH lake")
+            st.execute("INSTALL ducklake; LOAD ducklake; ATTACH 'ducklake:$metadata' AS lake (DATA_PATH '$data', DUCKLAKE_VERSION '1.0'); DETACH lake")
         } }
         DriverManager.getConnection("jdbc:duckdb:$metadata").use { c -> c.createStatement().use { st ->
             st.execute("UPDATE ducklake_snapshot SET snapshot_time=TIMESTAMPTZ '1999-01-01' WHERE snapshot_id=0")

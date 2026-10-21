@@ -324,11 +324,11 @@ class TestJdbcDucklakeCatalogUnknownFileStats {
         c.commitInsert(cols.tableId, listOf(actualFragment(cols, "unknown.parquet", 100, null)))
         val beforeTruncate = c.currentSnapshotId
         assertUnknownX(cols, listOf(1L, 100L), unknownCounts = true)
-        assertThatThrownBy {
-            withOracle { connection ->
-                connection.createStatement().use { it.execute("ALTER TABLE lake.test_schema.${cols.tableName} ALTER COLUMN x SET NOT NULL") }
-            }
-        }.hasMessageContaining("no column stats are available")
+        // DuckDB 2.0 scans files when stats cannot prove NOT NULL (1.5 refused the DDL).
+        withOracle { connection ->
+            connection.createStatement().use { it.execute("ALTER TABLE lake.test_schema.${cols.tableName} ALTER COLUMN x SET NOT NULL") }
+        }
+        assertThat(oracleLongs("SELECT x FROM lake.test_schema.${cols.tableName} ORDER BY x")).containsExactly(1L, 100L)
         c.truncateTable("test_schema", cols.tableName)
         c.commitInsert(cols.tableId, listOf(actualFragment(cols, "new.parquet", 2, knownX(cols, 2))))
         c.analyzeTable(cols.tableId)
@@ -340,6 +340,22 @@ class TestJdbcDucklakeCatalogUnknownFileStats {
         withOracle { connection ->
             connection.createStatement().use { it.execute("ALTER TABLE lake.test_schema.${cols.tableName} ALTER COLUMN x SET NOT NULL") }
         }
+    }
+
+    @Test
+    fun nativeNotNullValidationDoesNotTreatUnknownStatisticsAsNoNulls() {
+        val cols = newTable()
+        val c = catalog!!
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "known.parquet", 1, knownX(cols, 1))))
+        c.commitInsert(cols.tableId, listOf(actualFragment(cols, "unknown-null.parquet", null, null)))
+        assertThat(tableStats(cols.tableId, cols.x)).isEmpty()
+        assertThatThrownBy {
+            withOracle { connection ->
+                connection.createStatement().use { it.execute("ALTER TABLE lake.test_schema.${cols.tableName} ALTER COLUMN x SET NOT NULL") }
+            }
+        }.hasMessageContaining("NULL")
+        assertThat(oracleLongs("SELECT count(*) FROM lake.test_schema.${cols.tableName} WHERE x IS NULL")).containsExactly(1L)
+        assertThat(c.getTableColumns(cols.tableId, c.currentSnapshotId).single { it.columnId == cols.x }.nullsAllowed).isTrue()
     }
 
     @Test

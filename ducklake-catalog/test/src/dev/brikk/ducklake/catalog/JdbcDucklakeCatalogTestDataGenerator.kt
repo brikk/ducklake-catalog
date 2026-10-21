@@ -45,7 +45,7 @@ object JdbcDucklakeCatalogTestDataGenerator {
                 statement.execute("LOAD postgres")
                 statement.execute(
                     "ATTACH '" + escapeSql(attachUri) + "' AS ducklake_db (DATA_PATH '" +
-                        escapeSql(dataDir.toAbsolutePath().toString()) + "')",
+                        escapeSql(dataDir.toAbsolutePath().toString()) + "', DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE)",
                 )
 
                 statement.execute("CREATE SCHEMA ducklake_db.test_schema")

@@ -5,6 +5,7 @@ import dev.brikk.ducklake.slt.SortMode
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import java.sql.Timestamp
+import java.sql.DriverManager
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -12,7 +13,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
 /**
- * Pure comparator tests. Every expected nested rendering below was produced by DuckDB 1.5
+ * Comparator tests. Expected nested renderings are checked against maintained DuckDB 2.0
  * (`SELECT x::VARCHAR`) so the rules of `nested_to_varchar_cast.cpp` / `vector_cast_helpers.hpp`
  * are checked against the real thing, not against a reading of the source.
  */
@@ -34,7 +35,7 @@ class TestGoldenComparator {
             )
         assertThat(GoldenComparator.renderCell(values))
             .isEqualTo(
-                "[a b, ' a', 'a ', '', 'null', 'NULL', 'a,b', 'it\\'s', back\\slash, 'x:y', 'x=y', 'x(y)', " +
+                 "[a b, ' a', 'a ', '', 'null', 'NULL', 'a,b', 'it\\'s', 'back\\\\slash', 'x:y', 'x=y', 'x(y)', " +
                     "tab\there, 'with\"dq', ' ']",
             )
     }
@@ -43,8 +44,8 @@ class TestGoldenComparator {
     fun `nested quoting edge cases`() {
         // trailing whitespace counts only from two characters on; a lone space is a leading space
         assertThat(GoldenComparator.renderCell(listOf(" a", "a ", " ", "  "))).isEqualTo("[' a', 'a ', ' ', '  ']")
-        // backslash and quote are escaped with a backslash inside quotes, bare otherwise
-        assertThat(GoldenComparator.renderCell(listOf("\\"))).isEqualTo("[\\]")
+        // DuckDB 2.0 backslashes force quoting; backslash and quote are escaped inside quotes.
+        assertThat(GoldenComparator.renderCell(listOf("\\"))).isEqualTo("['\\\\']")
         assertThat(GoldenComparator.renderCell(listOf("\\'"))).isEqualTo("['\\\\\\'']")
         // all of CharacterIsSpace: leading VT / trailing CR force quotes; an interior LF does not
         assertThat(GoldenComparator.renderCell(listOf("\u000Bx"))).isEqualTo("['\u000Bx']")
@@ -55,6 +56,45 @@ class TestGoldenComparator {
         assertThat(GoldenComparator.renderCell(listOf("a,\u0000"))).isEqualTo("['a,\\0']")
         // NULL-lookalikes of any case are quoted; a real NULL is bare
         assertThat(GoldenComparator.renderCell(listOf(null, "NULL", "Null"))).isEqualTo("[NULL, 'NULL', 'Null']")
+    }
+
+    @Test
+    fun `all blob bytes and nested escapes match native 2 text without modifying values`() {
+        val bytes = (0..255).map { it.toByte() }.toByteArray()
+        val blob = "'" + bytes.joinToString("") { "\\x%02X".format(it.toInt() and 0xff) } + "'::BLOB"
+        DriverManager.getConnection("jdbc:duckdb:").use { connection ->
+            for (expression in listOf(blob, "[$blob,NULL]", "{'b':$blob}", "MAP([1],[$blob])",
+                "['back\\slash','it''s','NULL',NULL]")) {
+                assertNativeRendering(connection, expression, if (expression == blob) bytes else null)
+            }
+        }
+        assertThat(GoldenComparator.renderCell(byteArrayOf(0x22, 0x27, 0x5c))).isEqualTo("\\x22\\x27\\x5C")
+        assertThat(GoldenComparator.renderCell(listOf(byteArrayOf(1), null))).isEqualTo("['\\\\x01', NULL]")
+    }
+
+    private fun assertNativeRendering(connection: java.sql.Connection, expression: String, bytes: ByteArray?) {
+        connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT $expression AS raw, CAST($expression AS VARCHAR) AS text").use { rows ->
+                assertThat(rows.next()).isTrue()
+                assertThat(GoldenComparator.renderCell(rows.getObject(1))).`as`(expression).isEqualTo(rows.getString(2))
+                if (bytes != null) assertThat(rows.getBytes(1)).containsExactly(*bytes)
+            }
+        }
+    }
+
+    @Test
+    fun `native temporal text retains nanoseconds offsets and session timezone`() {
+        DriverManager.getConnection("jdbc:duckdb:").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("SET TimeZone='America/New_York'")
+                statement.executeQuery("SELECT TIME_NS '12:34:56.123456789', TIMESTAMP_NS '1969-12-31 23:59:59.999999999', " +
+                    "TIMETZ '10:00:00+00', TIMESTAMPTZ '2020-06-15 12:00:00-04'").use { rows ->
+                    assertThat(GoldenComparator.readRows(rows)).containsExactly(listOf(
+                        "12:34:56.123456789", "1969-12-31 23:59:59.999999999", "10:00:00+00", "2020-06-15 12:00:00-04"))
+                }
+            }
+        }
+        assertThat(GoldenComparator.renderCell(LocalTime.of(12, 34, 56, 123456789))).isEqualTo("12:34:56.123456789")
     }
 
     @Test

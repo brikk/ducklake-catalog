@@ -103,7 +103,7 @@ internal class TestQuackBackedDuckDbCatalogUrl {
         assertThat(sql).contains("CREATE OR REPLACE SECRET (TYPE quack, TOKEN 'secrettoken')")
         assertThat(sql).contains(
             "ATTACH 'ducklake:quack:h:9494' AS lake " +
-                "(DATA_PATH '/tmp/data', METADATA_CATALOG 'meta42')"
+                "(DATA_PATH '/tmp/data', METADATA_CATALOG 'meta42', DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE)"
         )
         assertThat(sql).contains("USE \"meta42\".main")
     }

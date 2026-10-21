@@ -62,7 +62,7 @@ internal class QuackMetadataAccessProbeTest {
                 s.execute("CREATE SECRET (TYPE quack, TOKEN '" + server!!.getToken() + "')")
                 s.execute(
                     "ATTACH '" + server!!.getDucklakeAttachUri() + "' AS lake " +
-                        "(DATA_PATH '" + dataDir!!.toAbsolutePath() + "', METADATA_CATALOG '" + metadataCatalog + "')"
+                        "(DATA_PATH '" + dataDir!!.toAbsolutePath() + "', METADATA_CATALOG '" + metadataCatalog + "', DUCKLAKE_VERSION '1.0')"
                 )
                 s.execute("USE lake")
                 s.execute("CREATE TABLE t (x INTEGER)")

@@ -104,7 +104,7 @@ class TestJdbcDucklakeCatalogInlinedValueDecoding {
                 c.createStatement().use { st ->
                     st.execute("INSTALL ducklake")
                     st.execute("LOAD ducklake")
-                    st.execute("ATTACH 'ducklake:${file.toAbsolutePath()}' AS dl (DATA_PATH '${data.toAbsolutePath()}')")
+                    st.execute("ATTACH 'ducklake:${file.toAbsolutePath()}' AS dl (DATA_PATH '${data.toAbsolutePath()}', DUCKLAKE_VERSION '1.0')")
                     st.execute("CREATE SCHEMA dl.test_schema")
                     st.execute(CREATE.format("dl"))
                     st.execute(INSERT.format("dl"))

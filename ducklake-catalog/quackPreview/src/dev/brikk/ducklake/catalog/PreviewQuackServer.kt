@@ -172,9 +172,12 @@ internal class PreviewQuackServer(
     }
 
     companion object {
-        const val VERSION = "v2.0.0-alpha49096"
-        const val CORE = "2ec7e8401c"
-        const val QUACK = "e7a9be3f8c"
+        private val target = System.getProperty("ducklake.quack.target", "release").also {
+            require(it in setOf("release", "alpha49096")) { "Unknown explicit Quack qualification target $it" }
+        }
+        val VERSION = if (target == "release") "v2.0.0" else "v2.0.0-alpha49096"
+        val CORE = if (target == "release") "d54cbbe3df" else "2ec7e8401c"
+        val QUACK = if (target == "release") "f96420ed46" else "e7a9be3f8c"
         const val DUCKLAKE = "417a9117f5"
         private const val DRIVER_SHA256 = "320ccd96e978e1b30ff7ba77791dd0062bc6e72bd6d160e389b9e2c52269ac9d"
 

@@ -27,7 +27,9 @@ def collisions(case, inline):
     case.query("internal_rowid_predicate", sql.replace(" ORDER BY ALL", " WHERE rowid=1 ORDER BY ALL"), expected[2:])
     for function, values in [("insertions", [(updated, 0, 7, 0, 70, 0, 11), (updated, 1, 8, 0, 80, 0, 12)]),
                              ("deletions", [(updated, 0, 7, 0, 70, 0, 1), (updated, 1, 8, 0, 80, 0, 2)])]:
-        query = f"SELECT * FROM ducklake_table_{function}('lake','main','t',{updated},{updated}) ORDER BY ALL"
+        # In 2.0 snapshot_id/rowid are virtual on these functions: * is payload-only.
+        # Name the system identity explicitly; retain the independent expected rows.
+        query = f"SELECT snapshot_id,rowid,* FROM ducklake_table_{function}('lake','main','t',{updated},{updated}) ORDER BY ALL"
         case.query(function, query, values)
         case.observations[f"{function}_columns"] = [d[0] for d in c.execute(query).description]
     case.query("history_control", f"SELECT rowid_1,rowid,snapshot_id_1,snapshot_id,v FROM lake.t AT (VERSION=>{inserted}) ORDER BY v",

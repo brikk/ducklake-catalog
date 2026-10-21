@@ -25,15 +25,10 @@ import java.util.stream.Collectors
  * jOOQ query to bind-inlined SQL and routes execution through
  * `CALL system.main.quack_query_by_name('<metadata_catalog>', '<inner_sql>')`.
  *
- * From the local DuckDB optimizer's point of view the wrapped statement is a
- * single `TableFunction` call — exactly one `LogicalGet` — so the
- * "Multiple streaming scans or streaming scans + CTAS / insert in the same
- * query are not currently supported" check in
- * `duckdb-quack/src/storage/quack_optimizer.cpp` doesn't fire regardless
- * of how many references to the same `ducklake_*` table appear in the
- * inner SQL. The inner SQL executes server-side as plain DuckDB SQL against
- * base tables, so JOINs / same-table subqueries / UPDATE / DELETE that the
- * attached-catalog path rejects all work.
+ * The inner SQL executes server-side as plain DuckDB SQL against base tables.
+ * This originally avoided the 1.5 client's multi-scan restriction. Quack 2.0
+ * also supports direct multi-scans, but retaining the wrapper keeps joins,
+ * mutations and literal parameters on the same predictable server-side path.
  *
  * Mirrors the wrapper shape used by upstream's C++
  * `QuackMetadataManager::Query`
@@ -96,37 +91,20 @@ internal class QuackWrappedMetadataQuery(val metadataCatalogName: String) : Meta
     }
 
     /**
-     * Quack transactions: the Quack client only sends `BEGIN TRANSACTION` to the server lazily
-     * (`QuackTransaction::ForceStart`, on catalog-level DDL), and neither its appends nor
-     * `quack_query_by_name` go through that path — so the local JDBC transaction has no server-side
-     * counterpart and a local `rollback()` undoes nothing. Sending BEGIN / COMMIT / ROLLBACK through
-     * the wrapper opens a real transaction on the connection's server session: wrapped statements,
-     * direct appends and direct reads on the same connection all participate, other sessions do not
-     * see uncommitted rows, and a primary-key collision surfaces at COMMIT as a write-write conflict.
+     * Force Quack 2.0's native transaction owner before any wrapper read or append. A bare RPC
+     * BEGIN is invisible to that owner and a later native append would issue a nested BEGIN.
+     * use_transaction starts the remote transaction AND records ownership in QuackTransaction;
+     * JDBC commit/rollback then finish it exactly once, including direct appends.
      */
     override fun begin(dsl: DSLContext) {
-        dsl.fetch(wrap("BEGIN TRANSACTION"))
+        dsl.fetch("CALL system.main.quack_query_by_name(${sqlLiteral(metadataCatalogName)}, 'SELECT 1', use_transaction := true)")
     }
 
     override fun commit(dsl: DSLContext, connection: java.sql.Connection) {
-        dsl.fetch(wrap("COMMIT")) // a conflict is raised here; let it propagate to the classifier
-        try {
-            connection.commit() // ends the (empty) local transaction so the pooled connection is clean
-        }
-        catch (e: java.sql.SQLException) {
-            // The remote COMMIT already succeeded. Even a local 40001 cannot undo it.
-            throw DucklakePostCommitException("finalize native Quack metadata connection", e)
-        }
+        connection.commit() // Native owner performs the remote COMMIT; the outer boundary classifies failures.
     }
 
     override fun rollback(dsl: DSLContext, connection: java.sql.Connection) {
-        try {
-            dsl.fetch(wrap("ROLLBACK"))
-        }
-        catch (e: org.jooq.exception.DataAccessException) {
-            // A failed COMMIT has already ended the server transaction; nothing left to roll back.
-            LOG.log(System.Logger.Level.DEBUG, "quack ROLLBACK after failure: {0}", e.message)
-        }
         connection.rollback()
     }
 
@@ -134,9 +112,9 @@ internal class QuackWrappedMetadataQuery(val metadataCatalogName: String) : Meta
 
     /**
      * jOOQ [org.jooq.ExecuteListener] that routes every rendered `SELECT` on the Quack backend
-     * through `quack_query_by_name` — the attached-catalog scan path rejects any query with more
-     * than one scan ("Multiple streaming scans … are not currently supported"), while the wrapped
-     * SQL runs server-side as plain DuckDB. Requires `StatementType.STATIC_STATEMENT` so the SQL
+     * through `quack_query_by_name`, executing the whole statement server-side as plain DuckDB.
+     * This also avoids native 2.0 scan parameter forwarding failures on prepared SQL.
+     * Requires `StatementType.STATIC_STATEMENT` so the SQL
      * seen at [renderEnd] has its bind values inlined (the wrapper takes one text literal). Column
      * names that collide across joined tables are aliased positionally (`_q(c0, c1, …)`); jOOQ maps
      * typed selects by position so the caller's fields still resolve. Mutations are NOT rewritten
@@ -148,7 +126,7 @@ internal class QuackWrappedMetadataQuery(val metadataCatalogName: String) : Meta
             val query = ctx.query() as? ResultQuery<*> ?: return
             val sql = ctx.sql() ?: return
             if (sql.trimStart().startsWith("CALL ", ignoreCase = true)) {
-                return // already wrapped (MetadataQuery paths, BEGIN/COMMIT/ROLLBACK)
+                return // already wrapped (MetadataQuery paths and native transaction activation)
             }
             val fields = query.fields()
             val names = fields.map { it.name }
@@ -158,8 +136,6 @@ internal class QuackWrappedMetadataQuery(val metadataCatalogName: String) : Meta
     }
 
     companion object {
-        private val LOG: System.Logger = System.getLogger(QuackWrappedMetadataQuery::class.java.name)
-
         private fun wrap(metadataCatalogName: String, innerSql: String): String =
             "CALL system.main.quack_query_by_name(${sqlLiteral(metadataCatalogName)}, ${sqlLiteral(innerSql)})"
 

@@ -102,6 +102,16 @@ val quackPreview = sourceSets.create("quackPreview") {
     runtimeClasspath += sourceSets.main.get().output
 }
 configurations[quackPreview.implementationConfigurationName].extendsFrom(configurations.implementation.get())
+// Historical defect producer only: never joins a maintained or published runtime classpath.
+val legacyInlineProducer by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+dependencies { add(legacyInlineProducer.name, "org.duckdb:duckdb_jdbc:1.5.6.0") }
+tasks.named<Test>("test") {
+    inputs.files(legacyInlineProducer)
+    doFirst { systemProperty("ducklake.legacy.producer.jar", legacyInlineProducer.singleFile.absolutePath) }
+}
 kotlin.target.compilations.named("quackPreview") {
     associateWith(kotlin.target.compilations.getByName("main"))
 }
@@ -115,15 +125,18 @@ dependencies {
 }
 tasks.register<Test>("quackPreviewTest") {
     group = "verification"
-    description = "Qualifies direct quack-jdbc 0.8.0 against the exact staged alpha49096 CLI (no DuckDB JDBC)."
+    description = "Qualifies direct Java Quack and 1.1 reads against an explicit signed DuckDB 2.0 CLI (no DuckDB JDBC)."
     testClassesDirs = quackPreview.output.classesDirs
     classpath = quackPreview.runtimeClasspath
     val cli = providers.gradleProperty("ducklake.preview.cli")
+    val target = providers.gradleProperty("ducklake.quack.target").orElse("release")
     inputs.property("previewCli", cli.orElse("not supplied"))
+    inputs.property("qualificationTarget", target)
     outputs.upToDateWhen { false }
     doFirst {
-        require(cli.isPresent) { "Supply -Pducklake.preview.cli=/absolute/path/to/alpha49096/duckdb" }
+        require(cli.isPresent) { "Supply -Pducklake.preview.cli=/absolute/path/to/duckdb (release by default)" }
         systemProperty("ducklake.preview.cli", cli.get())
+        systemProperty("ducklake.quack.target", target.get())
         systemProperty("ducklake.preview.reports", layout.buildDirectory.dir("reports/quack-preview").get().asFile.absolutePath)
     }
 }

@@ -74,7 +74,9 @@ internal class QuackBackedDuckDbCatalogUrl private constructor(
         sb.append("CREATE OR REPLACE SECRET (TYPE quack, TOKEN '").append(escapeSqlString(token)).append("');")
         sb.append("ATTACH '").append(attachUri).append("' AS lake ")
                 .append("(DATA_PATH '").append(escapeSqlString(dataPath)).append("', ")
-                .append("METADATA_CATALOG '").append(metadataCatalog).append("');")
+                .append("METADATA_CATALOG '").append(metadataCatalog).append("', ")
+                // Engine 2.0 defaults new catalogs to 1.1, which this route must not silently write.
+                .append("DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE);")
         // Double-quote the catalog identifier in USE: validateIdentifier allows [A-Za-z0-9_]+,
         // which includes numeric-only ("123") and reserved-word names that are not legal as a
         // bare identifier (USE 123.main fails to parse). Quoting makes the statement valid for

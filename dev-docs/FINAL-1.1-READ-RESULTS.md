@@ -1,5 +1,10 @@
 # First final-1.1 read tier — October 20
 
+**Shipping follow-up:** all 33 direct-Java tests were subsequently requalified on
+official 2.0.0, core `d54cbbe3df`, signed DuckLake `417a9117f5` and Quack `f96420ed46`.
+See [shipping upgrade results](UPGRADE-DUCKDB-2.0.0.md); staged results below remain
+historical evidence, not the maintained target.
+
 Implements the conservative legacy adapter allowed by the
 [consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md), **not** richer metadata
 envelopes or write support. User setup/limits are in [Reading 1.1](../docs/READING-1.1.md).

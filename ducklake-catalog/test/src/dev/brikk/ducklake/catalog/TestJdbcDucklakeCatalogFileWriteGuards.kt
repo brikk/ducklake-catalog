@@ -79,7 +79,7 @@ class TestJdbcDucklakeCatalogFileWriteGuards {
                 st.execute("LOAD postgres")
                 st.execute(
                     "ATTACH '" + server.getDuckDbAttachUri(db).replace("'", "''") + "' AS enc (DATA_PATH '" +
-                        dataDir.toAbsolutePath().toString().replace("'", "''") + "', ENCRYPTED)",
+                        dataDir.toAbsolutePath().toString().replace("'", "''") + "', ENCRYPTED, DUCKLAKE_VERSION '1.0')",
                 )
                 st.execute("CREATE TABLE enc.main.t (id INTEGER)")
                 st.execute("INSERT INTO enc.main.t SELECT range FROM range(20)")

@@ -49,7 +49,7 @@ class TestConcurrentCommitOnMySql {
                     stmt.execute("LOAD mysql")
                     stmt.execute(
                         "ATTACH '" + server!!.getDuckDbAttachUri() + "' AS lake " +
-                            "(DATA_PATH '" + dataDir.toAbsolutePath() + "')",
+                            "(DATA_PATH '" + dataDir.toAbsolutePath() + "', DUCKLAKE_VERSION '1.0')",
                     )
                     stmt.execute("DETACH lake")
                 }

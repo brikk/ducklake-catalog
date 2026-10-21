@@ -85,7 +85,7 @@ class TestJdbcDucklakeCatalogOnQuackWrites {
                 val remote = statement.executeQuery(
                     "CALL system.main.quack_query_by_name('writes_meta', 'SELECT version()')",
                 ).use { rows -> rows.next(); rows.getString(1) }
-                assertThat(client).isEqualTo("v1.5.6")
+                assertThat(client).isEqualTo("v2.0.0")
                 assertThat(remote).isEqualTo(client)
             }
         }

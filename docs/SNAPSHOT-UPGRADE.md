@@ -1,7 +1,22 @@
 # Upgrading to 0.13.0-SNAPSHOT
 
 These changes are on development snapshots after 0.12.0, not in that stable release.
-They do not enable DuckLake 1.1 writes or change the maintained dependency pins.
+They do not enable DuckLake 1.1 writes. Development now uses DuckDB **2.0.0** /
+JDBC **2.0.0.0**, matching native Quack peers and corpus `417a9117f5`.
+
+## DuckDB 2.0 runtime upgrade
+
+- Applications supply their runtime drivers; align separately pinned DuckDB JDBC
+  and native Quack peers with 2.0.0. Direct Java Quack remains **0.8.0** (protocol v3).
+- New native DuckDB 2.0 lakes default to DuckLake 1.1. For catalog read/write access,
+  initialize with `DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE`; the native
+  Quack bootstrap does this explicitly. Never change a stored version string.
+- DuckLake 1.0 read/write access remains the maintained scope. Final 1.1 reads are
+  limited and default-off; **all 1.1 writes remain rejected**.
+- A 2.0 write/checkpoint upgrades local metadata storage even without a 1.1 migration.
+  A tested, consistent metadata/data backup is the rollback route, not driver downgrade.
+- Replay consumers now receive DuckDB 2.0's BLOB/nested-backslash text rendering;
+  preserve bytes/NULLs and update adapter renderers rather than rewriting golden rows.
 
 ## Required producer behavior
 

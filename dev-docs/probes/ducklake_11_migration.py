@@ -92,7 +92,7 @@ def rehearse(args):
                 actual = observation["before_write"]
                 results["checks"][f"{mode}_preserves_history"] = all(actual[key] == original[key] for key in
                                                                         ("file_rows", "inline_rows", "row_ids", "old_snapshot", "old_inline_snapshot"))
-                results["checks"][f"{mode}_version"] = actual["version"] == ("1.1-dev1" if mode == "migrate" else "1.0")
+                results["checks"][f"{mode}_version"] = actual["version"] == (args.expected_format if mode == "migrate" else "1.0")
                 names = ["_ducklake_row_id", "_ducklake_begin_snapshot", "_ducklake_end_snapshot"] if mode == "migrate" else ["row_id", "begin_snapshot", "end_snapshot"]
                 results["checks"][f"{mode}_inline_layout"] = all(columns[:3] == names for columns in actual["inline_columns"])
                 if mode == "checkpoint":
@@ -129,6 +129,8 @@ def main():
     parser.add_argument("--old-python", type=Path)
     parser.add_argument("--candidate-python", type=Path)
     parser.add_argument("--temp-root", type=Path)
+    parser.add_argument("--expected-format", default="1.1-dev1", choices=["1.1-dev1", "1.1"],
+                        help="Explicit migration target; keep the frozen preview default")
     parser.add_argument("--worker", choices=["seed", "seed-collision", "inspect", "checkpoint", "migrate"])
     parser.add_argument("--file", type=Path)
     args = parser.parse_args()

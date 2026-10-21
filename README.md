@@ -127,35 +127,36 @@ Update consumers to matching published artifacts before deployment.
 
 ## DuckDB catalog transports
 
-The maintained runtime/test lane uses DuckDB JDBC **1.5.6.0** and a matching
-DuckDB **1.5.6** Quack server. For an initialized DuckLake 1.0 metadata catalog:
+The maintained development runtime/test lane uses DuckDB JDBC **2.0.0.0** and a matching
+DuckDB **2.0.0** Quack server. For an initialized DuckLake 1.0 metadata catalog:
 
 | Route | `DucklakeCatalogConfig.catalogDatabaseUrl` | Required runtime driver |
 |---|---|---|
-| Local DuckDB file | `jdbc:duckdb:/path/catalog.db` | `org.duckdb:duckdb_jdbc:1.5.6.0` |
-| Native Quack client | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC 1.5.6.0, native Quack/DuckLake extensions |
+| Local DuckDB file | `jdbc:duckdb:/path/catalog.db` | `org.duckdb:duckdb_jdbc:2.0.0.0` |
+| Native Quack client | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC 2.0.0.0, native Quack/DuckLake extensions |
 | Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.8.0` |
 
 For both remote routes, pass the token in `catalogDatabasePassword`, not in shared
 URLs. The direct Java route uses ordinary remote JDBC transactions and does not
-need embedded DuckDB in the client process; the native route remains unchanged.
+need embedded DuckDB in the client process. Match native clients and servers to 2.0.0.
 Applications supply their JDBC drivers. Local/direct JDBC routes expect initialized
 metadata; the native Quack route uses DuckLake `ATTACH`, which can bootstrap missing
 metadata through the native extension. No 1.1 migration is enabled by this library.
 Quack serves metadata here; engines still need access to the actual Parquet data location.
-Direct Java transport is verified against the released 1.5.6/v1 server; this does
-not certify final DuckDB 2.0/v3 support. See [compatibility](docs/COMPATIBILITY.md).
-An opt-in [staged 2.0 direct-Java qualification](dev-docs/QUACK-2.0-QUALIFICATION.md)
-also verifies v3 catalog operations on 1.0 metadata without changing maintained pins.
+DuckDB 2.0 defaults new lakes to 1.1. For read/write access, initialize them with
+`DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE`; native Quack bootstrap does this
+explicitly. Direct Java Quack 0.8.0 uses protocol v3 on the official 2.0 server.
+See [compatibility](docs/COMPATIBILITY.md) and [shipping qualification](dev-docs/UPGRADE-DUCKDB-2.0.0.md).
 
 ## Compatibility status
 
-- **Maintained, qualified lane:** DuckLake **1.0**, DuckDB/JDBC **1.5.6 / 1.5.6.0**,
+- **Maintained development lane:** DuckLake **1.0**, DuckDB/JDBC **2.0.0 / 2.0.0.0**,
   with optional direct Java Quack JDBC **0.8.0**. The catalog library targets Java 17;
   building it requires JDK 25.
 - **DuckLake 1.1 / DuckDB 2.0:** a [limited opt-in read tier](docs/READING-1.1.md)
   is available through direct Java Quack for root-schema catalogs. It is not full
-  1.1 schema/type/statistics support or final-artifact certification. All 1.1 writes
+  1.1 schema/type/statistics support. The limited reader is tested on official 2.0
+  artifacts; all 1.1 writes
   remain disabled.
 - Version 0.12.0 adds compatibility/regression preparation without changing the
   0.11.0 production support contract or dependency pins.

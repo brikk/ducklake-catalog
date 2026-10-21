@@ -1,5 +1,9 @@
 # Direct Java Quack on staged DuckDB 2.0 — October 20
 
+**Historical staged baseline.** The maintained lane has since moved to official 2.0;
+see [shipping qualification](UPGRADE-DUCKDB-2.0.0.md). To reproduce this exact staged
+target, add `-Pducklake.quack.target=alpha49096` to the command below.
+
 This records the transport baseline in `ff2dc27`, before opt-in final-1.1 reads.
 The subsequent [read tier](../docs/READING-1.1.md) and
 [read verification](FINAL-1.1-READ-RESULTS.md) extend that baseline without enabling writes.

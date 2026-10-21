@@ -70,7 +70,7 @@ abstract class DucklakePostgresService :
                 statement.execute("LOAD postgres")
                 statement.execute(
                     "ATTACH '" + escape(attachUri) + "' AS ducklake_db (DATA_PATH '" +
-                        escape(dataPath) + "')"
+                        escape(dataPath) + "', DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE)"
                 )
                 statement.execute("DETACH ducklake_db")
             }

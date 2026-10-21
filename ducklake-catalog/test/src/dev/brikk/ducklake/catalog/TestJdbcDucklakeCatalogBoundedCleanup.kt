@@ -153,7 +153,7 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
                         stmt.execute("INSTALL $extension")
                         stmt.execute("LOAD $extension")
                     }
-                    stmt.execute("ATTACH '$uri' AS lake (DATA_PATH '$dataPath')")
+                    stmt.execute("ATTACH '$uri' AS lake (DATA_PATH '$dataPath', DUCKLAKE_VERSION '1.0')")
                     stmt.execute("DETACH lake")
                 }
             }

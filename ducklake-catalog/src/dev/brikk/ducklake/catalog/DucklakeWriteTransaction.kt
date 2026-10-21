@@ -13,7 +13,10 @@
  */
 package dev.brikk.ducklake.catalog
 
+import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_SCHEMA
+import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_TABLE
 import org.jooq.DSLContext
+import org.jooq.impl.DSL
 import java.sql.Connection
 import java.sql.SQLException
 
@@ -76,21 +79,12 @@ internal class DucklakeWriteTransaction(
      */
     @Throws(SQLException::class)
     fun resolveSchemaId(schemaName: String): Long {
-        connection.prepareStatement(
-            "SELECT schema_id FROM ducklake_schema " +
-                "WHERE lower(schema_name) = lower(?) " +
-                "AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)",
-        ).use { stmt ->
-            stmt.setString(1, schemaName)
-            stmt.setLong(2, currentSnapshotId)
-            stmt.setLong(3, currentSnapshotId)
-            stmt.executeQuery().use { rs ->
-                if (!rs.next()) {
-                    throw DucklakeEntityNotFoundException("schema", schemaName)
-                }
-                return rs.getLong("schema_id")
-            }
-        }
+        val schema = DUCKLAKE_SCHEMA.`as`("write_schema")
+        return dsl.select(schema.SCHEMA_ID).from(schema)
+            .where(schema.SCHEMA_NAME.lower().eq(DSL.lower(DSL.`val`(schemaName))))
+            .and(schema.BEGIN_SNAPSHOT.le(currentSnapshotId))
+            .and(schema.END_SNAPSHOT.isNull.or(schema.END_SNAPSHOT.gt(currentSnapshotId)))
+            .limit(2).fetchOne(schema.SCHEMA_ID) ?: throw DucklakeEntityNotFoundException("schema", schemaName)
     }
 
     /**
@@ -98,22 +92,12 @@ internal class DucklakeWriteTransaction(
      */
     @Throws(SQLException::class)
     fun resolveTableId(schemaId: Long, tableName: String): Long {
-        connection.prepareStatement(
-            "SELECT table_id FROM ducklake_table " +
-                "WHERE schema_id = ? AND lower(table_name) = lower(?) " +
-                "AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)",
-        ).use { stmt ->
-            stmt.setLong(1, schemaId)
-            stmt.setString(2, tableName)
-            stmt.setLong(3, currentSnapshotId)
-            stmt.setLong(4, currentSnapshotId)
-            stmt.executeQuery().use { rs ->
-                if (!rs.next()) {
-                    throw DucklakeEntityNotFoundException("table", tableName)
-                }
-                return rs.getLong("table_id")
-            }
-        }
+        val table = DUCKLAKE_TABLE.`as`("write_table")
+        return dsl.select(table.TABLE_ID).from(table)
+            .where(table.SCHEMA_ID.eq(schemaId)).and(table.TABLE_NAME.lower().eq(DSL.lower(DSL.`val`(tableName))))
+            .and(table.BEGIN_SNAPSHOT.le(currentSnapshotId))
+            .and(table.END_SNAPSHOT.isNull.or(table.END_SNAPSHOT.gt(currentSnapshotId)))
+            .limit(2).fetchOne(table.TABLE_ID) ?: throw DucklakeEntityNotFoundException("table", tableName)
     }
 
     /**
@@ -156,17 +140,12 @@ internal class DucklakeWriteTransaction(
      */
     @Throws(SQLException::class)
     private fun hasActiveRowsInSchema(metadataTable: String, schemaId: Long): Boolean {
-        connection.prepareStatement(
-            "SELECT 1 FROM $metadataTable " +
-                "WHERE schema_id = ? AND ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL) LIMIT 1",
-        ).use { stmt ->
-            stmt.setLong(1, schemaId)
-            stmt.setLong(2, currentSnapshotId)
-            stmt.setLong(3, currentSnapshotId)
-            stmt.executeQuery().use { rs ->
-                return rs.next()
-            }
-        }
+        val schema = DSL.field(DSL.name("schema_id"), Long::class.javaObjectType)
+        val begin = DSL.field(DSL.name("begin_snapshot"), Long::class.javaObjectType)
+        val end = DSL.field(DSL.name("end_snapshot"), Long::class.javaObjectType)
+        return dsl.fetchExists(dsl.selectOne().from(DSL.table(DSL.name(metadataTable)))
+            .where(schema.eq(schemaId)).and(begin.le(currentSnapshotId))
+            .and(end.isNull.or(end.gt(currentSnapshotId))).limit(1))
     }
 
     /**

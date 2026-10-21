@@ -67,7 +67,7 @@ class TestJdbcDucklakeCatalogOnLocalDuckDbSmoke {
                     stmt.execute("LOAD ducklake")
                     stmt.execute(
                         "ATTACH 'ducklake:" + catalogFile.toAbsolutePath() + "' AS lake " +
-                            "(DATA_PATH '" + dataDir.toAbsolutePath() + "')",
+                            "(DATA_PATH '" + dataDir.toAbsolutePath() + "', DUCKLAKE_VERSION '1.0')",
                     )
                     stmt.execute("DETACH lake")
                 }

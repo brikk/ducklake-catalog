@@ -1,4 +1,4 @@
-"""Reject unexpected preview provenance or a failed canary; no production compatibility claim."""
+"""Reject provenance drift or failed canaries against the explicitly selected preview/release lock."""
 import json
 import sys
 from pathlib import Path
@@ -20,4 +20,4 @@ else:
     assert len(report["checks"]) == 12 and all(report["checks"].values())
     assert report["observations"]["pinned_version"]["rows"] == [[lock["catalog_versions"][0]]]
     assert report["observations"]["fresh_version"]["rows"] == [[lock["catalog_versions"][1]]]
-    print("Pinned preview provenance and all 12 canaries verified")
+    print("Pinned target provenance and all 12 canaries verified")

@@ -61,7 +61,7 @@ class TestConcurrentSnapshotPkCollision {
                     stmt.execute("INSTALL ducklake")
                     stmt.execute("LOAD ducklake")
                     stmt.execute(
-                        "ATTACH 'ducklake:${catalogFile.toAbsolutePath()}' AS lake (DATA_PATH '${dataDir.toAbsolutePath()}')",
+                        "ATTACH 'ducklake:${catalogFile.toAbsolutePath()}' AS lake (DATA_PATH '${dataDir.toAbsolutePath()}', DUCKLAKE_VERSION '1.0')",
                     )
                     stmt.execute("DETACH lake")
                 }

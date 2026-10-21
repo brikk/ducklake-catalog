@@ -2,7 +2,8 @@
 
 Available on **0.13.0-SNAPSHOT development code**, not stable 0.12.0. This is an
 explicit, limited read tier over **direct Java Quack** (`quack-jdbc 0.8.0`), qualified
-against staged DuckDB alpha49096 / DuckLake `417a9117`. It is not full 1.1 support,
+against official DuckDB **2.0.0**, DuckLake `417a9117f5` and Quack `f96420ed46`
+(protocol v3). It is not full 1.1 support,
 other-backend certification or permission to write/migrate a catalog.
 
 ## Enable and use an owned read session

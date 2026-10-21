@@ -10,6 +10,8 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.OffsetDateTime
+import java.time.OffsetTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 
 /**
@@ -47,17 +49,25 @@ object GoldenComparator {
 
     fun readRows(rs: ResultSet): List<List<String?>> {
         val cols = rs.metaData.columnCount
-        val geometry = (1..cols).map { GeometryNormalizer.containsGeometry(rs.metaData.getColumnTypeName(it)) }
+        val types = (1..cols).map { rs.metaData.getColumnTypeName(it) }
+        val geometry = types.map(GeometryNormalizer::containsGeometry)
+        val zone = if (types.any { "TIMESTAMP WITH TIME ZONE" in it || "TIMESTAMPTZ" in it }) {
+            rs.statement.connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT current_setting('TimeZone')").use { result ->
+                    check(result.next())
+                    ZoneId.of(result.getString(1))
+                }
+            }
+        } else ZoneOffset.UTC
         val rows = mutableListOf<List<String?>>()
         while (rs.next()) {
             rows +=
                 (1..cols).map { i ->
                     try {
-                        // Geometry's object form is indistinguishable from BLOB. The typed string
-                        // API renders its WKT, including nested leaves. Keep the object path for
-                        // other types (notably VARIANT's getString uses Java Map/List.toString).
+                        // Geometry getString preserves typed WKT, including nested leaves. Temporal
+                        // getString is Java object text in JDBC 2.0: render its value with session zone.
                         if (geometry[i - 1]) rs.getString(i)?.replace("\u0000", "\\0")
-                        else renderCell(rs.getObject(i))
+                        else renderCell(rs.getObject(i), zone)
                     } catch (_: Exception) {
                         // e.g. the JDBC driver cannot represent TIME '24:00:00'
                         // as java.time.LocalTime; keep the record comparable.
@@ -74,65 +84,78 @@ object GoldenComparator {
      * Public so [ReplayReadEngine] adapters produce comparable cells without
      * re-deriving the rules.
      */
-    fun renderCell(value: Any?): String? =
+    fun renderCell(value: Any?): String? = renderCell(value, ZoneOffset.UTC)
+
+    private fun renderCell(value: Any?, zone: ZoneId): String? =
         when (value) {
             null -> null
             // DuckDB golden text escapes embedded NUL bytes.
             is String -> value.replace("\u0000", "\\0")
             is Timestamp, is LocalDateTime, is OffsetDateTime, is java.time.ZonedDateTime,
-            is LocalTime, is LocalDate -> renderTemporal(value)
+            is LocalTime, is LocalDate, is OffsetTime -> renderTemporal(value, zone)
             is Double -> DuckDbText.double(value)
             // A FLOAT must render as a float: widening 0.1f to double gives 0.10000000149011612,
             // which DuckDB's `0.1` golden would reject even under the numeric tolerance.
             is Float -> DuckDbText.float(value)
-            is List<*> -> value.joinToString(", ", prefix = "[", postfix = "]") { renderNested(it) }
+            is List<*> -> value.joinToString(", ", prefix = "[", postfix = "]") { renderNested(it, zone) }
             is DuckDBStruct ->
                 value.map.entries.joinToString(", ", prefix = "{", postfix = "}") { (k, v) ->
                     // struct keys are always quoted (`CalculateEscapedStringLength<STRUCT_KEY=true>`)
-                    "${quoteNested(k.toString())}: ${renderNested(v)}"
+                    "${quoteNested(k.toString())}: ${renderNested(v, zone)}"
                 }
-            is DuckDBArray -> renderArray(value)
+            is DuckDBArray -> renderArray(value, zone)
             is Map<*, *> ->
                 value.entries.joinToString(", ", prefix = "{", postfix = "}") { (k, v) ->
-                    "${renderNested(k)}=${renderNested(v)}"
+                    "${renderNested(k, zone)}=${renderNested(v, zone)}"
                 }
             is java.sql.Blob -> renderBlob(value.getBytes(1, value.length().toInt()))
             is ByteArray -> renderBlob(value)
             else -> value.toString()
         }
 
-    private fun renderTemporal(value: Any): String =
+    private fun renderTemporal(value: Any, zone: ZoneId): String =
         when (value) {
             is Timestamp -> renderDateTime(value.toLocalDateTime())
             is LocalDateTime -> renderDateTime(value)
-            is OffsetDateTime ->
-                renderDateTimeTz(value.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime())
-            is java.time.ZonedDateTime ->
-                renderDateTimeTz(value.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime())
+            is OffsetDateTime -> renderDateTimeTz(value, zone)
+            is java.time.ZonedDateTime -> renderDateTimeTz(value.toOffsetDateTime(), zone)
+            is OffsetTime -> renderTime(value.toLocalTime()) + renderOffset(value.offset)
             is LocalTime -> renderTime(value)
             is LocalDate -> DuckDbText.dateSpecial(value) ?: value.toString()
             else -> value.toString()
         }
 
     /** TIMESTAMPTZ: `infinity` has no zone suffix (`Timestamp::ToString` returns before formatting). */
-    private fun renderDateTimeTz(dt: LocalDateTime): String =
-        DuckDbText.timestampSpecial(dt) ?: (renderDateTime(dt) + "+00")
+    private fun renderDateTimeTz(value: OffsetDateTime, zone: ZoneId): String {
+        DuckDbText.timestampSpecial(value.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime())?.let { return it }
+        val local = value.atZoneSameInstant(zone)
+        return renderDateTime(local.toLocalDateTime()) + renderOffset(local.offset)
+    }
 
-    /** DuckDB blob rendering: printable ASCII as-is, backslash escaped, else \xHH. */
+    private fun renderOffset(offset: ZoneOffset): String {
+        val seconds = kotlin.math.abs(offset.totalSeconds)
+        val sign = if (offset.totalSeconds < 0) "-" else "+"
+        val hours = "%02d".format(seconds / 3600)
+        val minutes = (seconds % 3600) / 60
+        val remainder = seconds % 60
+        return sign + hours + (if (minutes != 0 || remainder != 0) ":%02d".format(minutes) else "") +
+            (if (remainder != 0) ":%02d".format(remainder) else "")
+    }
+
+    /** DuckDB 2.0 BLOB rendering: printable ASCII except quotes/backslash as-is, else \xHH. */
     private fun renderBlob(bytes: ByteArray): String =
         buildString {
             for (b in bytes) {
                 val i = b.toInt() and 0xFF
                 when {
-                    i == '\\'.code -> append("\\\\")
-                    i in 0x20..0x7E -> append(i.toChar())
+                    i in 0x20..0x7E && i != '\\'.code && i != '\''.code && i != '"'.code -> append(i.toChar())
                     else -> append("\\x%02X".format(i))
                 }
             }
         }
 
-    private fun renderArray(value: DuckDBArray): String =
-        (value.array as Array<*>).joinToString(", ", prefix = "[", postfix = "]") { renderNested(it) }
+    private fun renderArray(value: DuckDBArray, zone: ZoneId): String =
+        (value.array as Array<*>).joinToString(", ", prefix = "[", postfix = "]") { renderNested(it, zone) }
 
     /**
      * Values nested in LIST/STRUCT/MAP, per DuckDB's nested→VARCHAR casts
@@ -141,7 +164,7 @@ object GoldenComparator {
      *  - a nested child (LIST/STRUCT/MAP/ARRAY) is written as-is;
      *  - any other child is cast to text first and then single-quoted only when that text is
      *    empty, starts or (when at least two characters long) ends with whitespace, equals `null`
-     *    case-insensitively, or contains one of `" ' ( ) , : = [ ] { }`
+     *    case-insensitively, or contains quotes, backslash, parentheses or `, : = [ ] { }`
      *    (`nested_to_varchar_cast.cpp` `LOOKUP_TABLE`); inside quotes `'` and `\` are
      *    backslash-escaped. Interior spaces stay bare: `[a b, 'x:y', '', NULL]`. Timestamps and
      *    times therefore end up quoted (`['2020-01-01 00:00:00']`), doubles do not (`[1e+20]`).
@@ -149,17 +172,19 @@ object GoldenComparator {
      * Public so engine adapters can render THEIR nested values into the same
      * dialect (see TrinoReplayEngine's typed renderer).
      */
-    fun renderNested(value: Any?): String =
+    fun renderNested(value: Any?): String = renderNested(value, ZoneOffset.UTC)
+
+    private fun renderNested(value: Any?, zone: ZoneId): String =
         when (value) {
             null -> "NULL"
-            is List<*>, is DuckDBStruct, is DuckDBArray, is Map<*, *> -> renderCell(value) ?: "NULL"
+            is List<*>, is DuckDBStruct, is DuckDBArray, is Map<*, *> -> renderCell(value, zone) ?: "NULL"
             // Quote on the raw text (a NUL is not special upstream), then escape NULs like scalars.
             is String -> quoteNestedIfNeeded(value).replace("\u0000", "\\0")
-            else -> quoteNestedIfNeeded(renderCell(value) ?: "NULL")
+            else -> quoteNestedIfNeeded(renderCell(value, zone) ?: "NULL")
         }
 
     /** `NestedToVarcharCast::LOOKUP_TABLE`: the characters that force quoting. */
-    private val SPECIAL = "\"'(),:=[]{}".toCharArray().toSet()
+    private val SPECIAL = "\"'\\(),:=[]{}".toCharArray().toSet()
 
     /** `StringUtil::CharacterIsSpace`: space, tab, LF, VT, FF, CR. */
     private val SPACES = " \t\n\u000B\u000C\r".toCharArray().toSet()
@@ -198,11 +223,11 @@ object GoldenComparator {
     private fun renderTime(t: LocalTime): String =
         "%02d:%02d:%02d".format(t.hour, t.minute, t.second) + fraction(t.nano)
 
-    /** Microsecond fraction, trailing zeros trimmed, omitted when zero (DuckDB style). */
+    /** Preserve nanoseconds when supplied by JDBC; trim trailing zeros (DuckDB style). */
     private fun fraction(nano: Int): String {
         if (nano == 0) return ""
-        val micros = "%06d".format(nano / 1000).trimEnd('0')
-        return if (micros.isEmpty()) "" else ".$micros"
+        val fraction = "%09d".format(nano).trimEnd('0')
+        return ".$fraction"
     }
 
     fun toGoldenCell(value: String?): String =

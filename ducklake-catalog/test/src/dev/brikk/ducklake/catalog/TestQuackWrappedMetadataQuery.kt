@@ -16,11 +16,9 @@ package dev.brikk.ducklake.catalog
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_SNAPSHOT
 import dev.brikk.ducklake.catalog.schema.tables.records.DucklakeSnapshotRecord
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.jooq.ResultQuery
 import org.jooq.conf.RenderQuotedNames
 import org.jooq.conf.Settings
-import org.jooq.exception.DataAccessException
 import org.jooq.impl.DSL
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -34,16 +32,14 @@ import java.util.Comparator
 import java.util.stream.Stream
 
 /**
- * Proves the [QuackWrappedMetadataQuery] routing fixes the same-table
- * multi-scan SQL shape we hit in `attemptWriteTransaction`'s snapshot
- * read, while [DirectMetadataQuery] fails on it as expected against the
- * Quack-attached metadata catalog. Uses the testcontainer fixture so we exercise
+ * Proves [QuackWrappedMetadataQuery] retains the same-table multi-scan semantics
+ * now also supported by direct execution on Quack 2.0. Uses the fixture so we exercise
  * a real out-of-process Quack server pinned to the in-tree DuckDB CLI version.
  */
 internal class TestQuackWrappedMetadataQuery {
     @Test
     @Throws(Exception::class)
-    fun wrapperRoutesSameTableMultiScanThatDirectExecutionRejects() {
+    fun wrapperAndDirectExecutionAgreeOnSupportedSameTableMultiScans() {
         openAttachedConnection().use { conn ->
             populateOneDuckLakeSnapshot(conn)
 
@@ -52,19 +48,17 @@ internal class TestQuackWrappedMetadataQuery {
 
             // The exact SQL shape attemptWriteTransaction issues: SELECT against
             // ducklake_snapshot with a same-table subquery for max(snapshot_id).
-            val brokenShape: ResultQuery<DucklakeSnapshotRecord> = dsl.selectFrom(snap)
+            val shape: ResultQuery<DucklakeSnapshotRecord> = dsl.selectFrom(snap)
                     .where(snap.SNAPSHOT_ID.eq(
                             DSL.select(DSL.max(snap.SNAPSHOT_ID)).from(snap)))
 
             val direct: MetadataQuery = DirectMetadataQuery()
-            assertThatThrownBy { direct.fetchOne(dsl, brokenShape) }
-                    .`as`("direct execution against Quack-attached metadata catalog must trip the " +
-                            "multi-streaming-scan optimizer check")
-                    .isInstanceOf(DataAccessException::class.java)
-                    .hasMessageContaining("Multiple streaming scans")
+            val directRow = direct.fetchOne(dsl, shape)
+            assertThat(directRow).isNotNull()
 
             val wrapped: MetadataQuery = QuackWrappedMetadataQuery(METADATA_CATALOG)
-            val row = wrapped.fetchOne(dsl, brokenShape)
+            val row = wrapped.fetchOne(dsl, shape)
+            assertThat(row).isEqualTo(directRow)
 
             assertThat(row)
                     .`as`("the same query routed through quack_query_by_name must succeed and " +
@@ -132,7 +126,7 @@ internal class TestQuackWrappedMetadataQuery {
                 s.execute("LOAD ducklake")
                 s.execute("CREATE OR REPLACE SECRET (TYPE quack, TOKEN '" + server.getToken() + "')")
                 s.execute("ATTACH '" + server.getDucklakeAttachUri() + "' AS lake " +
-                        "(DATA_PATH '" + dataDir.toAbsolutePath() + "', METADATA_CATALOG '" + METADATA_CATALOG + "')")
+                        "(DATA_PATH '" + dataDir.toAbsolutePath() + "', METADATA_CATALOG '" + METADATA_CATALOG + "', DUCKLAKE_VERSION '1.0')")
                 // USE the metadata catalog so bare ducklake_* references in jOOQ-rendered SQL
                 // resolve via the sibling catalog (matches what
                 // QuackBackedDuckDbCatalogUrl.connectionInitSql does in production).

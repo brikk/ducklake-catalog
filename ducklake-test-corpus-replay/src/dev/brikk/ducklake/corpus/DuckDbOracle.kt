@@ -32,6 +32,9 @@ class DuckDbOracle(
 
     private val root: DuckDBConnection =
         DriverManager.getConnection("jdbc:duckdb:").unwrap(DuckDBConnection::class.java)
+    // JDBC duplicate() copies ClientConfig. A pristine template prevents the root session's
+    // later LOCAL settings from leaking into newly named sessions, unlike upstream's Connect().
+    private val connectionTemplate: DuckDBConnection = root.duplicate()
 
     private val connections = mutableMapOf<String, Connection>()
     private val env = mutableMapOf<String, String>()
@@ -46,7 +49,7 @@ class DuckDbOracle(
             root
         } else {
             connections.getOrPut(name) {
-                root.duplicate().also { c -> c.createStatement().use { it.execute("SET timezone='UTC'") } }
+                connectionTemplate.duplicate().also { c -> c.createStatement().use { it.execute("SET timezone='UTC'") } }
             }
         }
 
@@ -133,6 +136,8 @@ class DuckDbOracle(
         // from the repo root; we resolve against the pinned submodule.
         if (repoRoot != null) {
             s = s.replace("'data/", "'${repoRoot.resolve("data")}/")
+            val duckdbRoot = System.getProperty("ducklake.corpus.duckdb.root")?.let(Path::of) ?: repoRoot.resolve("duckdb")
+            s = s.replace("'duckdb/data/", "'${duckdbRoot.resolve("data")}/")
         }
         // ${NAME} and {NAME} forms; UUID is fresh per occurrence.
         val pattern = Regex("\\$?\\{([A-Za-z_][A-Za-z0-9_]*)}")
@@ -148,6 +153,7 @@ class DuckDbOracle(
 
     override fun close() {
         connections.values.forEach { runCatching { it.close() } }
+        runCatching { connectionTemplate.close() }
         runCatching { root.close() }
         runCatching {
             testDir.toFile().deleteRecursively()

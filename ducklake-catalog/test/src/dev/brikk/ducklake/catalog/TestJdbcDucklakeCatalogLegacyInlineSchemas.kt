@@ -24,6 +24,8 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.TestMethodOrder
 import java.nio.file.Files
 import java.sql.DriverManager
+import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import java.util.function.Supplier
 
 /** Native 1.5.6 produces these missing/lower inline versions; no hand-edited registry fixture. */
@@ -54,12 +56,27 @@ class TestJdbcDucklakeCatalogLegacyInlineSchemas {
     }
 
     private fun native(vararg statements: String) {
-        DriverManager.getConnection("jdbc:duckdb:").use { conn -> conn.createStatement().use { st ->
-            st.execute("INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres")
-            st.execute("ATTACH '${fixture.duckDbAttachUri}' AS lake (DATA_PATH '${fixture.dataDir.toAbsolutePath()}', DATA_INLINING_ROW_LIMIT 0)")
-            st.execute("CALL lake.set_option('data_inlining_row_limit',0)")
-            statements.forEach { st.execute(it) }
-        } }
+        val source = Path.of(javaClass.getResource("/LegacyInlineProducer.java")!!.toURI())
+        val output = Files.createTempFile("legacy-inline-producer-", ".log")
+        val child = ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+            "--class-path", requireNotNull(System.getProperty("ducklake.legacy.producer.jar")), source.toString())
+            .redirectErrorStream(true).redirectOutput(output.toFile()).start()
+        try {
+            child.outputStream.use { stream -> stream.write((
+                "INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres; " +
+                    "ATTACH '${fixture.duckDbAttachUri}' AS lake (DATA_PATH '${fixture.dataDir.toAbsolutePath()}', DATA_INLINING_ROW_LIMIT 0); " +
+                    "CALL lake.set_option('data_inlining_row_limit',0); " + statements.joinToString("; ") + ";"
+                ).toByteArray()) }
+            check(child.waitFor(90, TimeUnit.SECONDS)) { "Historical inline producer timed out" }
+            check(child.exitValue() == 0) { "Historical inline producer failed: ${Files.readString(output)}" }
+        }
+        finally {
+            if (child.isAlive) {
+                child.destroyForcibly()
+                check(child.waitFor(5, TimeUnit.SECONDS)) { "Failed to reap historical producer" }
+            }
+            Files.deleteIfExists(output)
+        }
     }
 
     private fun pg(sql: String): List<List<Any?>> =

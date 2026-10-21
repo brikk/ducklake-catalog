@@ -34,8 +34,9 @@ class TestIdentityControl {
      */
     private val skipList: Map<String, String> =
         mapOf(
-            "add_files/add_files_type_check_timestamp.test" to
-                "duckdb-jdbc truncates TIMESTAMP_NS to micros (1 golden row expects nanos)",
+            "add_files/add_files_json_without_extension.test" to
+                "official 2.0 binaries statically load JSON; unloaded-JSON precondition is unavailable. " +
+                    "TestShippingCorpusCapabilities preserves the original failure and verifies every remaining import check",
         )
 
     companion object {

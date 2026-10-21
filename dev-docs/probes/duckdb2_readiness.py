@@ -19,6 +19,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--temp-root", required=True, type=Path)
     parser.add_argument("--postgres", action="store_true", help="Use disposable schemas in DUCKDB_PREVIEW_POSTGRES_URI")
+    parser.add_argument("--expected-format", default="1.1-dev1", choices=["1.1-dev1", "1.1"],
+                        help="Explicit native default/migration target; frozen preview default retained")
     args = parser.parse_args()
     results = {"python_package": duckdb.__version__, "observations": {}}
     metadata_uri = os.environ["DUCKDB_PREVIEW_POSTGRES_URI"] if args.postgres else None
@@ -110,7 +112,7 @@ def main():
         finally:
             connection.close()
 
-    # These pin the sampled alpha, not every future preview or the unreleased JVM driver.
+    # Explicit target expectations, not automatic acceptance of whatever native returns.
     observed = results["observations"]
     checks = {
         "old_lambda_rejected": "lambda arrow" in observed["old_lambda"].get("error", ""),
@@ -119,10 +121,10 @@ def main():
         "replacement_geometry_sql_works": observed["geometry_mirror_sql_new_lambda"].get("rows") == [("['POINT (1 2)']",)],
         "bind_error_aborts_transaction": "transaction is aborted" in observed["transaction_after_bind_error"].get("error", ""),
         "rollback_recovers": observed["transaction_after_rollback"].get("rows") == [(1,)],
-        "new_catalog_is_dev": observed["fresh_version"].get("rows") == [("1.1-dev1",)],
+        "new_catalog_matches_format": observed["fresh_version"].get("rows") == [(args.expected_format,)],
         "old_inline_projection_fails": "row_id" in observed["old_inline_names_registered_table"].get("error", ""),
         "existing_catalog_stays_v1": observed["existing_default_version"].get("rows") == [("1.0",)],
-        "explicit_migration_changes_version": observed["migrated_version"].get("rows") == [("1.1-dev1",)],
+        "explicit_migration_changes_version": observed["migrated_version"].get("rows") == [(args.expected_format,)],
         "explicit_migration_preserves_rows": observed["migrated_native_rows"].get("rows") == [(7,)],
         "null_type_is_persisted": observed["lake_null_catalog_type"].get("rows") == [("null",)],
     }

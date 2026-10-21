@@ -26,7 +26,12 @@ script supports the same options.
 ## Locked preparation checks
 
 - `duckdb2_readiness.py`, `duckdb2_quack.py` and `verify_duckdb2_preview.py` use
-  [`duckdb2-preview-lock.json`](duckdb2-preview-lock.json) to enforce actual provenance.
+  [`duckdb2-preview-lock.json`](duckdb2-preview-lock.json) for the frozen preview or
+  [`duckdb2-release-lock.json`](duckdb2-release-lock.json) for official 2.0 provenance.
+  Select `--expected-format 1.1` explicitly for shipping readiness/migration rehearsals.
+  Do not repin historical fixtures to make new binaries pass old provenance assertions.
+- `prepare_corpus_data.py` fetches only eight checksum-pinned upstream Parquet fixtures
+  at the corpus's nested DuckDB gitlink. It never edits corpus SQL/goldens.
 - `ducklake_11_fixture.py` / `verify_ducklake_11_fixtures.py` capture/verify
   [`ducklake-11-fixtures.json`](ducklake-11-fixtures.json). Source-only captures are
   not executed binaries. The [archived capability report](../archive/DUCKLAKE-1.1-CAPABILITIES.md)

@@ -1,0 +1,11 @@
+{
+  "python_package": "2.0.0",
+  "jdbc_version": "2.0.0.0",
+  "core_version": "v2.0.0",
+  "core_source_id": "d54cbbe3df",
+  "ducklake_extension": "417a9117f5",
+  "quack_extension": "f96420ed46",
+  "corpus_sha": "417a9117f590e8141742ac0579d02f6a90162e37",
+  "corpus_duckdb_sha": "804b3f2070e3e604f1bcc7a1fbbf9f9ebc2fafbd",
+  "catalog_versions": ["1.0", "1.1"]
+}

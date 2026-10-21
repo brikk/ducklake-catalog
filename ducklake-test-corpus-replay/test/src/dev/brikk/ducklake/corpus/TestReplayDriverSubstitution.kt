@@ -21,6 +21,34 @@ class TestReplayDriverSubstitution {
     private fun FileResult.failReasons(): List<String> = failed.map { it.reason }
 
     @Test
+    fun `named sessions share the database but not root local setting overrides`() {
+        val result = replay("""
+            statement ok
+            CREATE TABLE shared(i INTEGER); INSERT INTO shared VALUES (42)
+
+            statement ok
+            SET binary_as_string=false; SET GLOBAL binary_as_string=true
+
+            query I fresh
+            SELECT current_setting('binary_as_string')
+            ----
+            true
+
+            query I
+            SELECT current_setting('binary_as_string')
+            ----
+            false
+
+            query I fresh
+            SELECT i FROM shared
+            ----
+            42
+        """.trimIndent() + "\n")
+        assertThat(result.failed).isEmpty()
+        assertThat(result.passed).isEqualTo(5)
+    }
+
+    @Test
     fun `comma iterators bind each name to the matching part of the value`() {
         val result =
             replay(

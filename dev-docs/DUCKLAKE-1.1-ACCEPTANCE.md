@@ -1,16 +1,16 @@
 # Migration, rollback and RC acceptance runbook
 
 **Limited read tier, not full support.** [Opt-in final-1.1 reads](../docs/READING-1.1.md)
-are qualified on the staged direct-Java peer. Richer metadata, other backends, writes
-and shipping-artifact/migration certification remain gated below. October 21, 2026
-is the release target directly confirmed to the requester; dates do not replace
-artifact verification.
+are qualified on the official 2.0 direct-Java peer. The [shipping upgrade](UPGRADE-DUCKDB-2.0.0.md)
+qualifies JDBC/local/native-Quack/Java-Quack 1.0 access and native migration rehearsals.
+Richer 1.1 metadata, other 1.1 backends and all 1.1 writes remain gated below.
+The preview results further down are historical; dates do not replace artifact verification.
 
 ## Before touching a real catalog
 
 1. Record exact core/JDBC/extension/server hashes, DuckLake format, metadata backend
-   and physical storage version. Confirm the release calendar and actual final/RC
-   JVM artifacts at T−3/T−4. No moving `latest` pin in production or CI locks.
+   and physical storage version. Use the verified official 2.0 release lock, not
+   branch-tip identities or a moving `latest` pin in production/CI.
 2. Stop/drain every writer and maintenance worker, including older native clients
    and remote Trino/Doris processes. PG/MySQL guard-row locks protect only scoped
    mutations; they do not coordinate arbitrary online catalog DDL migration.
@@ -92,10 +92,9 @@ PostgreSQL/MySQL avoid this `.db` storage-format boundary, but require separate
 real migration/restore tests (including nested text inline types and DDL semantics).
 Quack must qualify the matched native peers **and** direct Java driver against the
 actual shipping server/storage, including cancellation, leases and network recovery.
-The [staged alpha49096 direct-Java baseline](QUACK-2.0-QUALIFICATION.md) verifies v3
-without DuckDB JDBC. The subsequent [read tier](FINAL-1.1-READ-RESULTS.md) adds
-conservative final-1.1 reads and safe rejection of unqualified cases. Neither closes
-shipping-artifact, richer-metadata, other-backend or failure-recovery gates.
+The [shipping 2.0 qualification](UPGRADE-DUCKDB-2.0.0.md) verifies v3 without
+DuckDB JDBC and the conservative final-1.1 read tier. This closes the tested artifact
+gates, not richer 1.1 metadata, other 1.1 backends, connector or general failure-recovery gates.
 
 ## Go/no-go at T−3/T−4
 

@@ -83,9 +83,9 @@ internal interface MetadataQuery {
     /**
      * Starts the BACKEND transaction for a unit of work on [dsl]'s connection, which the caller has
      * already put into `autoCommit = false`. Direct backends need nothing more: the JDBC
-     * transaction is the backend transaction. On Quack the local JDBC transaction never reaches the
-     * server (appends and `quack_query_by_name` calls autocommit there), so the transaction must be
-     * opened explicitly on the server session with a wrapped `BEGIN TRANSACTION`.
+     * transaction is the backend transaction. Native Quack must force its remote transaction
+     * owner with use_transaction before wrapper reads; JDBC commit/rollback then own that same
+     * transaction, including native appends. Do not send an independent RPC BEGIN.
      */
     fun begin(dsl: DSLContext) {
         // Direct backends: the JDBC transaction started by autoCommit = false is the transaction.

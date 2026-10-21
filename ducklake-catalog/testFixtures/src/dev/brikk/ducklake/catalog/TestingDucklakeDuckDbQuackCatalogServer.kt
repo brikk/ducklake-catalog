@@ -13,6 +13,9 @@
  */
 package dev.brikk.ducklake.catalog
 
+import com.github.dockerjava.api.model.ExposedPort
+import com.github.dockerjava.api.model.PortBinding
+import com.github.dockerjava.api.model.Ports
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.images.builder.ImageFromDockerfile
@@ -41,11 +44,23 @@ class TestingDucklakeDuckDbQuackCatalogServer : AutoCloseable {
     init {
         container = GenericContainer(buildImage())
             .withExposedPorts(CONTAINER_PORT)
+            .withCreateContainerCmdModifier { command ->
+                command.hostConfig!!.withPortBindings(
+                    PortBinding(Ports.Binding.bindIp("127.0.0.1"), ExposedPort(CONTAINER_PORT)))
+            }
             .withEnv("QUACK_PORT", CONTAINER_PORT.toString())
             .withEnv("QUACK_TOKEN", token)
             .withStartupAttempts(3)
             .waitingFor(Wait.forListeningPort())
+        require(container.host in setOf("localhost", "127.0.0.1")) {
+            "The plaintext Quack test fixture requires a local Docker daemon and loopback-only published ports"
+        }
         container.start()
+        val bindings = container.containerInfo.networkSettings.ports.bindings[ExposedPort(CONTAINER_PORT)].orEmpty()
+        if (bindings.isEmpty() || bindings.any { it.hostIp != "127.0.0.1" }) {
+            container.stop()
+            error("Plaintext Quack fixture must publish only on 127.0.0.1")
+        }
     }
 
     fun getHost(): String = container.host
@@ -83,7 +98,7 @@ class TestingDucklakeDuckDbQuackCatalogServer : AutoCloseable {
             // rebuilds when the inputs are unchanged. The image build pulls the
             // DuckDB CLI binary and the core Quack extension; cost amortizes
             // across the full test suite.
-            return ImageFromDockerfile("brikk-ducklake-quack-server", false)
+            return ImageFromDockerfile("brikk-ducklake-quack-server:2.0.0", false)
                 .withFileFromClasspath("Dockerfile", "docker/quack-server/Dockerfile")
                 .withFileFromClasspath("entrypoint.sh", "docker/quack-server/entrypoint.sh")
         }

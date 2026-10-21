@@ -24,9 +24,6 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
-import java.lang.reflect.InvocationTargetException
-import java.lang.reflect.Proxy
-import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
 import java.util.concurrent.CountDownLatch
@@ -105,7 +102,7 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
             DriverManager.getConnection("jdbc:duckdb:").use { conn -> conn.createStatement().use { st ->
                 st.execute("INSTALL ducklake; LOAD ducklake")
                 if (extension != null) st.execute("INSTALL $extension; LOAD $extension")
-                st.execute("ATTACH '$uri' AS lake (DATA_PATH '$path')")
+                st.execute("ATTACH '$uri' AS lake (DATA_PATH '$path', DUCKLAKE_VERSION '1.0')")
             } }
         }
 
@@ -254,11 +251,10 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
             val failure = SQLException("Connection finalization failed", "40001")
             catalog.backendCommitAction = { metadata, ctx, connection ->
                 commits++
-                if (backend == Backend.QUACK) metadata.commit(ctx, failedFinalization(connection, failure))
-                else {
-                    metadata.commit(ctx, connection)
-                    throw DucklakePostCommitException("test connection finalization", failure)
-                }
+                metadata.commit(ctx, connection)
+                // The native 2.0 owner now includes the remote COMMIT in this JDBC call. Inject
+                // only AFTER it acknowledges, just as on the other JDBC routes.
+                throw DucklakePostCommitException("test connection finalization", failure)
             }
             assertThatThrownBy { catalog.commitInsert(table.tableId, listOf(fragment)) }
                 .isInstanceOf(DucklakePostCommitException::class.java).hasCause(failure)
@@ -267,16 +263,6 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
             assertThat(catalog.getDataFiles(table.tableId, before + 1)).hasSize(1)
             assertThat(Files.exists(output)).isTrue()
         }
-
-        private fun failedFinalization(connection: Connection, failure: SQLException): Connection =
-            Proxy.newProxyInstance(javaClass.classLoader, arrayOf(Connection::class.java)) { _, method, arguments ->
-                if (method.name == "commit") {
-                    connection.commit()
-                    throw failure
-                }
-                try { method.invoke(connection, *(arguments ?: emptyArray())) }
-                catch (e: InvocationTargetException) { throw e.targetException }
-            } as Connection
 
         @Test
         fun aLostCommitReplyIsUnknownAndNeverAutomaticallyRepublished() {

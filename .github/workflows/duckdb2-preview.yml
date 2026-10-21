@@ -1,4 +1,4 @@
-name: DuckDB 2.0 Native Preview
+name: DuckDB 2.0 Native Qualification
 
 on:
   pull_request:
@@ -7,6 +7,7 @@ on:
       - 'dev-docs/probes/**'
       - 'ducklake-catalog/**'
       - 'ducklake-test-corpus-replay/**'
+      - 'gradle/libs.versions.toml'
   schedule:
     - cron: '43 5 * * *'
   workflow_dispatch:
@@ -15,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  native-preview:
+  native-qualification:
     # This is deliberately not a JDBC/connector qualification job. The normal CI
     # remains authoritative for the maintained JVM dependency lane.
     runs-on: ubuntu-latest
@@ -24,6 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         backend: [duckdb, postgres]
+        target: [preview, release]
     services:
       postgres:
         image: postgres:18
@@ -41,47 +43,70 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Install the locked preview (not latest/pre)
+      - name: Install the locked target (not latest/pre)
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION=$(python -c "import json; print(json.load(open('dev-docs/probes/duckdb2-preview-lock.json'))['python_package'])")
+          VERSION=$(python -c "import json,os; print(json.load(open('dev-docs/probes/duckdb2-'+os.environ['TARGET']+'-lock.json'))['python_package'])")
           python -m pip install "duckdb==$VERSION"
-      - name: Verify maintained corpus pin
+      - name: Verify maintained corpus pin independently of the historical preview
         run: |
-          EXPECTED=$(python -c "import json; print(json.load(open('dev-docs/probes/duckdb2-preview-lock.json'))['corpus_sha'])")
+          EXPECTED=$(python -c "import json; print(json.load(open('dev-docs/probes/duckdb2-release-lock.json'))['corpus_sha'])")
           ACTUAL=$(git ls-tree HEAD ducklake-test-corpus-replay/ducklake | awk '{print $3}')
           test "$ACTUAL" = "$EXPECTED"
       - name: Run native layout/migration/SQL canaries
         env:
           BACKEND: ${{ matrix.backend }}
+          TARGET: ${{ matrix.target }}
           DUCKDB_PREVIEW_POSTGRES_URI: "postgres:dbname=preview host=localhost port=${{ job.services.postgres.ports[5432] }} user=preview password=preview"
         run: |
           mkdir -p "$RUNNER_TEMP/preview"
           ARGS=()
           if [ "$BACKEND" = postgres ]; then ARGS+=(--postgres); fi
-          python dev-docs/probes/duckdb2_readiness.py --temp-root "$RUNNER_TEMP/preview" "${ARGS[@]}" > preview-report.json
-          python dev-docs/probes/verify_duckdb2_preview.py dev-docs/probes/duckdb2-preview-lock.json preview-report.json
+          LOCK="dev-docs/probes/duckdb2-$TARGET-lock.json"
+          FORMAT=$(python -c "import json; print(json.load(open('$LOCK'))['catalog_versions'][1])")
+          python dev-docs/probes/duckdb2_readiness.py --temp-root "$RUNNER_TEMP/preview" --expected-format "$FORMAT" "${ARGS[@]}" > preview-report.json
+          python dev-docs/probes/verify_duckdb2_preview.py "$LOCK" preview-report.json
       - name: Matched native Quack peers and transaction recovery
         if: matrix.backend == 'duckdb'
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           python dev-docs/probes/duckdb2_quack.py > quack-preview-report.json
-          python dev-docs/probes/verify_duckdb2_preview.py dev-docs/probes/duckdb2-preview-lock.json quack-preview-report.json quack
+          python dev-docs/probes/verify_duckdb2_preview.py "dev-docs/probes/duckdb2-$TARGET-lock.json" quack-preview-report.json quack
       - name: Verify versioned local fixtures (not full 1.1 support)
-        if: matrix.backend == 'duckdb'
+        if: matrix.backend == 'duckdb' && matrix.target == 'preview'
         run: |
           python -m unittest discover -s dev-docs/probes -p 'test_ducklake_11_fixtures.py' -v
           python -m unittest discover -s dev-docs/probes -p 'test_ducklake_native_canaries.py' -v
           python dev-docs/probes/ducklake_11_fixture.py --temp-root "$RUNNER_TEMP/preview" --label locked-preview-fresh > fixture-preview.json
           python dev-docs/probes/ducklake_11_fixture.py --temp-root "$RUNNER_TEMP/preview" --version 1.0 --label locked-preview-1.0 > fixture-preview-10.json
           python dev-docs/probes/verify_ducklake_11_fixtures.py fixture-preview.json fixture-preview-10.json
+      - name: Shipping strict correctness and old-to-final migration gates
+        if: matrix.backend == 'duckdb' && matrix.target == 'release'
+        run: |
+          python dev-docs/probes/ducklake_11_regressions.py --temp-root "$RUNNER_TEMP/preview" > release-regressions.json
+          python dev-docs/probes/ducklake_old_inline_schema.py --temp-root "$RUNNER_TEMP/preview" > release-inline.json
+          for script in ducklake_lineage_stats_blob ducklake_cdc_transient ducklake_bucket_pruning; do
+            python "dev-docs/probes/$script.py" --temp-root "$RUNNER_TEMP/preview" > "release-$script-11.json"
+            python "dev-docs/probes/$script.py" --temp-root "$RUNNER_TEMP/preview" --version 1.0 > "release-$script-10.json"
+          done
+          python dev-docs/probes/ducklake_cdc_names.py --temp-root "$RUNNER_TEMP/preview" --version 1.0 > release-cdc-names.json
+          python dev-docs/probes/ducklake_quack_snapshot_ceiling.py --temp-root "$RUNNER_TEMP/preview" --version 1.0 > release-ceilings.json
+          python -m venv "$RUNNER_TEMP/legacy"
+          "$RUNNER_TEMP/legacy/bin/python" -m pip install duckdb==1.5.6
+          python dev-docs/probes/ducklake_11_migration.py --old-python "$RUNNER_TEMP/legacy/bin/python" --candidate-python "$(command -v python)" --expected-format 1.1 --temp-root "$RUNNER_TEMP/preview" > release-migration.json
       - name: Upload provenance and observations, including on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-preview-${{ matrix.backend }}-${{ github.run_id }}
+          name: native-${{ matrix.target }}-${{ matrix.backend }}-${{ github.run_id }}
           path: |
             preview-report.json
             quack-preview-report.json
             fixture-preview.json
             fixture-preview-10.json
             dev-docs/probes/duckdb2-preview-lock.json
+            dev-docs/probes/duckdb2-release-lock.json
+            release-*.json
           retention-days: 14

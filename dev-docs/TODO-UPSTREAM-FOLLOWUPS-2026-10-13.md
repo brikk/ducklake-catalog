@@ -3,19 +3,21 @@
 Active queue; stable UF IDs are unchanged. For other review work use
 [BACKLOG.md](BACKLOG.md). Consumer support lives in [compatibility](../docs/COMPATIBILITY.md).
 
-## Next checkpoint — shipping artifacts (target October 21)
+## Shipping artifacts — October 21
 
-- [ ] Refresh DuckDB 2.0 release calendar and usable RC/final/JDBC/Python artifacts.
-- [ ] Record the **actual** core/DuckLake/Quack hashes and catalog layout separately
-  from release-branch source pins; rerun the [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md).
+- [x] Verify official DuckDB 2.0.0, JDBC 2.0.0.0 and Python 2.0.0 artifacts.
+- [x] Record actual core `d54cbbe3df`, signed DuckLake `417a9117f5`, Quack `f96420ed46`
+  and final catalog `1.1`, separately from branch tips and frozen preview locks.
+- [x] Complete [shipping qualification](UPGRADE-DUCKDB-2.0.0.md) and maintained promotion:
+  JDBC/server 2.0.0.0/2.0.0, matching corpus, 1.0 reads/writes and opt-in 1.1 Java reads.
 - [ ] Qualify richer 1.1 metadata, other backends and any future write scope beyond
   the limited read tier. Keep writes disabled until separately approved and qualified;
   do not infer support from preview CI.
 
 **Executed October 20 target:** staged CLI alpha49096, core `2ec7e8401c`, signed
 DuckLake `417a9117f5`, signed Quack `e7a9be3f8c`. Shipping/JDBC artifact availability
-must still be refreshed; no maintained or preview lock was moved. October 21 is the
-release target directly confirmed to the requester. The legacy-inline read/flush
+was subsequently verified and the user authorized maintained 2.0 promotion. Frozen
+preview locks remain unchanged. The legacy-inline read/flush
 work moved from #1590 to [PeterVanHolland/ducklake#34](https://github.com/PeterVanHolland/ducklake/pull/34);
 qualify actual old catalogs rather than treating a new-format smoke test as closure.
 
@@ -23,7 +25,8 @@ qualify actual old catalogs rather than treating a new-format smoke test as clos
 verifies released `quack-jdbc 0.8.0` on actual protocol v3, operating on 1.0 metadata
 without DuckDB JDBC. The subsequent [read tier](FINAL-1.1-READ-RESULTS.md) enables
 limited, explicit final-1.1 reads; all 1.1 writes remain rejected. This does not
-qualify branch-tip Quack `f96420ed`, final shipping artifacts or general 1.1 support.
+itself qualify final shipping artifacts or general 1.1 support. Shipping results
+are tracked separately in the upgrade report above.
 
 ## Pending candidates — reproduce before fixing
 
@@ -63,8 +66,9 @@ Checked means the scoped catalog work is executed, **not that native engines are
 Evidence: [October 14](archive/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md),
 [C05](archive/FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md),
 [UF-01–04](archive/UPSTREAM-FOLLOWUPS-RESULTS-2026-10-15.md).
-Last forced code verification: **597 JUnit tests / 9,697 corpus records**; native
-gates remain separate. No stable release after 0.12.0 is implied by these snapshots.
+Latest verification: **605 maintained JUnit tests**, **33 shipping direct-Java tests**
+and **17,602 corpus records**; explicit exclusions and native/migration gates are in
+the shipping report. No stable release after 0.12.0 is implied by these snapshots.
 
 ## Execution rules
 

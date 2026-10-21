@@ -7,7 +7,8 @@ live in [the user documentation](../docs/README.md).
 
 | Document | Purpose |
 |---|---|
-| [Upstream TODO](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md) | Active UF IDs and the pending DuckDB 2.0 / DuckLake RC checkpoint |
+| [Upstream TODO](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md) | Active UF IDs and shipping-artifact checkpoint |
+| [DuckDB 2.0 upgrade](UPGRADE-DUCKDB-2.0.0.md) | Shipping pins, read/write support, verification and rollback |
 | [Review backlog](BACKLOG.md) | Remaining catalog, harness and delivery review candidates; preserves canonical IDs |
 | [1.1 acceptance](DUCKLAKE-1.1-ACCEPTANCE.md) | Artifact qualification, migration/rollback rehearsal and go/no-go gates |
 | [Future consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) | Richer 1.1 metadata envelope/wire design; not yet implemented |
