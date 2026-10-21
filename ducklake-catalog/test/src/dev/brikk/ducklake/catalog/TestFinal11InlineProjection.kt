@@ -38,7 +38,7 @@ class TestFinal11InlineProjection {
     @Test
     fun physicalTypesCannotInjectSqlOrGuessUnqualifiedLayouts() {
         for (sql in listOf("INTEGER); SELECT 1 --", "STRUCT(a INTEGER, a INTEGER)", "STRUCT(a INTEGER, A INTEGER)",
-            "STRUCT(a INTEGER", "STRUCT(\"bad INTEGER)", "INTEGER[2]", "VARIANT", "TIME_NS", "DECIMAL(39,0)",
+            "STRUCT(a INTEGER", "STRUCT(\"bad INTEGER)", "INTEGER[2]", "VARIANT", "TIME_NS trailing", "DECIMAL(39,0)",
             "DECIMAL(2,3)", "MAP(INTEGER)", "STRUCT()", "INTEGER garbage")) {
             assertThatThrownBy { Final11InlineTypes.parsePhysical(sql) }
                 .`as`(sql).isInstanceOf(DucklakeInvalidOperationException::class.java)
@@ -80,7 +80,7 @@ class TestFinal11InlineProjection {
     @Test
     fun unqualifiedDefaultTypesAreRejectedBeforeTheyCanBecomeSql() {
         val ctx = DSL.using(SQLDialect.DUCKDB)
-        for (type in listOf("time", "time_ns", "interval", "variant", "varchar); SELECT 1 --")) {
+        for (type in listOf("variant", "time_ns); SELECT 1 --", "interval trailing", "varchar); SELECT 1 --")) {
             assertThatThrownBy { Final11ReadCompatibility.projections(ctx, "t", emptyList(),
                 listOf(column(1, "v", type, default = "42")), listOf(1)) }
                 .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("inline type")
@@ -88,6 +88,9 @@ class TestFinal11InlineProjection {
         assertThatThrownBy { Final11ReadCompatibility.projections(ctx, "t", emptyList(),
             listOf(column(1, "_DUCKLAKE_ROW_ID", "int64")), listOf(1)) }
             .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("reserved metadata")
+        assertThatThrownBy { Final11ReadCompatibility.projections(ctx, "t", emptyList(),
+            listOf(column(1, "v", "null", default = "NULL")), listOf(1)) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("NULL-typed")
     }
 
     @Test
@@ -98,9 +101,25 @@ class TestFinal11InlineProjection {
             Final11InlineTypes.requireConversion(from, to)
         }
         for ((from, to) in listOf("varchar" to "int32", "int64" to "int32", "int32" to "uint64", "float64" to "float32",
-            "decimal(5,3)" to "decimal(6,2)", "timestamp_ns" to "timestamp", "timestamp" to "timestamptz", "json" to "varchar")) {
+            "decimal(5,3)" to "decimal(6,2)", "timestamp_ns" to "timestamp", "timestamp" to "timestamptz", "json" to "varchar",
+            "time" to "time_ns")) {
             assertThatThrownBy { Final11InlineTypes.requireConversion(from, to) }
                 .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("scalar conversion")
         }
+    }
+
+    @Test
+    fun temporalAndNullPhysicalTypesAreClosedAndSelectLosslessTextWithoutCoercingPayloads() {
+        for ((sql, logical) in listOf("TIME" to "time", "TIME_NS" to "time_ns", "TIME WITH TIME ZONE" to "timetz",
+            "INTERVAL" to "interval", "TIMESTAMPTZ_NS" to "timestamptz_ns", "\"NULL\"" to "null")) {
+            val type = Final11InlineTypes.parsePhysical(sql)
+            assertThat(type.type).isEqualTo(logical)
+            assertThat(Final11InlineTypes.physicalSql(type)).isNotBlank()
+        }
+        val nested = InlinedTypeNode("struct", "s", listOf(InlinedTypeNode("time_ns", "t"), InlinedTypeNode("blob", "b")))
+        assertThat(Final11InlineTypes.requiresText(nested)).isTrue()
+        assertThat(Final11InlineTypes.requiresText(InlinedTypeNode("blob", "b"))).isFalse()
+        assertThat(Final11InlineTypes.physicalSql(InlinedTypeNode("null", "v"))).isEqualTo("\"NULL\"")
+        assertThat(Final11InlineTypes.samePhysical(InlinedTypeNode("timetz", "v"), InlinedTypeNode("int64", "v"))).isFalse()
     }
 }

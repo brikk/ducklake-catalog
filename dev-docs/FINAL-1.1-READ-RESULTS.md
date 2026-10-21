@@ -1,5 +1,12 @@
 # First final-1.1 read tier — October 20
 
+**R03 follow-up:** finite temporal/interval/NULL-type reads now use lossless native
+text before decoding. Raw temporal roots intentionally return validated text;
+VARIANT, temporal infinities and TIME 24:00 remain rejected. A separate strict
+native interval flush gate fails on precision/component loss. See the current
+[support record](TODO-DUCKLAKE-1.1-SUPPORT.md) and [public scope](../docs/READING-1.1.md);
+the original type restrictions below are historical, not blanket current limits.
+
 **R02 follow-up:** guarded stable-ID inline evolution and by-name legacy STRUCT
 reads are implemented; the newer strict native gate is **not green** (two native
 semantic/read failures plus a native SIGSEGV). See the current support TODO below

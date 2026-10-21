@@ -3,10 +3,18 @@ package dev.brikk.ducklake.corpus
 import dev.brikk.ducklake.catalog.DucklakeCatalogConfig
 import dev.brikk.ducklake.catalog.InlinedTypeNode
 import dev.brikk.ducklake.catalog.InlinedValues
+import dev.brikk.ducklake.catalog.DucklakeInterval
 import dev.brikk.ducklake.catalog.JdbcDucklakeCatalog
 import dev.brikk.ducklake.catalog.TestingDucklakeDuckDbQuackCatalogServer
 import org.assertj.core.api.Assertions.assertThat
 import java.sql.DriverManager
+import java.time.LocalTime
+import java.time.OffsetTime
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeFormatterBuilder
+import java.time.temporal.ChronoField
 import java.util.function.Supplier
 
 /** Evaluate pristine SQL over ONLY JVM-decoded inline rows, never over a native DuckLake scan. */
@@ -14,6 +22,8 @@ internal class Final11InlineCorpusMirror(
     private val server: TestingDucklakeDuckDbQuackCatalogServer,
     private val allowUnqualified: Boolean = false,
     private val mirrorLimit: Int = Int.MAX_VALUE,
+    private val payloadQuery: (String) -> Boolean = { true },
+    private val queryTimeZone: (String) -> String = { "UTC" },
 ) : ReplayReadEngine {
     override val name = "final-11-catalog-inline"
     private val scratch = DriverManager.getConnection("jdbc:duckdb:")
@@ -41,11 +51,14 @@ internal class Final11InlineCorpusMirror(
             .find(sql)?.groupValues?.get(1)
     }
 
-    override fun accepts(sql: String): Boolean = mirrors < mirrorLimit && source(sql) != null
+    override fun accepts(sql: String): Boolean = mirrors < mirrorLimit && source(sql) != null && payloadQuery(sql) &&
+        !sql.contains("information_schema", ignoreCase = true) && !Regex("\\bAT\\s*\\(", RegexOption.IGNORE_CASE).containsMatchIn(sql)
 
     override fun executeQuery(sql: String): List<List<String?>> {
         val c = requireNotNull(catalog)
         val tableName = requireNotNull(source(sql))
+        val zone = queryTimeZone(sql).replace("'", "''")
+        scratch.createStatement().use { it.execute("SET TimeZone='$zone'") }
         c.readSession(Supplier {
             assertThat(c.getSpecVersion()).isEqualTo("1.1")
             val snapshot = c.currentSnapshotId
@@ -100,29 +113,49 @@ internal class Final11InlineCorpusMirror(
                 val values = entries.joinToString(",", "[", "]") { expression(it.value, type.children[1], bindings) }
                 "map($keys,$values)"
             }
-            else -> { bindings.add(value); "?" }
+            "interval" -> {
+                val interval = value as DucklakeInterval
+                bindings.addAll(listOf(interval.months, interval.days, interval.micros))
+                "(to_months(CAST(? AS INTEGER))+to_days(CAST(? AS INTEGER))+to_microseconds(CAST(? AS BIGINT)))"
+            }
+            else -> { bindings.add(if (type.type in TEMPORAL) temporalText(value) else value); "?" }
         }
         return "CAST($expression AS $sql)"
     }
 
-    private fun physicalType(type: InlinedTypeNode): String = when (type.type) {
-        "int8" -> "TINYINT"
-        "int16" -> "SMALLINT"
-        "int32" -> "INTEGER"
-        "int64" -> "BIGINT"
-        "varchar" -> "VARCHAR"
-        "blob" -> "BLOB"
-        "json" -> "JSON"
-        "struct" -> "STRUCT(" + type.children.joinToString(",") { "${quote(it.name)} ${physicalType(it)}" } + ")"
-        "list" -> physicalType(type.children.single()) + "[]"
-        "map" -> "MAP(${physicalType(type.children[0])},${physicalType(type.children[1])})"
-        else -> error("This focused upstream mirror has not qualified ${type.type}")
+    private fun physicalType(type: InlinedTypeNode): String {
+        SCALAR_SQL[type.type]?.let { return it }
+        return when (type.type) {
+            "struct" -> "STRUCT(" + type.children.joinToString(",") { "${quote(it.name)} ${physicalType(it)}" } + ")"
+            "list" -> physicalType(type.children.single()) + "[]"
+            "map" -> "MAP(${physicalType(type.children[0])},${physicalType(type.children[1])})"
+            else -> error("This focused upstream mirror has not qualified ${type.type}")
+        }
     }
 
     private fun quote(value: String) = "\"${value.replace("\"", "\"\"")}\""
 
+    private fun temporalText(value: Any): String = when (value) {
+        is OffsetTime -> value.toLocalTime().format(TIME_TEXT) + value.offset.id.replace("Z", "+00")
+        is LocalTime -> value.format(TIME_TEXT)
+        is OffsetDateTime -> value.toLocalDate().toString() + " " + value.toLocalTime().format(TIME_TEXT) + value.offset.id.replace("Z", "+00")
+        is LocalDateTime -> value.toLocalDate().toString() + " " + value.toLocalTime().format(TIME_TEXT)
+        else -> value.toString()
+    }
+
     override fun close() {
         try { catalog?.close() }
         finally { scratch.close() }
+    }
+
+    companion object {
+        private val SCALAR_SQL = mapOf("int8" to "TINYINT", "int16" to "SMALLINT", "int32" to "INTEGER", "int64" to "BIGINT",
+            "uint8" to "UTINYINT", "float64" to "DOUBLE", "boolean" to "BOOLEAN", "varchar" to "VARCHAR", "blob" to "BLOB",
+            "json" to "JSON", "null" to "\"NULL\"", "date" to "DATE", "time" to "TIME", "time_ns" to "TIME_NS",
+            "timetz" to "TIME WITH TIME ZONE", "timestamp" to "TIMESTAMP", "timestamptz" to "TIMESTAMP WITH TIME ZONE",
+            "timestamptz_ns" to "TIMESTAMPTZ_NS", "interval" to "INTERVAL")
+        private val TEMPORAL = setOf("date", "time", "time_ns", "timetz", "timestamp", "timestamptz", "timestamptz_ns")
+        private val TIME_TEXT: DateTimeFormatter = DateTimeFormatterBuilder().appendPattern("HH:mm:ss")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true).toFormatter()
     }
 }

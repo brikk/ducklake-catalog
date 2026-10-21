@@ -24,7 +24,7 @@ import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_COLUMN
 internal class Final11InlineProjection(
     private val ctx: DSLContext, private val source: Final11InlineSchema, private val target: Final11InlineSchema,
 ) {
-    data class Projection(val field: Field<*>, val type: InlinedTypeNode)
+    data class Projection(val field: Field<*>, val type: InlinedTypeNode, val losslessText: Boolean)
     private var variable = 0
 
     fun plan(tableName: String, ids: List<Long>): Map<Long, Projection> = ids.distinct().associateWith { id ->
@@ -42,8 +42,10 @@ internal class Final11InlineProjection(
             requirePhysical(ctx, tableName, origin)
         }
         val field = evolve(origin, destination, origin?.let { DSL.field(DSL.quotedName(it.column.columnName)) })
-        if (ctx.render(field).length > MAX_PROJECTION_LENGTH) invalid("inline projection exceeds the qualification budget")
-        Projection(field, destination.type)
+        val losslessText = Final11InlineTypes.requiresText(destination.type)
+        val projected = if (losslessText) DSL.cast(field, org.jooq.impl.SQLDataType.VARCHAR) else field
+        if (ctx.render(projected).length > MAX_PROJECTION_LENGTH) invalid("inline projection exceeds the qualification budget")
+        Projection(projected, destination.type, losslessText)
     }
 
     private fun evolve(origin: Final11InlineSchema.Node?, destination: Final11InlineSchema.Node, field: Field<*>?): Field<*> {
@@ -68,6 +70,7 @@ internal class Final11InlineProjection(
 
     private fun missing(destination: Final11InlineSchema.Node): Field<*> {
         val value = destination.column.initialDefault
+        if (value != null && destination.type.type == "null") invalid("NULL-typed field has a non-NULL initial default")
         // Whitelist non-NULL literals before any query/type text is used (also in no-connection tests).
         val result = if (value == null) DSL.inline(null as Any?) else {
             if (destination.type.type in CONTAINERS) invalid("initial default for nested column ${destination.column.columnId} is not qualified")

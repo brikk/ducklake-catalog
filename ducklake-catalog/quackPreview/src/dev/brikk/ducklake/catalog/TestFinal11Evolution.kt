@@ -86,7 +86,7 @@ class TestFinal11Evolution {
             assertThat(change.beginSnapshot).isEqualTo(inserted)
             assertThat(change.endSnapshot).isEqualTo(snapshot)
             assertThat(reader.getInlinedChangesBetween(table.tableId, info.schemaVersion, snapshot, snapshot,
-                columns.map { it.columnId }).single().values).isEqualTo(expected)
+                columns.map { it.columnId }).single().values).isEqualTo(expected.dropLast(1) + "2020-01-01 12:34:56.123456")
             assertThat(rows(table.tableId, snapshot)).isEmpty()
         }
     }

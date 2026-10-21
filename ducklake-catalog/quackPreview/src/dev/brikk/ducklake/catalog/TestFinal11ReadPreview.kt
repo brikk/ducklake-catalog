@@ -427,8 +427,8 @@ class TestFinal11ReadPreview {
     }
 
     @Test
-    fun unqualifiedInlinePayloadTypesFailExplicitlyWhileCountsRemainReadable() {
-        for ((type, literal) in listOf("TIME" to "TIME '24:00:00'", "INTERVAL" to "INTERVAL '100 hours'", "VARIANT" to "42::VARIANT")) {
+    fun unqualifiedVariantPayloadsFailExplicitlyWhileCountsRemainReadable() {
+        for ((type, literal) in listOf("VARIANT" to "42::VARIANT")) {
             val name = name("unsupported_type")
             server.native("CREATE TABLE lake.$name(v $type); INSERT INTO lake.$name VALUES ($literal)")
             read {

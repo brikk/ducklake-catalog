@@ -34,6 +34,27 @@ Correct NULL/byte/identity/exactness semantics, supported JVM runtime floors and
 safe mixed worker/coordinator behavior remain requirements. Unsupported implementations
 must fail explicitly, not synthesize capabilities or empty "supported" metadata.
 
+## R03 opt-in temporal handoff — 0.13.0-SNAPSHOT
+
+Final-1.1 ordinary raw reads and raw CDC now project any root containing temporal
+leaves to validated native VARCHAR text, including whole nested roots. This is an
+intentional development-tier value-contract change from driver DATE/timestamp or
+container objects, not a DTO/constructor/fragment-JSON change. Non-temporal roots,
+legacy-format raw reads, the default-off flag and all write guards are unchanged.
+
+Prefer decoded APIs: finite values retain `LocalTime`, `OffsetTime`, `LocalDate`,
+`LocalDateTime`, UTC `OffsetDateTime` and independent `DucklakeInterval` components.
+VARIANT, TIME 24:00 and temporal infinities fail explicitly through both raw and
+decoded payload reads. Identity-only CDC/counts can still read their metadata.
+Timezone-dependent promotions remain rejected without a production zone contract.
+
+Both owned plugin agents must adopt decoded APIs or handle the documented text
+before rollout, then qualify nested BLOB/JSON/NULL semantics, nanoseconds, offsets,
+CDC identity and their file scans. **Plugin updates/verification have not been
+performed here**; do not infer coordinated rollout from catalog tests. Native
+interval flush remains a separate failing precision/component gate, not proof of
+lossless Parquet persistence. Full public scope: [Reading 1.1](../docs/READING-1.1.md).
+
 ## Required semantics of the future envelopes
 
 | Metadata | Representation | Consumer obligation |

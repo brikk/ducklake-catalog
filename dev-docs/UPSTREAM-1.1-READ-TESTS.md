@@ -51,6 +51,54 @@ but are not described as JVM Parquet reads. Uncommitted reads and DESCRIBE metad
 are not falsely presented as committed payload mirrors. All original expected rows,
 errors and source lines remain unchanged.
 
+## R03 shipped corpus — temporal and NULL-type JVM mirrors
+
+`TestUpstreamFinal11TemporalValues` adds three whole pristine files at the same
+maintained revision, preserving original SQL, timezone SET statements and goldens.
+Typed scratch values come only from decoded JVM rows; native post-flush goldens
+still execute but are not misrepresented as JVM Parquet reads.
+
+| Pristine corpus path | SHA-256 | Required JVM mirrors |
+|---|---|---:|
+| `data_inlining/data_inlining_time_ns.test` | `f7a58dae210d60604ee9da76fe7615d6513ec1990778d704e21a288a64eda075` | 2 |
+| `data_inlining/data_inlining_null_type.test` | `e55cfb413f0a3111b74f266598e76e2c2aefd5f19ab111c94d0f8cc9438945f5` | 4 |
+| `default/literal_default_rendering.test` | `f804d019c04643e7f9804218906e492e63e1fab5773fdf9174ac2cfcdafc03d2` | 5 |
+
+That is **11 additional required JVM mirrors, 48 across fourteen files**. Mirrors
+exclude information_schema/AT-history queries and the literal-default file's
+`FROM dl.dt` DATE-to-zoned promotion: no production session-zone contract qualifies
+that promotion. Its unchanged native query/golden still runs. The five mirrored
+literal-default queries reproduce the source's New York/Tokyo query zones only in
+scratch SQL; they do not configure the production metadata reader. Mirror-count
+assertions and no-skip assertions remain mandatory.
+
+Ten direct-Java R03 tests separately qualify finite clocks, second offsets,
+nanosecond zoned instants, BCE/large dates, temporal defaults/rename/history/CDC,
+nested BLOB/JSON/NULL preservation and explicit edge/VARIANT rejection. Signed and
+extreme interval reader cases use controlled owned physical INTERVAL storage;
+current native negative/large INSERT/Parquet restrictions are not waived.
+
+Final forced R03 maintained-reader qualification passed **632 maintained + 62
+direct-Java tests**, zero failed/JUnit-skipped, and **17,602 corpus records** with
+the same 100 file/12 record exclusions. Lint, frozen consumer/record/JSON controls
+and Java 17 classfile checks passed. This does not include or waive the strict
+native failures below.
+
+### R03 strict native interval persistence gate — NOT GREEN
+
+`mise exec -- ./gradlew :ducklake-test-corpus-replay:upstreamR03NativeTest
+--no-configuration-cache --no-daemon` is a focused independent native regression,
+not a purported upstream SLT adoption. It asserts official core `d54cbbe3df`, signed
+DuckLake `417a9117f5` and unsigned=false, and reports **1 failed, 0 skipped**:
+acknowledged `1 day 100:00:00.123456` flushes to `5 days 04:00:00.123`, with
+sub-minute microseconds **123000 instead of 123456**. It never replaces the expected
+value or treats the native defect as a pass. XML/output are under replay module
+`build/test-results/upstreamR03NativeTest/` and `build/reports/tests/upstreamR03NativeTest/`.
+The task remains separate from maintained `check`, which certifies the qualified
+inline reader, not lossless interval file persistence. Shipped
+[DuckLake #1727](https://github.com/duckdb/ducklake/pull/1727) rejects new negative
+inline intervals; it does not fix this precision/component change.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are now adopted as
@@ -85,15 +133,15 @@ Full per-case output and `hs_err` are retained in the replay module's
 `build/reports/upstream-r02-native/`. The [R02 support record](TODO-DUCKLAKE-1.1-SUPPORT.md)
 links the already-merged fixes and keeps broad native acceptance open.
 
-The qualified maintained/shipping read checks pass **623 maintained + 52 direct-Java
+The R02 qualified maintained/shipping read checks passed **623 maintained + 52 direct-Java
 JUnit tests** and **17,602 corpus records** with unchanged exclusions. That result
 does not include a pass for the separate strict lane: its final rerun still reports
 3 failures, 0 skips, with exact signed-peer/unsigned=false assertions in every
 child log. The same-transaction case's native SIGSEGV is preserved as a failure.
 
-`default/literal_default_rendering.test` and the native-rejected whole-container
-defaults in `default/nested_column_default.test` still guide subsequent type coverage;
-this document does not claim blanket mirror coverage for them or queued R04 cases.
+The native-rejected whole-container defaults in `default/nested_column_default.test`
+still guide subsequent type coverage; this document does not claim blanket mirror
+coverage for them or queued R04 cases. R03 literal-default coverage is bounded above.
 
 See the [read/write support TODO](TODO-DUCKLAKE-1.1-SUPPORT.md). New upstream cases
 must be added alongside our focused NULL/bytes/identity/failure regressions, not used

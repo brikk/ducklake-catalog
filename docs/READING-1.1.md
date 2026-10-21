@@ -59,6 +59,10 @@ driver; no embedded DuckDB JDBC is required.
 - Qualified scalar promotions use native numeric widening and non-timezone-dependent
   DATE/timestamp precision promotions. Raw/decoded reads and CDC use the target
   snapshot's schema; historical reads retain their historical names/types.
+- Finite TIME/TIME_NS/TIMETZ, INTERVAL, TIMESTAMPTZ_NS and SQL NULL-typed values,
+  recursively within STRUCT/LIST/MAP. Nanoseconds, offset seconds and independent
+  interval month/day/microsecond components are preserved. Finite BCE/large native
+  dates and timestamps decode without Java driver sentinel values.
 - Legacy column statistics expose **NULL MIN/MAX endpoints**, even when a native
   exactness flag is true. Range-pruning requests return all active file IDs. The
   old DTOs cannot carry exactness, so this sacrifices optimization rather than rows.
@@ -82,10 +86,14 @@ The reader rejects these rather than silently returning wrong values:
 - Recorded non-literal or unknown initial-default histories for missing fields.
   In particular, shipping DuckLake may wrongly accept a non-literal added STRUCT
   field; this reader rejects that history rather than returning invented NULLs.
-- TIME/TIME_NS/TIMETZ, INTERVAL, VARIANT and other unqualified inline payload types.
+- VARIANT (including nested/NULL-valued VARIANT), temporal infinities and TIME 24:00
+  (also TIME_NS/TIMETZ). These have no qualified canonical Java representation here;
+  raw payload reads reject them too. This is not a conversion to midnight, a finite
+  sentinel or a driver-internal VARIANT storage map.
   Qualified scalar families are Boolean, signed/unsigned integers, floating point,
-  decimal, VARCHAR/JSON/BLOB, UUID, DATE and timestamp families, recursively within
-  STRUCT/LIST/MAP. This is not a claim covering every temporal edge value.
+  decimal, VARCHAR/JSON/BLOB, UUID, finite date/time/timestamp/interval families and
+  SQL NULL, recursively within STRUCT/LIST/MAP. Native-disallowed TIME → TIME_NS
+  ALTER is not treated as a supported promotion.
 - Empty ordinary inline projections: use `countInlinedRows` for counts. Identity-only
   CDC can still use its row/snapshot metadata.
 
@@ -97,12 +105,37 @@ values, invalid casts and overflow fail instead of becoming NULL. Native
 query failures and missing physical system columns propagate instead of becoming
 empty reads. Raw-value reads do not bypass these safety checks.
 
+## Temporal value contract and consumer handoff
+
+Decoded reads and decoded CDC use `LocalTime`, `OffsetTime`, `LocalDate`,
+`LocalDateTime`, UTC `OffsetDateTime` and `DucklakeInterval(months, days, micros)`.
+Intervals do not collapse months into days or elapsed hours into calendar days.
+Malformed interval tokens, partial matches and component overflow fail as corruption.
+
+**Intentional opt-in raw contract change in 0.13.0-SNAPSHOT:** every final-1.1
+projected root containing a temporal leaf returns native VARCHAR text, including
+the entire STRUCT/LIST/MAP root. Raw CDC uses the same rule. Even DATE/timestamp
+roots formerly returned as driver objects now return text; non-temporal roots and
+legacy-format raw paths are unchanged. Physical type validation and native schema
+evolution happen before text projection. Raw text is decoded for validation, so
+unsupported edges cannot bypass the guards by requesting raw values.
+
+Trino/Doris agents must use decoded APIs or explicitly adopt this text contract
+before enabling the opt-in reader; neither plugin is claimed updated or verified
+by this library increment. Published records, constructors and fragment JSON do
+not change. See the [consumer handoff](../dev-docs/DUCKLAKE-1.1-CONSUMER-CONTRACT.md).
+
 ## No writes, migration or connector rollout implied
 
 **Shipping-native gaps remain.** The newer strict upstream R02 gates currently fail
 for legacy STRUCT read/flush, non-literal added-field rejection and a same-transaction
 STRUCT crash. JVM read safeguards do not fix those native writer/maintenance paths.
 See the [R02 execution record](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md) before rollout.
+The separate R03 interval persistence gate also fails: native flush changes
+`1 day 100:00:00.123456` to `5 days 04:00:00.123`, losing sub-millisecond precision
+and changing day/microsecond components. Qualified inline reads do not repair
+native Parquet persistence. Negative/extreme component reader fixtures are not a
+claim that native INSERT/flush accepts them.
 
 All **1.1 mutations remain blocked**, including file registration, DDL, ANALYZE,
 expiry and cleanup acknowledgements. The reader never bootstraps or migrates a

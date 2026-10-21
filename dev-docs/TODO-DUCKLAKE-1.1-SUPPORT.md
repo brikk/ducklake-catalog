@@ -23,6 +23,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   INTERVAL, VARIANT and other outstanding types, including nested values, nanoseconds,
   offsets, infinities and TIME 24:00. Define lossless Java values or explicit narrow
   rejection; do not pass through a lossy JDBC mapping as support.
+  Guarded temporal/interval/NULL-type reader increment implemented; final verification
+  is recorded below. Explicit edge/VARIANT rejection remains; broad closure is not
+  claimed while the separate native interval persistence gate fails.
 - [ ] **R04 — Rich read metadata contract.** Expose schema parentage, independent
   nullable bound exactness, nullable data/delete
   row-group counts and actual layout/provenance/capabilities. Prefer preserving
@@ -95,8 +98,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
 - Baseline: [`505aeac`](UPGRADE-DUCKDB-2.0.0.md), 605 maintained JUnit tests,
   33 shipping direct-Java tests and 17,602 corpus records; exclusions remain explicit.
 - Completed increment: **R01**, typed missing-column defaults in the existing qualified
-  direct-Java final-1.1 reader. **R02 is paused at native acceptance**; R03–R07 remain
-  queued, not implicitly certified. The owner will revisit R02 when the fixes are
+  direct-Java final-1.1 reader. **R02 is paused at native acceptance; the R03 guarded
+  reader increment is verified, with native interval persistence still failing**.
+  R04–R07 remain queued, not implicitly certified. The owner will revisit R02 when the fixes are
   available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
   mirrors and exact newer upstream regressions queued for subsequent capabilities.
@@ -221,6 +225,48 @@ Preparation for R02 adds one command before the reproduction above:
 ```sh
 python3 dev-docs/probes/prepare_11_read_fixtures.py
 ```
+
+### R03 — guarded temporal reader; native interval persistence remains open
+
+- Adds finite TIME/TIME_NS/TIMETZ, INTERVAL, TIMESTAMPTZ_NS and SQL NULL-type
+  projections on the same signed direct-Java peer, recursively in STRUCT/LIST/MAP.
+  Validated native evolution precedes lossless VARCHAR projection. Decoded values
+  keep normal Java temporals and independent interval months/days/micros; no new
+  edge-value DTOs or driver-internal VARIANT maps are invented.
+- Nanoseconds, offset seconds, native BCE/large-year text, midnight/max finite clocks,
+  temporal initial defaults/rename/history/CDC and nested BLOB/JSON/NULL values have
+  independent expected checks. Controlled owned physical INTERVAL fixtures cover
+  negative/extreme components; they do not claim native INSERT/flush accepts them.
+- Strict bounded interval parsing rejects garbage, partial >99-hour matches,
+  malformed fractions and arithmetic/component overflow; `ms` means milliseconds,
+  not months. Known Quack interval records decode by accessors, not debug text.
+- VARIANT (including nested NULL-valued cases), TIME 24:00 and temporal infinities
+  remain explicit unsupported operations, including raw reads. Zone-dependent
+  promotions stay rejected; shipped TIME → TIME_NS ALTER is also rejected, not
+  silently added as a reader widening rule.
+- **Intentional development-tier raw value contract change:** final-1.1 temporal
+  roots, including entire containers with temporal leaves, return validated native
+  text in ordinary reads and CDC. Non-temporal/legacy raw paths, public records,
+  constructors and fragment JSON are unchanged. Both plugin agents have a precise
+  [handoff](DUCKLAKE-1.1-CONSUMER-CONTRACT.md); no plugin rollout is claimed here.
+- Three more entire pristine shipped fixtures require **11 additional JVM mirrors**,
+  48 across fourteen R01/R02/R03 files. Original SQL/goldens/pins/exclusions remain;
+  [adoption details](UPSTREAM-1.1-READ-TESTS.md) document the unqualified date-to-zone
+  mirror exclusion and scratch-only source query-zone reproduction.
+- The separate `upstreamR03NativeTest` compiles and reports **1 failed, 0 skipped**,
+  for real native precision loss: acknowledged `1 day 100:00:00.123456` flushes to
+  `5 days 04:00:00.123` (123000 rather than 123456 sub-minute micros). Components also
+  normalize. This is a visible failing persistence gate, not a shipping pass or
+  altered golden. Shipped [#1727](https://github.com/duckdb/ducklake/pull/1727) only
+  addresses negative inline writes. R03 stays unchecked at broad native acceptance.
+- Final forced maintained-reader verification passed: **632 maintained JUnit tests**
+  (523 catalog, 51 SLT, 58 replay), **62 shipping direct-Java tests**, and **17,602
+  corpus records**, zero failed or JUnit-skipped. Existing 100 file/12 record corpus
+  exclusions remain explicit. All module checks/detekt, frozen Java/record/JSON
+  controls and Java 17 `checkAbi` passed (7,739 runtime classes across 17 artifacts).
+  The unchanged-source full run took 11m35s; the separate native gate remains red as
+  described above. All 1.1 write guards, migration defaults, opt-in/owned-session
+  rules and dependency pins remain. Session-owned test processes were reaped.
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

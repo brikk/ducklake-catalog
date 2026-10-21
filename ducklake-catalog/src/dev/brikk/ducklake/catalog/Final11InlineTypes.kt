@@ -28,6 +28,8 @@ internal object Final11InlineTypes {
         "UHUGEINT" to "uint128", "FLOAT" to "float32", "DOUBLE" to "float64", "VARCHAR" to "varchar", "JSON" to "json",
         "BLOB" to "blob", "UUID" to "uuid", "DATE" to "date", "TIMESTAMP" to "timestamp", "TIMESTAMP_S" to "timestamp_s",
         "TIMESTAMP_MS" to "timestamp_ms", "TIMESTAMP_NS" to "timestamp_ns", "TIMESTAMP WITH TIME ZONE" to "timestamptz",
+        "TIMESTAMPTZ_NS" to "timestamptz_ns", "TIME" to "time", "TIME_NS" to "time_ns",
+        "TIME WITH TIME ZONE" to "timetz", "INTERVAL" to "interval", "NULL" to "null",
     )
     private val SCALARS = SQL_SCALARS.values.toSet() + setOf("timestamp_us")
     private val SIGNED_WIDTHS = mapOf("int8" to 8, "int16" to 16, "int32" to 32, "int64" to 64, "int128" to 128)
@@ -63,10 +65,18 @@ internal object Final11InlineTypes {
 
     fun physicalSql(type: InlinedTypeNode): String {
         validate(type)
-        val sql = InlinedDataTables.physicalType(type, SQLDialect.DUCKDB)
+        val sql = InlinedDataTables.physicalType(storageType(type), SQLDialect.DUCKDB)
         if (sql.length > MAX_TYPE_LENGTH) invalid("physical payload type exceeds the qualification budget")
         return sql
     }
+
+    private fun storageType(type: InlinedTypeNode): InlinedTypeNode = type.copy(
+        type = if (type.type == "null") "\"NULL\"" else type.type,
+        children = type.children.map(::storageType),
+    )
+
+    /** Native text preserves TIME 24:00/infinity boundaries, packed TIMETZ and nested intervals. */
+    fun requiresText(type: InlinedTypeNode): Boolean = type.type in TEXT_TYPES || type.children.any(::requiresText)
 
     fun parsePhysical(sql: String): InlinedTypeNode {
         if (sql.length > MAX_TYPE_LENGTH) invalid("physical payload type exceeds the qualification budget")
@@ -78,6 +88,7 @@ internal object Final11InlineTypes {
         val from = canonical(source)
         val to = canonical(target)
         if (from == to || numericPromotion(from, to) || temporalPromotion(from, to)) return
+        if (from == "null") return
         invalid("scalar conversion $source to $target is not qualified")
     }
 
@@ -201,9 +212,9 @@ internal object Final11InlineTypes {
 
         private fun scalar(keyword: String, name: String): InlinedTypeNode {
             whitespace()
-            val complete = if (keyword == "TIMESTAMP" && sql.startsWith("WITH TIME ZONE", position)) {
+            val complete = if (keyword in setOf("TIMESTAMP", "TIME") && sql.startsWith("WITH TIME ZONE", position)) {
                 position += "WITH TIME ZONE".length
-                "TIMESTAMP WITH TIME ZONE"
+                "$keyword WITH TIME ZONE"
             } else keyword
             val logical = SQL_SCALARS[complete] ?: invalid("physical inline type $complete is not qualified")
             return InlinedTypeNode(logical, name)
@@ -244,4 +255,7 @@ internal object Final11InlineTypes {
             position++
         }
     }
+
+    private val TEXT_TYPES = setOf("date", "time", "time_ns", "timetz", "interval", "timestamp", "timestamp_us", "timestamp_s",
+        "timestamp_ms", "timestamp_ns", "timestamptz", "timestamptz_ns")
 }

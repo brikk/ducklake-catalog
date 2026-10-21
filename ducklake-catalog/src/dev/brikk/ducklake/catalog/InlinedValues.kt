@@ -76,7 +76,8 @@ data class DucklakeInterval(val months: Long, val days: Long, val micros: Long)
  * separator, `Z`). Interval text is accepted in both DuckDB (`1 year 2 months 3 days 04:05:06.007`)
  * and PostgreSQL (`1 year 2 mons 3 days 04:05:06.007`, `1 years 2 mons …`) spellings. Anything that
  * cannot be interpreted under its declared type raises [DucklakeCatalogCorruptionException] rather
- * than passing a wrong value through; an unknown type name passes the raw value through unchanged.
+ * than passing a wrong value through. Unqualified native temporal edges raise
+ * [DucklakeInvalidOperationException]; an unknown type name passes the raw value through unchanged.
  */
 object InlinedValues {
 
@@ -100,8 +101,8 @@ object InlinedValues {
         return try {
             decodeNonNull(raw, type)
         }
-        catch (e: DucklakeCatalogCorruptionException) {
-            throw e
+        catch (e: DucklakeException) {
+            throw e // Preserve corruption vs explicit unsupported-value classification.
         }
         catch (@Suppress("TooGenericExceptionCaught") e: RuntimeException) {
             // Parsers throw a zoo of unchecked types (NumberFormat, DateTime, Arithmetic, ClassCast,
@@ -129,10 +130,10 @@ object InlinedValues {
             t == "varchar" || t == "json" -> text(raw)
             t == "blob" -> toBytes(raw)
             t == "uuid" -> if (raw is UUID) raw else UUID.fromString(text(raw))
-            t == "date" -> if (raw is java.sql.Date) raw.toLocalDate() else if (raw is LocalDate) raw else LocalDate.parse(text(raw))
+            t == "date" -> if (raw is java.sql.Date) raw.toLocalDate() else if (raw is LocalDate) raw else InlinedTemporalValues.date(text(raw))
             t == "time" || t == "time_ns" -> toLocalTime(raw)
             t == "timetz" -> toOffsetTime(raw)
-            t == "timestamptz" -> toOffsetDateTime(raw)
+            t == "timestamptz" || t == "timestamptz_ns" -> toOffsetDateTime(raw)
             t.startsWith("timestamp") -> toLocalDateTime(raw)
             t == "interval" -> toInterval(raw)
             t == "struct" || t == "list" || t == "map" -> decodeNested(raw, type)
@@ -244,18 +245,14 @@ object InlinedValues {
         when (raw) {
             is LocalTime -> raw
             is java.sql.Time -> raw.toLocalTime()
-            else -> LocalTime.parse(text(raw).trim().let { if (it.length == 5) "$it:00" else it })
+            else -> InlinedTemporalValues.time(text(raw))
         }
 
     private fun toOffsetTime(raw: Any): OffsetTime =
         when (raw) {
             is OffsetTime -> raw
             is java.sql.Time -> raw.toLocalTime().atOffset(ZoneOffset.UTC)
-            else -> {
-                val s = text(raw).trim()
-                val (body, offset) = splitOffset(s)
-                LocalTime.parse(body).atOffset(offset ?: ZoneOffset.UTC)
-            }
+            else -> InlinedTemporalValues.offsetTime(text(raw))
         }
 
     private fun toLocalDateTime(raw: Any): LocalDateTime =
@@ -263,7 +260,7 @@ object InlinedValues {
             is LocalDateTime -> raw
             is java.sql.Timestamp -> raw.toLocalDateTime()
             is OffsetDateTime -> raw.toLocalDateTime()
-            else -> parseLocalDateTime(text(raw).trim().let { splitOffset(it).first })
+            else -> InlinedTemporalValues.localTimestampText(text(raw))
         }
 
     private fun toOffsetDateTime(raw: Any): OffsetDateTime =
@@ -272,80 +269,21 @@ object InlinedValues {
             is java.time.Instant -> raw.atOffset(ZoneOffset.UTC)
             is java.sql.Timestamp -> raw.toInstant().atOffset(ZoneOffset.UTC)
             is LocalDateTime -> raw.atOffset(ZoneOffset.UTC)
-            else -> {
-                val (body, offset) = splitOffset(text(raw).trim())
-                parseLocalDateTime(body).atOffset(offset ?: ZoneOffset.UTC).withOffsetSameInstant(ZoneOffset.UTC)
-            }
+            else -> InlinedTemporalValues.offsetTimestamp(text(raw))
         }
 
-    private fun parseLocalDateTime(body: String): LocalDateTime {
-        // DuckDB: `2024-02-29 12:34:56.123456`; ISO: `2024-02-29T12:34:56`; date-only is midnight.
-        if (body.length == 10) {
-            return LocalDate.parse(body).atStartOfDay()
-        }
-        val normalised = if (body.length > 10 && body[10] == ' ') body.substring(0, 10) + 'T' + body.substring(11) else body
-        return LocalDateTime.parse(normalised)
-    }
-
-    private val OFFSET_SUFFIX = Regex("([+-]\\d{2}(?::?\\d{2})?|Z)$")
-
-    /** Splits a trailing zone offset (`+02`, `+02:00`, `-0530`, `Z`) off a temporal text. */
-    private fun splitOffset(s: String): Pair<String, ZoneOffset?> {
-        val m = OFFSET_SUFFIX.find(s) ?: return s to null
-        // A plain time `12:34:56` has no offset; a date `2024-02-29` ends in `-29` which is NOT an offset.
-        if (m.range.first == 0 || s.length <= 10 || s.indexOf(':') < 0) {
-            return s to null
-        }
-        val text = m.value
-        val offset = if (text == "Z") ZoneOffset.UTC else {
-            val sign = if (text[0] == '-') -1 else 1
-            val digits = text.substring(1).replace(":", "")
-            val hours = digits.substring(0, 2).toInt()
-            val minutes = if (digits.length >= 4) digits.substring(2, 4).toInt() else 0
-            ZoneOffset.ofTotalSeconds(sign * (hours * 3600 + minutes * 60))
-        }
-        return s.substring(0, m.range.first) to offset
-    }
-
-    private val INTERVAL_UNIT = Regex(
-        "([+-]?\\d+)\\s*(years?|yrs?|y|months?|mons?|mo|days?|d|hours?|h|minutes?|mins?|m|seconds?|secs?|s|" +
-            "milliseconds?|ms|microseconds?|us)\\b",
-        RegexOption.IGNORE_CASE,
-    )
-    private val INTERVAL_CLOCK = Regex("([+-]?)(\\d{1,2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,6}))?")
-    private const val MICROS_PER_SECOND = 1_000_000L
-
-    @Suppress("CyclomaticComplexMethod")
     private fun toInterval(raw: Any): DucklakeInterval {
-        if (raw is DucklakeInterval) {
-            return raw
-        }
-        val s = text(raw).trim()
-        var months = 0L
-        var days = 0L
-        var micros = 0L
-        for (m in INTERVAL_UNIT.findAll(s)) {
-            val n = m.groupValues[1].toLong()
-            when (m.groupValues[2].lowercase(Locale.ROOT).trimEnd('s')) {
-                "year", "yr", "y" -> months += n * 12
-                "month", "mon", "mo" -> months += n
-                "day", "d" -> days += n
-                "hour", "h" -> micros += n * 3600 * MICROS_PER_SECOND
-                "minute", "min", "m" -> micros += n * 60 * MICROS_PER_SECOND
-                "second", "sec" -> micros += n * MICROS_PER_SECOND
-                "millisecond", "m" + "s" -> micros += n * 1000
-                "microsecond", "u" -> micros += n
+        if (raw is DucklakeInterval) return raw
+        if (raw.javaClass.name == "com.gizmodata.quack.jdbc.message.IntervalValue") {
+            try {
+                fun component(name: String) = (raw.javaClass.getMethod(name).invoke(raw) as Number).toLong()
+                return DucklakeInterval(component("months"), component("days"), component("micros"))
+            }
+            catch (e: ReflectiveOperationException) {
+                throw DucklakeCatalogCorruptionException("Cannot decode the qualified Quack interval representation", e)
             }
         }
-        INTERVAL_CLOCK.find(s)?.let { c ->
-            val sign = if (c.groupValues[1] == "-") -1 else 1
-            var clock = (c.groupValues[2].toLong() * 3600 + c.groupValues[3].toLong() * 60 + c.groupValues[4].toLong()) * MICROS_PER_SECOND
-            if (c.groupValues[5].isNotEmpty()) {
-                clock += c.groupValues[5].padEnd(6, '0').toLong()
-            }
-            micros += sign * clock
-        }
-        return DucklakeInterval(months, days, micros)
+        return InlinedTemporalValues.interval(text(raw))
     }
 
     // ---- nested values ------------------------------------------------------------------------

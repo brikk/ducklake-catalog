@@ -2078,7 +2078,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     for (i in columnIds.indices) {
                         val raw = rec.get(3 + i)
                         val node = projection.types[i]
-                        values.add(if (decode && node != null) InlinedValues.decode(raw, node) else raw)
+                        values.add(inlineProjectedValue(raw, node, decode))
                     }
                     DucklakeInlinedChangeRow(
                         orZero(rec.get(0, Long::class.java)),
@@ -2171,7 +2171,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val sourceColumn = sourceColumnsById[columnIds[index]]
             if (evolved != null) {
                 fields.add(evolved.field.`as`(alias))
-                types.add(if (decode) evolved.type else null)
+                types.add(if (decode || evolved.losslessText) evolved.type else null)
             }
             else if (sourceColumn == null) {
                 fields.add(DSL.inline(null as Any?).`as`(alias))
@@ -2190,6 +2190,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     private fun textCastIfNeeded(field: Field<*>, type: String): Field<*> =
         if (dialect != SQLDialect.DUCKDB && type in TEXT_CAST_TYPES) DSL.cast(field, org.jooq.impl.SQLDataType.VARCHAR) else field
+
+    private fun inlineProjectedValue(raw: Any?, type: InlinedTypeNode?, decode: Boolean): Any? {
+        if (type == null) return raw
+        // Raw final-1.1 temporal text still passes value validation: no edge-value bypass.
+        val value = InlinedValues.decode(raw, type)
+        return if (decode) value else raw
+    }
 
     private fun final11InlineProjections(
         tableName: String, tableId: Long, snapshotId: Long, source: List<DucklakeColumn>, ids: List<Long>,
@@ -2237,7 +2244,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 for (i in 0 until columnCount) {
                     val raw = rec.get(i)
                     val node = projection.types[i]
-                    row.add(if (decode && node != null) InlinedValues.decode(raw, node) else raw)
+                    row.add(inlineProjectedValue(raw, node, decode))
                 }
                 rows.add(row)
             }

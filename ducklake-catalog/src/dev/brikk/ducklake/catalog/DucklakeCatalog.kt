@@ -445,6 +445,7 @@ interface DucklakeCatalog : AutoCloseable {
      * version). Empty when the inlined table doesn't exist.
      * Candidate API: a version with equal begin/end snapshots never existed in a committed
      * state and must not produce either CDC image. Consumers filter it before pairing images.
+     * Opt-in final-1.1 raw temporal values follow [readInlinedData]'s validated text contract.
      */
     fun getInlinedChangesBetween(
         tableId: Long,
@@ -486,6 +487,9 @@ interface DucklakeCatalog : AutoCloseable {
      * their own converter.
      * With [DucklakeCatalogConfig.enableFinal11Reads], reads require an owned [readSession] and
      * unqualified default/type-evolution or payload projections are rejected, not guessed as NULL.
+     * In that opt-in tier, each root containing temporal leaves (including a whole nested root)
+     * is returned as validated native VARCHAR text, not a JDBC temporal/container object. Raw CDC
+     * uses the same contract; unsupported infinities/TIME 24:00 still fail. Legacy raw paths are unchanged.
      */
     fun readInlinedData(tableId: Long, schemaVersion: Long, snapshotId: Long, columns: List<DucklakeColumn>): List<List<Any?>>
 
