@@ -1,5 +1,11 @@
 # First final-1.1 read tier — October 20
 
+**R02 follow-up:** guarded stable-ID inline evolution and by-name legacy STRUCT
+reads are implemented; the newer strict native gate is **not green** (two native
+semantic/read failures plus a native SIGSEGV). See the current support TODO below
+for the exact qualified scope and unresolved shipping-native acceptance. Original
+type-evolution/physical-order rejections below are historical, not the current scope.
+
 **Read-first expansion:** R01 now projects qualified scalar initial defaults for
 missing top-level fields, preserving stored NULLs and CDC identity. See the
 [1.1 support TODO and current verification](TODO-DUCKLAKE-1.1-SUPPORT.md) and

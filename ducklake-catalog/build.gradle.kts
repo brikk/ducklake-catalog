@@ -138,6 +138,7 @@ tasks.register<Test>("quackPreviewTest") {
         systemProperty("ducklake.preview.cli", cli.get())
         systemProperty("ducklake.quack.target", target.get())
         systemProperty("ducklake.preview.reports", layout.buildDirectory.dir("reports/quack-preview").get().asFile.absolutePath)
+        systemProperty("ducklake.read.fixtures", layout.buildDirectory.dir("read-fixtures").get().asFile.absolutePath)
     }
 }
 

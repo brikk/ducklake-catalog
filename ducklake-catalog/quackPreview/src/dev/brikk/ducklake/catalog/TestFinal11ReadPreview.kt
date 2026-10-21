@@ -324,8 +324,13 @@ class TestFinal11ReadPreview {
         server.connection().use { c ->
             assertThat(PreviewQuackServer.jdbcRows(c, "SELECT s.a,s.b FROM ${info.tableName}")).containsExactly(listOf("10", "20"))
         }
-        assertThatThrownBy { read { reader.readInlinedDataDecoded(table.tableId, info.schemaVersion, snapshot, columns) } }
-            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("physical payload type")
+        read {
+            assertThat(reader.readInlinedDataDecoded(table.tableId, info.schemaVersion, snapshot, columns))
+                .containsExactly(listOf(linkedMapOf("a" to 10, "b" to 20)))
+            val raw = reader.readInlinedData(table.tableId, info.schemaVersion, snapshot, columns).single().single() as java.sql.Struct
+            assertThat(raw.attributes.toList()).containsExactly(10, 20)
+            assertThat(reader.readInlinedRowIds(table.tableId, info.schemaVersion, snapshot)).containsExactly(0L)
+        }
     }
 
     @Test
@@ -400,19 +405,24 @@ class TestFinal11ReadPreview {
     }
 
     @Test
-    fun inlineTypeEvolutionRequiresAnExplicitlyQualifiedConversion() {
+    fun inlineTypeEvolutionUsesTheTargetSnapshotAndPreservesHistoricalTypes() {
         val name = name("evolution")
-        server.native("CREATE TABLE lake.$name(i INTEGER); INSERT INTO lake.$name VALUES (1); " +
-            "ALTER TABLE lake.$name ALTER COLUMN i TYPE BIGINT; INSERT INTO lake.$name VALUES (2)")
+        server.native("CREATE TABLE lake.$name(i INTEGER); INSERT INTO lake.$name VALUES (1)")
+        val inserted = read { reader.currentSnapshotId }
+        server.native("ALTER TABLE lake.$name ALTER COLUMN i TYPE BIGINT; INSERT INTO lake.$name VALUES (2)")
         read {
             val snapshot = reader.currentSnapshotId
             val table = reader.getTable("main", name, snapshot)!!
             val columns = reader.getTableColumns(table.tableId, snapshot)
             val infos = reader.getInlinedDataInfos(table.tableId, snapshot).sortedBy { it.schemaVersion }
             assertThat(infos).hasSize(2)
-            assertThatThrownBy { reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, snapshot, columns) }
-                .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("type-evolution")
+            assertThat(reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, snapshot, columns))
+                .containsExactly(listOf(1L))
             assertThat(reader.readInlinedDataDecoded(table.tableId, infos.last().schemaVersion, snapshot, columns)).containsExactly(listOf(2L))
+            assertThat(reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, inserted,
+                reader.getTableColumns(table.tableId, inserted))).containsExactly(listOf(1))
+            assertThat(reader.getInlinedChangesBetweenDecoded(table.tableId, infos.first().schemaVersion, inserted, snapshot,
+                columns.map { it.columnId }).single().values).containsExactly(1L)
         }
     }
 

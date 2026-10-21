@@ -49,7 +49,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Prepare checksum-pinned nested corpus data
-        run: python3 dev-docs/probes/prepare_corpus_data.py
+        run: |
+          python3 dev-docs/probes/prepare_corpus_data.py
+          python3 dev-docs/probes/prepare_11_read_fixtures.py
 
       - name: Build, lint and test every module
         run: ./gradlew check --no-configuration-cache --stacktrace --continue
@@ -101,7 +103,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Prepare checksum-pinned nested corpus data
-        run: python3 dev-docs/probes/prepare_corpus_data.py
+        run: |
+          python3 dev-docs/probes/prepare_corpus_data.py
+          python3 dev-docs/probes/prepare_11_read_fixtures.py
 
       - name: Replay the full DuckLake corpus through the DuckDB oracle
         run: ./gradlew :ducklake-test-corpus-replay:test -Dducklake.corpus.dirs=all --no-configuration-cache --stacktrace

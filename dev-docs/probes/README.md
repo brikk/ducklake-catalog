@@ -32,6 +32,11 @@ script supports the same options.
   Do not repin historical fixtures to make new binaries pass old provenance assertions.
 - `prepare_corpus_data.py` fetches only eight checksum-pinned upstream Parquet fixtures
   at the corpus's nested DuckDB gitlink. It never edits corpus SQL/goldens.
+- `prepare_11_read_fixtures.py` fetches four fixed newer-upstream R02 inputs without
+  changing the maintained corpus: three pristine SLT files and the genuine legacy
+  STRUCT-order catalog. The dedicated `:ducklake-test-corpus-replay:upstreamR02NativeTest`
+  task executes whole cases strictly and currently fails on the shipped native peer;
+  successful JVM legacy reads are not a claim those native gates pass.
 - `ducklake_11_fixture.py` / `verify_ducklake_11_fixtures.py` capture/verify
   [`ducklake-11-fixtures.json`](ducklake-11-fixtures.json). Source-only captures are
   not executed binaries. The [archived capability report](../archive/DUCKLAKE-1.1-CAPABILITIES.md)

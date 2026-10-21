@@ -52,6 +52,13 @@ driver; no embedded DuckDB JDBC is required.
   defaults**, using the target snapshot's metadata. Ordinary raw/decoded reads and
   CDC share the same projection. This never replaces an existing stored NULL or
   substitutes a later insert default for the original initial default.
+- Guarded inline evolution maps fields by stable IDs through add/drop/rename/reorder,
+  including STRUCTs inside LISTs/MAPs. Same-named replacement fields do not reuse old
+  values. NULL parents/elements and empty containers are preserved. Physical STRUCT
+  field order may differ; names and leaf types must still match the source metadata.
+- Qualified scalar promotions use native numeric widening and non-timezone-dependent
+  DATE/timestamp precision promotions. Raw/decoded reads and CDC use the target
+  snapshot's schema; historical reads retain their historical names/types.
 - Legacy column statistics expose **NULL MIN/MAX endpoints**, even when a native
   exactness flag is true. Range-pruning requests return all active file IDs. The
   old DTOs cannot carry exactness, so this sacrifices optimization rather than rows.
@@ -64,13 +71,17 @@ driver; no embedded DuckDB JDBC is required.
 The reader rejects these rather than silently returning wrong values:
 
 - Missing source columns with unqualified initial-default types, including whole
-  STRUCT/LIST/MAP defaults (also rejected by native column-default DDL). Nested-field
-  defaults that require schema evolution remain part of the restriction below.
-- Type evolution, including changed nested field structure/names, requiring a
-  source-to-target conversion. Top-level renames with stable field IDs/types work.
-- Physical payload types/order that differ from the logical source metadata,
-  including legacy reordered STRUCT fields. The adapter rejects these rather than
-  trusting positional JDBC attributes or silently coercing the data.
+  STRUCT/LIST/MAP defaults (also rejected by native column-default DDL). Qualified
+  literal scalar defaults on added nested fields are supported under the rules above.
+- Narrowing, text-to-number casts, container-kind changes and timezone-dependent
+  promotions without a qualified session-zone contract. These are not arbitrary
+  user-supplied ALTER expressions or a generic coercion engine.
+- Physical leaf-type drift or missing/extra/renamed physical fields. Reordering alone
+  is allowed, but the reader never casts mismatched physical payloads into apparent
+  validity. Column/depth/type/projection budgets fail explicitly when exceeded.
+- Recorded non-literal or unknown initial-default histories for missing fields.
+  In particular, shipping DuckLake may wrongly accept a non-literal added STRUCT
+  field; this reader rejects that history rather than returning invented NULLs.
 - TIME/TIME_NS/TIMETZ, INTERVAL, VARIANT and other unqualified inline payload types.
   Qualified scalar families are Boolean, signed/unsigned integers, floating point,
   decimal, VARCHAR/JSON/BLOB, UUID, DATE and timestamp families, recursively within
@@ -87,6 +98,11 @@ query failures and missing physical system columns propagate instead of becoming
 empty reads. Raw-value reads do not bypass these safety checks.
 
 ## No writes, migration or connector rollout implied
+
+**Shipping-native gaps remain.** The newer strict upstream R02 gates currently fail
+for legacy STRUCT read/flush, non-literal added-field rejection and a same-transaction
+STRUCT crash. JVM read safeguards do not fix those native writer/maintenance paths.
+See the [R02 execution record](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md) before rollout.
 
 All **1.1 mutations remain blocked**, including file registration, DDL, ANALYZE,
 expiry and cleanup acknowledgements. The reader never bootstraps or migrates a

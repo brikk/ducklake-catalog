@@ -47,7 +47,15 @@ COMMIT handling apply. The deprecated row-count argument remains ignored.
 - The final-1.1 reader now supplies qualified scalar **initial defaults** for fields
   absent from older inline schemas, in ordinary reads and CDC. Stored NULLs and
   literal `NULL` strings remain distinct. Defaults are values, never SQL expressions;
-  invalid casts fail. Nested-field evolution and unqualified types remain rejected.
+  invalid casts fail. Remaining unqualified projections still fail explicitly.
+
+- Guarded final-1.1 inline evolution now maps nested fields by stable IDs and physical
+  STRUCT values by name, with qualified widening conversions and literal nested-field
+  defaults. It preserves NULL containers, BLOB bytes and historical/CDC identity;
+  narrowing, malformed payloads and ambiguous expression-default histories fail.
+  This does **not** repair shipping native STRUCT/default/flush bugs: newer upstream
+  strict gates remain red, including a native crash. See the
+  [current R02 status](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md) before rollout.
 
 - Older inline schema-version resolution and snapshot-expiry boundary preservation
   are safer. Ambiguous evidence fails explicitly rather than silently dropping rows.

@@ -31,6 +31,7 @@ internal class PreviewQuackServer(
     private val format: String,
     private val reportLabel: String = format,
     private val migrateFrom10: Boolean = false,
+    private val seedCatalog: Path? = null,
 ) : AutoCloseable {
     private val cli = Path.of(System.getProperty("ducklake.preview.cli")).toAbsolutePath()
     private val root = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-quack-v3-$format-")
@@ -57,12 +58,7 @@ internal class PreviewQuackServer(
             val provenance = rows("LOAD quack; LOAD ducklake; SELECT extension_name,extension_version,installed_from " +
                 "FROM duckdb_extensions() WHERE extension_name IN ('quack','ducklake') AND loaded ORDER BY 1")
             assertThat(provenance).containsExactly(listOf("ducklake", DUCKLAKE, "core"), listOf("quack", QUACK, "core"))
-            val seedFormat = if (migrateFrom10) "1.0" else format
-            execute("LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +
-                "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',DUCKLAKE_VERSION '$seedFormat'); " +
-                "CREATE TABLE lake.scalar_seed(i INTEGER); INSERT INTO lake.scalar_seed VALUES (11),(22); " +
-                "CREATE TABLE lake.nested_seed AS SELECT {'a':42::INTEGER,'b':[1::INTEGER,NULL]} AS s, " +
-                "MAP([1::INTEGER],[{'v':'x'}]) AS m; DETACH lake")
+            seed()
             if (migrateFrom10) seedAndMigrate()
 
             val builder = command(database).redirectErrorStream(true).redirectOutput(reports.resolve("server-$reportLabel.log").toFile())
@@ -103,6 +99,26 @@ internal class PreviewQuackServer(
 
     fun connection(): Connection = DriverManager.getConnection(url, Properties().apply { setProperty("token", token) })
 
+    private fun seed() {
+        if (seedCatalog != null) {
+            require(format == "1.1" && !migrateFrom10)
+            Files.copy(seedCatalog, database)
+            // An explicit native migration of an owned copy, not a reader-side action.
+            execute("LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +
+                "(DATA_PATH ${literal(data.toString())},OVERRIDE_DATA_PATH TRUE,METADATA_CATALOG 'meta'," +
+                "DUCKLAKE_VERSION '1.1',AUTOMATIC_MIGRATION TRUE); DETACH lake")
+            seededSnapshotId = rows("ATTACH ${literal(database.toString())} AS meta; SELECT max(snapshot_id) FROM meta.ducklake_snapshot")
+                .single().single()!!.toLong()
+            return
+        }
+        val seedFormat = if (migrateFrom10) "1.0" else format
+        execute("LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +
+            "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',DUCKLAKE_VERSION '$seedFormat'); " +
+            "CREATE TABLE lake.scalar_seed(i INTEGER); INSERT INTO lake.scalar_seed VALUES (11),(22); " +
+            "CREATE TABLE lake.nested_seed AS SELECT {'a':42::INTEGER,'b':[1::INTEGER,NULL]} AS s, " +
+            "MAP([1::INTEGER],[{'v':'x'}]) AS m; DETACH lake")
+    }
+
     private fun seedAndMigrate() {
         require(format == "1.1")
         val attach = "LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +
@@ -133,7 +149,8 @@ internal class PreviewQuackServer(
     fun native(sql: String): List<List<String?>> = rows("LOAD quack; LOAD ducklake; " +
         "CREATE SECRET (TYPE quack,TOKEN '$token'); " +
         "ATTACH 'ducklake:quack:127.0.0.1:$port' AS lake " +
-        "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',DUCKLAKE_VERSION '$format'); $sql")
+        "(DATA_PATH ${literal(data.toString())},METADATA_CATALOG 'meta',DUCKLAKE_VERSION '$format'" +
+        (if (seedCatalog != null) ",OVERRIDE_DATA_PATH TRUE" else "") + "); $sql")
 
     fun execute(sql: String) { run(sql) }
 
