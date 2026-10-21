@@ -54,7 +54,12 @@ class TestInlinedMetadataLayouts {
         val ctx = org.jooq.impl.DSL.using(SQLDialect.DUCKDB) // No connection: validation must precede any query.
         for (type in listOf("decimal(0,0)", "decimal(39,0)", "decimal(2,3)", "decimal(10,2)); SELECT 1 --", "decimal(10,2) trailing")) {
             val column = DucklakeColumn(0, 0, null, 0, 0, "amount", type, true, null)
-            assertThatThrownBy { Final11ReadCompatibility.requireProjection(ctx, "t", listOf(column), listOf(column), mapOf(0L to type)) }
+            val targets = mapOf(0L to InlinedTypeNode(type, "amount"))
+            assertThatThrownBy { Final11ReadCompatibility.requireProjection(ctx, "t", listOf(column), listOf(column), mapOf(0L to type), targets) }
+                .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("inline type")
+            // The absent-field/default arm must whitelist metadata before constructing SQL too.
+            assertThatThrownBy { Final11ReadCompatibility.requireProjection(ctx, "t", emptyList(),
+                listOf(column.copy(initialDefault = "42")), emptyMap(), targets) }
                 .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("inline type")
         }
     }

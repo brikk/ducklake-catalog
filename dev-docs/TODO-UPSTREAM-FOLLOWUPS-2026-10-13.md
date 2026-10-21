@@ -10,9 +10,9 @@ Active queue; stable UF IDs are unchanged. For other review work use
   and final catalog `1.1`, separately from branch tips and frozen preview locks.
 - [x] Complete [shipping qualification](UPGRADE-DUCKDB-2.0.0.md) and maintained promotion:
   JDBC/server 2.0.0.0/2.0.0, matching corpus, 1.0 reads/writes and opt-in 1.1 Java reads.
-- [ ] Qualify richer 1.1 metadata, other backends and any future write scope beyond
-  the limited read tier. Keep writes disabled until separately approved and qualified;
-  do not infer support from preview CI.
+- [ ] Complete the [read-first 1.1 support TODO](TODO-DUCKLAKE-1.1-SUPPORT.md), with
+  deferred write work tracked separately there. Keep writes disabled until separately
+  approved and qualified; do not infer support from native CI.
 
 **Executed October 20 target:** staged CLI alpha49096, core `2ec7e8401c`, signed
 DuckLake `417a9117f5`, signed Quack `e7a9be3f8c`. Shipping/JDBC artifact availability

@@ -48,6 +48,10 @@ driver; no embedded DuckDB JDBC is required.
   advisory semantics; they are not a new exact `COUNT(*)` optimization contract.
 - Existing public records, Java constructors and fragment JSON remain unchanged.
   Advisory 1.1 row-group counts are omitted, not fabricated as zero.
+- Missing columns in older inline schemas project their **qualified scalar initial
+  defaults**, using the target snapshot's metadata. Ordinary raw/decoded reads and
+  CDC share the same projection. This never replaces an existing stored NULL or
+  substitutes a later insert default for the original initial default.
 - Legacy column statistics expose **NULL MIN/MAX endpoints**, even when a native
   exactness flag is true. Range-pruning requests return all active file IDs. The
   old DTOs cannot carry exactness, so this sacrifices optimization rather than rows.
@@ -59,7 +63,9 @@ driver; no embedded DuckDB JDBC is required.
 
 The reader rejects these rather than silently returning wrong values:
 
-- A missing source column that requires a non-NULL initial default.
+- Missing source columns with unqualified initial-default types, including whole
+  STRUCT/LIST/MAP defaults (also rejected by native column-default DDL). Nested-field
+  defaults that require schema evolution remain part of the restriction below.
 - Type evolution, including changed nested field structure/names, requiring a
   source-to-target conversion. Top-level renames with stable field IDs/types work.
 - Physical payload types/order that differ from the logical source metadata,
@@ -74,7 +80,9 @@ The reader rejects these rather than silently returning wrong values:
 
 Requested columns must come from the target snapshot's metadata. Stored NULLs
 remain NULL; a literal default string `NULL` is not an SQL NULL sentinel. The adapter
-never evaluates arbitrary default expressions. Native
+never evaluates arbitrary default expressions: initial-default text is one bound
+VARCHAR value strictly cast to a whitelisted target type, not SQL source. Malformed
+values, invalid casts and overflow fail instead of becoming NULL. Native
 query failures and missing physical system columns propagate instead of becoming
 empty reads. Raw-value reads do not bypass these safety checks.
 

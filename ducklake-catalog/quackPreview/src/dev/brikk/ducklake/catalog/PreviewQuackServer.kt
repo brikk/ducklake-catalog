@@ -112,7 +112,10 @@ internal class PreviewQuackServer(
             "INSERT INTO lake.migrate_seed VALUES (1,'file'),(2,'file'),(3,'file'); " +
             "CALL lake.set_option('data_inlining_row_limit',10,table_name=>'migrate_seed'); " +
             "INSERT INTO lake.migrate_seed VALUES (100,'old'); " +
-            "ALTER TABLE lake.migrate_seed ADD COLUMN x INTEGER; INSERT INTO lake.migrate_seed VALUES (101,'new',7)")
+            "ALTER TABLE lake.migrate_seed ADD COLUMN x INTEGER; INSERT INTO lake.migrate_seed VALUES (101,'new',7); " +
+            "CREATE TABLE lake.migrate_initial_default(i INTEGER); INSERT INTO lake.migrate_initial_default VALUES (1); " +
+            "ALTER TABLE lake.migrate_initial_default ADD COLUMN v VARCHAR DEFAULT 'NULL'; " +
+            "INSERT INTO lake.migrate_initial_default VALUES (2,NULL)")
         seededSnapshotId = rows(attach + "SELECT max(snapshot_id) FROM meta.ducklake_snapshot").single().single()!!.toLong()
         // This is explicit native migration of a disposable copy, never an action by the JVM reader.
         execute("LOAD ducklake; ATTACH ${literal("ducklake:$database")} AS lake " +

@@ -356,7 +356,7 @@ class TestFinal11ReadPreview {
     }
 
     @Test
-    fun absentInitialDefaultsAreRejectedInsteadOfBeingSilentlyReplacedWithNull() {
+    fun absentInitialDefaultsAreProjectedWithoutReplacingStoredNulls() {
         val name = name("defaults")
         server.native("CREATE TABLE lake.$name(i INTEGER); INSERT INTO lake.$name VALUES (1); " +
             "ALTER TABLE lake.$name ADD COLUMN c INTEGER DEFAULT 42; INSERT INTO lake.$name VALUES (2,NULL)")
@@ -366,10 +366,12 @@ class TestFinal11ReadPreview {
             val columns = reader.getTableColumns(table.tableId, snapshot)
             val infos = reader.getInlinedDataInfos(table.tableId, snapshot).sortedBy { it.schemaVersion }
             assertThat(infos).hasSize(2)
-            assertThatThrownBy { reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, snapshot, columns) }
-                .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("initial-default")
-            assertThatThrownBy { reader.getInlinedChangesBetweenDecoded(table.tableId, infos.first().schemaVersion, 0, snapshot,
-                columns.map { it.columnId }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("initial-default")
+            assertThat(reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, snapshot, columns))
+                .containsExactly(listOf(1, 42))
+            assertThat(reader.readInlinedData(table.tableId, infos.first().schemaVersion, snapshot, columns))
+                .containsExactly(listOf(1, 42))
+            assertThat(reader.getInlinedChangesBetweenDecoded(table.tableId, infos.first().schemaVersion, 0, snapshot,
+                columns.map { it.columnId }).single().values).containsExactly(1, 42)
             assertThat(reader.readInlinedDataDecoded(table.tableId, infos.last().schemaVersion, snapshot, columns))
                 .containsExactly(listOf(2, null)) // A real stored NULL must not become the default.
             assertThatThrownBy { reader.readInlinedDataDecoded(table.tableId, infos.last().schemaVersion, snapshot, emptyList()) }
@@ -389,8 +391,8 @@ class TestFinal11ReadPreview {
             val columns = reader.getTableColumns(table.tableId, snapshot)
             val infos = reader.getInlinedDataInfos(table.tableId, snapshot).sortedBy { it.schemaVersion }
             assertThat(columns.single { it.columnName == "c" }.initialDefault).isEqualTo("NULL") // Plain literal value, not an SQL sentinel.
-            assertThatThrownBy { reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, snapshot, columns) }
-                .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("initial-default")
+            assertThat(reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, snapshot, columns))
+                .containsExactly(listOf(1, "NULL"))
             assertThat(reader.readInlinedDataDecoded(table.tableId, infos.last().schemaVersion, snapshot, columns))
                 .containsExactly(listOf(2, null))
         }

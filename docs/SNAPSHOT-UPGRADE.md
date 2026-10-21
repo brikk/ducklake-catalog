@@ -44,6 +44,11 @@ COMMIT handling apply. The deprecated row-count argument remains ignored.
   bounds/range pruning and rejects unqualified inline projections. It does not
   migrate a catalog or enable any 1.1 writes; the flag defaults off.
 
+- The final-1.1 reader now supplies qualified scalar **initial defaults** for fields
+  absent from older inline schemas, in ordinary reads and CDC. Stored NULLs and
+  literal `NULL` strings remain distinct. Defaults are values, never SQL expressions;
+  invalid casts fail. Nested-field evolution and unqualified types remain rejected.
+
 - Older inline schema-version resolution and snapshot-expiry boundary preservation
   are safer. Ambiguous evidence fails explicitly rather than silently dropping rows.
 - PostgreSQL cleanup hierarchy lookups are bounded per page owner, without changing

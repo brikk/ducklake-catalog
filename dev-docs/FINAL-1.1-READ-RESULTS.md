@@ -1,5 +1,12 @@
 # First final-1.1 read tier — October 20
 
+**Read-first expansion:** R01 now projects qualified scalar initial defaults for
+missing top-level fields, preserving stored NULLs and CDC identity. See the
+[1.1 support TODO and current verification](TODO-DUCKLAKE-1.1-SUPPORT.md) and
+[upstream test adoption](UPSTREAM-1.1-READ-TESTS.md). Initial-default rejections
+described in the original results below predate this verified increment; other
+type/evolution/hierarchy/backend restrictions remain in force.
+
 **Shipping follow-up:** all 33 direct-Java tests were subsequently requalified on
 official 2.0.0, core `d54cbbe3df`, signed DuckLake `417a9117f5` and Quack `f96420ed46`.
 See [shipping upgrade results](UPGRADE-DUCKDB-2.0.0.md); staged results below remain

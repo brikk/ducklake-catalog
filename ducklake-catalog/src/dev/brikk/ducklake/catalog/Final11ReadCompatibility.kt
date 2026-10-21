@@ -15,6 +15,7 @@ package dev.brikk.ducklake.catalog
 
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_SCHEMA
 import org.jooq.DSLContext
+import org.jooq.Field
 import org.jooq.SQLDialect
 import org.jooq.impl.DSL
 
@@ -25,6 +26,8 @@ internal object Final11ReadCompatibility {
     private val SCALARS = setOf("boolean", "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128",
         "float32", "float64", "varchar", "json", "blob", "uuid", "date", "timestamp", "timestamp_s", "timestamp_ms", "timestamp_us",
         "timestamp_ns", "timestamptz")
+
+    data class InitialDefaultProjection(val field: Field<*>, val type: InlinedTypeNode)
 
     fun requireReadableLayout(ctx: DSLContext, version: String?) {
         if (version in setOf("0.4", "1.0")) return
@@ -59,12 +62,14 @@ internal object Final11ReadCompatibility {
 
     fun requireProjection(
         ctx: DSLContext, tableName: String, source: List<DucklakeColumn>, requested: List<DucklakeColumn>, sourceTypes: Map<Long, String>,
-    ) {
+        targetTypes: Map<Long, InlinedTypeNode>,
+    ): Map<Long, InitialDefaultProjection> {
         val byId = source.filter { it.parentColumn == null }.associateBy { it.columnId }
+        val defaults = mutableMapOf<Long, InitialDefaultProjection>()
         for (column in requested) {
             val original = byId[column.columnId]
             if (original == null) {
-                requireAbsentColumnProjection(column)
+                initialDefaultProjection(column, targetTypes.getValue(column.columnId))?.let { defaults[column.columnId] = it }
                 continue // A genuinely absent, no-default field is SQL NULL; never replace a stored NULL.
             }
             if (original.columnName.lowercase() in INLINE_SYSTEM_NAMES) {
@@ -77,13 +82,21 @@ internal object Final11ReadCompatibility {
             requireInlineType(node)
             requirePhysicalPayloadType(ctx, tableName, node)
         }
+        return defaults
     }
 
-    private fun requireAbsentColumnProjection(column: DucklakeColumn) {
+    private fun initialDefaultProjection(column: DucklakeColumn, type: InlinedTypeNode): InitialDefaultProjection? {
         // initial_default stores the literal value, not SQL source: "NULL" can be a real VARCHAR default.
-        if (column.initialDefault != null) {
-            throw DucklakeInvalidOperationException("Final-1.1 initial-default projection is not qualified for column ${column.columnId}")
+        val value = column.initialDefault ?: return null
+        if (type.type in setOf("struct", "list", "map")) {
+            throw DucklakeInvalidOperationException("Final-1.1 initial default for nested column ${column.columnId} is not qualified")
         }
+        requireInlineType(type)
+        val typeSql = physicalType(type)
+        // Bind/inline the entire value as ONE VARCHAR literal. Only the independently whitelisted
+        // type is SQL syntax; malformed values raise a strict native cast error, never TRY_CAST/NULL.
+        val field = DSL.field("CAST({0} AS {1})", DSL.`val`(value), DSL.sql(typeSql))
+        return InitialDefaultProjection(field, type)
     }
 
     private fun requireInlineType(node: InlinedTypeNode) {
@@ -103,8 +116,7 @@ internal object Final11ReadCompatibility {
     private fun requirePhysicalPayloadType(ctx: DSLContext, tableName: String, node: InlinedTypeNode) {
         // Never interpolate arbitrary metadata type text: requireInlineType has whitelisted every
         // leaf (including bounded decimal grammar), and physicalType quotes all field identifiers.
-        val typeSql = InlinedDataTables.physicalType(node, SQLDialect.DUCKDB)
-        if (typeSql.length > 16384) throw DucklakeInvalidOperationException("Final-1.1 physical payload type exceeds the qualification budget")
+        val typeSql = physicalType(node)
         val columns = DSL.table(DSL.sql("information_schema.columns")).`as`("payload_columns")
         fun text(name: String) = DSL.field(DSL.name("payload_columns", name), String::class.java)
         val normalized = DSL.field("typeof(CAST(NULL AS {0}))", String::class.java, DSL.sql(typeSql))
@@ -115,5 +127,11 @@ internal object Final11ReadCompatibility {
             .and(DSL.field(DSL.name("payload_columns", "ordinal_position"), Int::class.javaObjectType).ge(4))
             .and(text("data_type").eq(normalized)).limit(1))
         if (!matches) throw DucklakeInvalidOperationException("Unsupported final-1.1 physical payload type for column ${node.name}")
+    }
+
+    private fun physicalType(node: InlinedTypeNode): String {
+        val sql = InlinedDataTables.physicalType(node, SQLDialect.DUCKDB)
+        if (sql.length > 16384) throw DucklakeInvalidOperationException("Final-1.1 physical payload type exceeds the qualification budget")
+        return sql
     }
 }

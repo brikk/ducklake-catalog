@@ -91,6 +91,7 @@ dependencies {
     testImplementation(project(":ducklake-catalog"))
     testImplementation(testFixtures(project(":ducklake-catalog")))
     testRuntimeOnly(libs.postgres.jdbc)
+    testRuntimeOnly(libs.quack.jdbc)
 }
 
 tasks.withType<Test> {

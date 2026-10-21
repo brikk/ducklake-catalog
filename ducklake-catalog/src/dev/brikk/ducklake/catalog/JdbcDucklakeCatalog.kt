@@ -2041,9 +2041,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             ?: return emptyList()
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
         val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
-        requireConservativeInlineProjection(inlined.name, tableId, endSnapshot, allSourceColumns, columnIds)
+        val initialDefaults = requireConservativeInlineProjection(inlined.name, tableId, endSnapshot, allSourceColumns, columnIds)
         val rowIdField = inlined.rowId
-        val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columnIds, "c", decode)
+        val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columnIds, "c", decode, initialDefaults)
 
         val projected: MutableList<Field<*>> = ArrayList(columnIds.size + 3)
         projected.add(rowIdField)
@@ -2135,7 +2135,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * column tree. When [decode] is requested, types whose native JDBC mapping loses information on
      * text-backed backends (`time` → `java.sql.Time` drops microseconds, `timetz` also its offset,
      * `interval` → a driver class) are read as text via [textCastIfNeeded]; [InlinedValues] then
-     * parses them. Absent columns project SQL NULL.
+     * parses them. Absent columns project SQL NULL, or a qualified final-1.1 typed initial default.
      */
     private class InlinedProjection(val fields: List<Field<*>>, val types: List<InlinedTypeNode?>)
 
@@ -2145,6 +2145,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         columnIds: List<Long>,
         aliasPrefix: String,
         decode: Boolean,
+        initialDefaults: Map<Long, Final11ReadCompatibility.InitialDefaultProjection>,
     ): InlinedProjection {
         val fields = ArrayList<Field<*>>(columnIds.size)
         val types = ArrayList<InlinedTypeNode?>(columnIds.size)
@@ -2152,8 +2153,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val alias = "$aliasPrefix$index"
             val sourceColumn = sourceColumnsById[columnIds[index]]
             if (sourceColumn == null) {
-                fields.add(DSL.inline(null as Any?).`as`(alias))
-                types.add(null)
+                val default = initialDefaults[columnIds[index]]
+                fields.add((default?.field ?: DSL.inline(null as Any?)).`as`(alias))
+                types.add(if (decode) default?.type else null)
                 continue
             }
             val node = if (decode) InlinedValues.typeTree(sourceColumn, allSourceColumns) else null
@@ -2172,15 +2174,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     private fun requireConservativeInlineProjection(
         tableName: String, tableId: Long, snapshotId: Long, source: List<DucklakeColumn>, ids: List<Long>,
-    ) {
+    ): Map<Long, Final11ReadCompatibility.InitialDefaultProjection> {
         val ctx = dsl
-        if (!conservativeFinal11Read(ctx)) return
+        if (!conservativeFinal11Read(ctx)) return emptyMap()
         val target = getTableColumns(tableId, snapshotId).associateBy { it.columnId }
         val requested = ids.map { id -> target[id]
             ?: throw DucklakeInvalidOperationException("Unknown final-1.1 requested column $id at snapshot $snapshotId") }
         val children = source.filter { it.parentColumn != null }.groupBy { it.parentColumn!! }
         val sourceTypes = source.filter { it.parentColumn == null }.associate { it.columnId to resolveColumnType(it, children) }
-        Final11ReadCompatibility.requireProjection(ctx, tableName, source, requested, sourceTypes)
+        val allTargetColumns = getAllColumnsWithParentage(tableId, snapshotId)
+        val targetTypes = allTargetColumns.filter { it.parentColumn == null }
+            .associate { it.columnId to InlinedValues.typeTree(it, allTargetColumns) }
+        return Final11ReadCompatibility.requireProjection(ctx, tableName, source, requested, sourceTypes, targetTypes)
     }
 
     private fun readInlinedDataInternal(
@@ -2203,8 +2208,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
         val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
-        requireConservativeInlineProjection(inlined.name, tableId, snapshotId, allSourceColumns, columns.map { it.columnId })
-        val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columns.map { it.columnId }, "c", decode)
+        val initialDefaults = requireConservativeInlineProjection(inlined.name, tableId, snapshotId, allSourceColumns, columns.map { it.columnId })
+        val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columns.map { it.columnId }, "c", decode, initialDefaults)
 
         return try {
             val result = dsl.select(projection.fields)
