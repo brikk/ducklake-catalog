@@ -80,3 +80,33 @@ All fixtures own their processes and temporary catalogs/extensions; they were
 removed after verification. Nothing writes production metadata or changes
 maintained/preview/corpus pins. Other catalog backends and the newer branch-tip
 Quack build remain outside this opt-in qualification.
+
+## Post-push qualification follow-up
+
+[CI 39517353623](https://github.com/brikk/ducklake-catalog/actions/runs/39517353623)
+exposed a test assumption: MySQL's fractional native bootstrap time can sort after
+later whole-second commits, so latest timestamp does not necessarily mean highest
+snapshot ID. The five-route assertion now derives the result from the pinned
+visible snapshots at the **winner's actual timestamp**. A leaking query must select
+the winner at that cutoff; a future-dated bootstrap cannot mask it. A deterministic
+local regression covers non-monotonic times, timestamp ties and pinned visibility.
+Timestamp lookup runtime code did not need changing.
+
+The eve-of-release source audit also motivated two narrower reader hardenings:
+
+- A real reordered-STRUCT fixture passed through the old positional reader instead
+  of rejecting the physical/logical mismatch. The reader now compares the selected
+  physical payload type with a native-normalized, whitelisted source type. It
+  transfers only a bounded existence result; it never casts the actual payload.
+  Decimal grammar/precision and type-SQL size are bounded before building that query.
+- Native metadata confirms `initial_default` holds plain literal text. A string
+  `NULL` is a genuine non-NULL VARCHAR default, not the absence of a default. The
+  adapter now rejects every non-NULL initial default for an absent source field,
+  while preserving stored NULLs. This regression failed before the correction.
+
+Final follow-up forced verification passed **600 maintained JUnit tests** (509
+catalog, 51 SLT, 40 replay) and **33 staged-preview tests**, zero failures/errors/
+skipped JUnit tests; 9,697 corpus records, existing corpus skips unchanged. Detekt,
+Java 17 checkAbi and frozen ABI/wire controls pass. Existing write guards, old DTOs
+and production/preview/corpus pins are unchanged. Owned processes and temporary
+catalogs/extensions were removed after verification.

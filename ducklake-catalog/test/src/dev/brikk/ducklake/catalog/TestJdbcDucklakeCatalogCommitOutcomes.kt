@@ -139,6 +139,7 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
             Files.copy(output, output.resolveSibling("after-pin.parquet"))
             val before = catalog.currentSnapshotId
             var winner = -1L
+            var winnerTime = Instant.EPOCH
             catalog.readSession(Supplier {
                 assertThat(catalog.currentSnapshotId).isEqualTo(before) // Establish the remote MVCC snapshot.
                 val snapshots = catalog.listSnapshots()
@@ -146,13 +147,22 @@ class TestJdbcDucklakeCatalogCommitOutcomes {
                 JdbcDucklakeCatalog(configuration).use { other ->
                     other.commitInsert(table.tableId, listOf(fragment.copy(path = "after-pin.parquet")))
                     winner = other.currentSnapshotId
+                    winnerTime = other.getSnapshot(winner)!!.snapshotTime
                 }
                 assertThat(winner).isEqualTo(before + 1)
                 assertThat(catalog.currentSnapshotId).isEqualTo(before)
                 assertThat(catalog.listSnapshots()).isEqualTo(snapshots)
                 assertThat(catalog.listSnapshotChanges()).isEqualTo(changes)
                 assertThat(catalog.getSnapshot(winner)).isNull()
-                assertThat(catalog.getSnapshotAtOrBefore(Instant.now().plusSeconds(60))!!.snapshotId).isEqualTo(before)
+                // MySQL's native bootstrap can retain fractional seconds while SQL CURRENT_TIMESTAMP
+                // commits use whole seconds. A lower ID can therefore be the latest-TIMED snapshot.
+                // Check against the pinned visible rows, not an assumed ID/time monotonicity.
+                // At the winner's own stored time, a leaking query would necessarily select the
+                // winner (newest ID at the cutoff); older future-dated bootstrap rows cannot mask it.
+                val cutoff = winnerTime
+                val expectedAtCutoff = snapshots.filter { !it.snapshotTime.isAfter(cutoff) }
+                    .maxWithOrNull(compareBy<DucklakeSnapshot> { it.snapshotTime }.thenBy { it.snapshotId })
+                assertThat(catalog.getSnapshotAtOrBefore(cutoff)?.snapshotId).isEqualTo(expectedAtCutoff?.snapshotId)
                 assertThat(catalog.getDataFilesAddedBetween(table.tableId, winner, winner)).isEmpty()
                 assertThat(catalog.getDeletionsBetween(table.tableId, winner, winner)).isEmpty()
                 assertThat(catalog.getDataFiles(table.tableId, winner)).hasSize(1)

@@ -66,20 +66,20 @@ class TestJdbcDucklakeCatalogIntegration {
     @Test
     fun testGetSnapshotAtOrBeforeMatchesScan() {
         // Regression for the SQL-pushdown rewrite of getSnapshotAtOrBefore (was: materialize the
-        // whole snapshot table and filter in Java). It must return the SAME row the scan produced
-        // for every probe: the reference here reproduces the old behavior (snapshot_time <= ts,
-        // first by snapshot_id DESC) over listSnapshots() — itself ordered by snapshot_id DESC.
+        // whole snapshot table and filter in Java). Match latest timestamp first, with the highest
+        // snapshot ID breaking ties. ID order alone is wrong when writers' clocks/precision differ.
         val catalog = catalog!!
         val snapshots = catalog.listSnapshots()
         assertThat(snapshots).isNotEmpty()
 
         fun scanAtOrBefore(ts: Instant): DucklakeSnapshot? =
-            snapshots.firstOrNull { !it.snapshotTime.isAfter(ts) }
+            snapshots.filter { !it.snapshotTime.isAfter(ts) }
+                .maxWithOrNull(compareBy<DucklakeSnapshot> { it.snapshotTime }.thenBy { it.snapshotId })
 
         val probes = buildList {
-            add(snapshots.last().snapshotTime.minusSeconds(1)) // strictly before earliest -> empty
+            add(snapshots.minOf { it.snapshotTime }.minusSeconds(1)) // strictly before earliest -> empty
             snapshots.forEach { add(it.snapshotTime) }          // each exact snapshot time
-            add(snapshots.first().snapshotTime.plusSeconds(3600)) // after latest -> latest row
+            add(snapshots.maxOf { it.snapshotTime }.plusSeconds(3600)) // after latest -> latest-timed row
         }
         for (ts in probes) {
             assertThat(catalog.getSnapshotAtOrBefore(ts)?.snapshotId)

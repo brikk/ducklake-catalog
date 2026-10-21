@@ -309,6 +309,26 @@ class TestFinal11ReadPreview {
     }
 
     @Test
+    fun reorderedPhysicalStructFieldsCannotSilentlySwapLogicalValues() {
+        val name = name("physical_struct")
+        server.native("CREATE TABLE lake.$name(s STRUCT(a INTEGER,b INTEGER)); INSERT INTO lake.$name VALUES ({'a':10,'b':20})")
+        val snapshot = read { reader.currentSnapshotId }
+        val table = read { reader.getTable("main", name, snapshot)!! }
+        val columns = read { reader.getTableColumns(table.tableId, snapshot) }
+        val info = read { reader.getInlinedDataInfos(table.tableId, snapshot).single() }
+        // Reproduces the legacy physical ordering identified upstream without changing the
+        // logical catalog tree. Positional JDBC STRUCT decoding must not turn a=10 into a=20.
+        server.connection().use { c -> c.createStatement().use { st ->
+            st.execute("ALTER TABLE ${info.tableName} ALTER COLUMN s TYPE STRUCT(b INTEGER,a INTEGER)")
+        } }
+        server.connection().use { c ->
+            assertThat(PreviewQuackServer.jdbcRows(c, "SELECT s.a,s.b FROM ${info.tableName}")).containsExactly(listOf("10", "20"))
+        }
+        assertThatThrownBy { read { reader.readInlinedDataDecoded(table.tableId, info.schemaVersion, snapshot, columns) } }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("physical payload type")
+    }
+
+    @Test
     fun commonScalarValuesPreserveUnsignedDecimalUuidAndNanosecondPrecision() {
         val name = name("scalars")
         server.native("CREATE TABLE lake.$name(i INTEGER,a DECIMAL(38,9),u UBIGINT,d DATE,ts TIMESTAMP_NS,tz TIMESTAMPTZ,k UUID,b BOOLEAN,f DOUBLE); " +
@@ -356,6 +376,25 @@ class TestFinal11ReadPreview {
                 .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("nonempty projection")
         }
         assertThat(server.native("SELECT i,c FROM lake.$name ORDER BY i")).containsExactly(listOf("1", "42"), listOf("2", null))
+    }
+
+    @Test
+    fun literalNullInitialDefaultIsNotConfusedWithSqlNull() {
+        val name = name("literal_default")
+        server.native("CREATE TABLE lake.$name(i INTEGER); INSERT INTO lake.$name VALUES (1); " +
+            "ALTER TABLE lake.$name ADD COLUMN c VARCHAR DEFAULT 'NULL'; INSERT INTO lake.$name VALUES (2,NULL)")
+        read {
+            val snapshot = reader.currentSnapshotId
+            val table = reader.getTable("main", name, snapshot)!!
+            val columns = reader.getTableColumns(table.tableId, snapshot)
+            val infos = reader.getInlinedDataInfos(table.tableId, snapshot).sortedBy { it.schemaVersion }
+            assertThat(columns.single { it.columnName == "c" }.initialDefault).isEqualTo("NULL") // Plain literal value, not an SQL sentinel.
+            assertThatThrownBy { reader.readInlinedDataDecoded(table.tableId, infos.first().schemaVersion, snapshot, columns) }
+                .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("initial-default")
+            assertThat(reader.readInlinedDataDecoded(table.tableId, infos.last().schemaVersion, snapshot, columns))
+                .containsExactly(listOf(2, null))
+        }
+        assertThat(server.native("SELECT i,c FROM lake.$name ORDER BY i")).containsExactly(listOf("1", "NULL"), listOf("2", null))
     }
 
     @Test

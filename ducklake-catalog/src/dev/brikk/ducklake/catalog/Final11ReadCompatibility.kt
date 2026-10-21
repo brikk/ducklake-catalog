@@ -15,11 +15,13 @@ package dev.brikk.ducklake.catalog
 
 import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_SCHEMA
 import org.jooq.DSLContext
+import org.jooq.SQLDialect
 import org.jooq.impl.DSL
 
 /** Conservative legacy-DTO reader, not an implementation of parent-aware 1.1 envelopes. */
 internal object Final11ReadCompatibility {
     private val INLINE_SYSTEM_NAMES = listOf("_ducklake_row_id", "_ducklake_begin_snapshot", "_ducklake_end_snapshot")
+    private val DECIMAL = Regex("decimal\\(\\s*([0-9]{1,2})\\s*,\\s*([0-9]{1,2})\\s*\\)")
     private val SCALARS = setOf("boolean", "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128",
         "float32", "float64", "varchar", "json", "blob", "uuid", "date", "timestamp", "timestamp_s", "timestamp_ms", "timestamp_us",
         "timestamp_ns", "timestamptz")
@@ -55,7 +57,9 @@ internal object Final11ReadCompatibility {
         }
     }
 
-    fun requireProjection(source: List<DucklakeColumn>, requested: List<DucklakeColumn>, sourceTypes: Map<Long, String>) {
+    fun requireProjection(
+        ctx: DSLContext, tableName: String, source: List<DucklakeColumn>, requested: List<DucklakeColumn>, sourceTypes: Map<Long, String>,
+    ) {
         val byId = source.filter { it.parentColumn == null }.associateBy { it.columnId }
         for (column in requested) {
             val original = byId[column.columnId]
@@ -69,21 +73,47 @@ internal object Final11ReadCompatibility {
             if (sourceTypes[column.columnId] != column.columnType) {
                 throw DucklakeInvalidOperationException("Final-1.1 type-evolution projection is not qualified for column ${column.columnId}")
             }
-            requireInlineType(InlinedValues.typeTree(original, source))
+            val node = InlinedValues.typeTree(original, source)
+            requireInlineType(node)
+            requirePhysicalPayloadType(ctx, tableName, node)
         }
     }
 
     private fun requireAbsentColumnProjection(column: DucklakeColumn) {
-        if (column.initialDefault != null && !column.initialDefault.trim().equals("NULL", ignoreCase = true)) {
+        // initial_default stores the literal value, not SQL source: "NULL" can be a real VARCHAR default.
+        if (column.initialDefault != null) {
             throw DucklakeInvalidOperationException("Final-1.1 initial-default projection is not qualified for column ${column.columnId}")
         }
     }
 
     private fun requireInlineType(node: InlinedTypeNode) {
         val container = node.type in setOf("struct", "list", "map")
-        if (!container && node.type !in SCALARS && !node.type.startsWith("decimal(")) {
+        if (!container && node.type !in SCALARS && !supportedDecimal(node.type)) {
             throw DucklakeInvalidOperationException("Final-1.1 inline type ${node.type} is not qualified by the conservative reader")
         }
         node.children.forEach(::requireInlineType)
+    }
+
+    private fun supportedDecimal(type: String): Boolean {
+        val match = DECIMAL.matchEntire(type) ?: return false
+        val precision = match.groupValues[1].toInt()
+        return precision in 1..38 && match.groupValues[2].toInt() in 0..precision
+    }
+
+    private fun requirePhysicalPayloadType(ctx: DSLContext, tableName: String, node: InlinedTypeNode) {
+        // Never interpolate arbitrary metadata type text: requireInlineType has whitelisted every
+        // leaf (including bounded decimal grammar), and physicalType quotes all field identifiers.
+        val typeSql = InlinedDataTables.physicalType(node, SQLDialect.DUCKDB)
+        if (typeSql.length > 16384) throw DucklakeInvalidOperationException("Final-1.1 physical payload type exceeds the qualification budget")
+        val columns = DSL.table(DSL.sql("information_schema.columns")).`as`("payload_columns")
+        fun text(name: String) = DSL.field(DSL.name("payload_columns", name), String::class.java)
+        val normalized = DSL.field("typeof(CAST(NULL AS {0}))", String::class.java, DSL.sql(typeSql))
+        val matches = ctx.fetchExists(ctx.selectOne().from(columns)
+            .where(text("table_catalog").eq(DSL.field("current_database()", String::class.java)))
+            .and(text("table_schema").eq(DSL.field("current_schema()", String::class.java)))
+            .and(text("table_name").eq(tableName)).and(text("column_name").eq(node.name))
+            .and(DSL.field(DSL.name("payload_columns", "ordinal_position"), Int::class.javaObjectType).ge(4))
+            .and(text("data_type").eq(normalized)).limit(1))
+        if (!matches) throw DucklakeInvalidOperationException("Unsupported final-1.1 physical payload type for column ${node.name}")
     }
 }

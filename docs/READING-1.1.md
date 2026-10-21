@@ -61,6 +61,9 @@ The reader rejects these rather than silently returning wrong values:
 - A missing source column that requires a non-NULL initial default.
 - Type evolution, including changed nested field structure/names, requiring a
   source-to-target conversion. Top-level renames with stable field IDs/types work.
+- Physical payload types/order that differ from the logical source metadata,
+  including legacy reordered STRUCT fields. The adapter rejects these rather than
+  trusting positional JDBC attributes or silently coercing the data.
 - TIME/TIME_NS/TIMETZ, INTERVAL, VARIANT and other unqualified inline payload types.
   Qualified scalar families are Boolean, signed/unsigned integers, floating point,
   decimal, VARCHAR/JSON/BLOB, UUID, DATE and timestamp families, recursively within
@@ -69,7 +72,8 @@ The reader rejects these rather than silently returning wrong values:
   CDC can still use its row/snapshot metadata.
 
 Requested columns must come from the target snapshot's metadata. Stored NULLs
-remain NULL; the adapter never evaluates arbitrary default expressions. Native
+remain NULL; a literal default string `NULL` is not an SQL NULL sentinel. The adapter
+never evaluates arbitrary default expressions. Native
 query failures and missing physical system columns propagate instead of becoming
 empty reads. Raw-value reads do not bypass these safety checks.
 
