@@ -21,3 +21,8 @@ base64 -w 100 /tmp/opencode/catalog-011-consumer/dev/brikk/ducklake/catalog/comp
 Missing annotation classes can produce harmless javac warnings in this minimal
 compile; no annotation processing runs. This fixture locks selected descriptors,
 not the entire library ABI. Existing airlift JSON goldens remain authoritative.
+
+Compatibility is [best effort, not an absolute design constraint](DUCKLAKE-1.1-CONSUMER-CONTRACT.md).
+For an intentional coordinated breaking change, explicitly revise the compatibility
+claim and versioned tests with the owned plugins. Do not recompile this 0.11.0
+fixture against the worktree and describe that as proof of old-consumer compatibility.

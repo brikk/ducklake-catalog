@@ -5,19 +5,34 @@ The richer envelopes below remain a specification. A first
 direct-Java adapter: it omits bounds and rejects unrepresentable/unqualified cases
 rather than adding facts to the old records. It enables no 1.1 writes.
 
-## Compatibility decision
+## Compatibility policy — best effort, coordinated changes allowed
 
-Preserve existing `DucklakeSchema`, `DucklakeDataFile`, `DucklakeFileColumnStats`
-and `DucklakeColumnStats` record components, Java constructor/accessor descriptors
-and airlift JSON shapes. **Do not append candidate fields to these records.**
-Kotlin defaults don't restore Java constructors; secondary constructors alone
-don't preserve record components, Kotlin `copy` descriptors or old wire readers.
+**Owner clarification, October 21:** the known consumers are our own
+`trino-ducklake` and `doris-ducklake` plugins; Doris has no release yet. No external
+catalog consumers are known, but this is not proof that published artifacts have
+none. Compatibility is a preference, **not an absolute design constraint**.
 
-Expose richer read metadata through **new companion/envelope types and an opt-in
-extension interface**, without adding abstract methods to `DucklakeCatalog`.
-Names/signatures will be finalized with RC qualification, but this separation is
-the intended compatibility seam. Unsupported implementations fail explicitly;
-they must not synthesize capability flags or return empty "supported" metadata.
+Preserve existing constructors/accessors, record components, Kotlin descriptors
+and JSON where practical. Companion/envelope types and an opt-in extension
+interface remain useful options, not mandatory architecture. If changing an
+existing record, interface or fragment contract is materially clearer, an intentional
+break may be made with documented impact, a version/cutover decision and coordinated
+changes and verification in both owned plugins. Do not accumulate elaborate
+compatibility machinery solely to preserve an unclaimed legacy contract.
+Adding 1.1 fields directly to existing models is a valid option when updating the
+owned plugins is simpler than maintaining parallel legacy/new APIs.
+
+This is permission to consider coordinated changes, not an instruction to break
+APIs now or silently assume that both plugins have been updated. Connector agents
+own their implementations. Kotlin defaults do not preserve Java constructors;
+secondary constructors alone do not preserve record components, `copy` descriptors
+or old wire readers. Existing compatibility tests are useful detectors: an intentional
+break must explicitly revise the promised contract and its tests, not make a failing
+frozen consumer appear compatible by recompiling it against the changed library.
+
+Correct NULL/byte/identity/exactness semantics, supported JVM runtime floors and
+safe mixed worker/coordinator behavior remain requirements. Unsupported implementations
+must fail explicitly, not synthesize capabilities or empty "supported" metadata.
 
 ## Required semantics of the future envelopes
 
@@ -49,11 +64,12 @@ delete files require per-position filtering even when `partial_max` is NULL.
 
 ## Wire and rollout gates
 
-- Keep existing fragment JSON unchanged until an explicitly versioned richer
-  writer contract is implemented. A reader metadata envelope is not permission
-  to accept 1.1 writes through old fragment types.
-- New envelopes must distinguish absent/NULL from false and zero, use independent
-  versioned JSON fixtures and explicitly negotiate worker/coordinator capability.
+- Prefer existing fragment JSON; intentional changes require a documented writer
+  contract and coordinated producer/consumer cutover. A reader metadata envelope
+  is not permission to accept 1.1 writes through old fragment types.
+- New metadata must distinguish absent/NULL from false and zero and have explicit
+  JSON fixtures. Where mixed workers/coordinators are supported, negotiate their
+  capability; otherwise use a coordinated cutover with old work drained/rejected.
   Unknown fields being tolerated by a decoder is **not** capability negotiation.
 - Test old producer → new consumer and new producer → old consumer where claimed.
   Unsupported mixed-version writes must fail before side effects. Coordinate

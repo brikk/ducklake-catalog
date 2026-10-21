@@ -16,16 +16,18 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   implement qualified scalar conversions and nested add/drop/rename/reorder/type
   evolution, and handle physically reordered legacy STRUCTs without positional
   value swaps. Historical reads and CDC must use their intended target schema.
-  Guarded reader implementation is active; broad shipping-native closure is blocked
-  by the strict newer-upstream failures recorded below, not waived by JVM passes.
+  Guarded reader implementation is committed as `91af736`; closure is paused until
+  an installable, qualified DuckLake build bundles the upstream fixes below. JVM
+  passes do not waive those strict native failures.
 - [ ] **R03 — Remaining inline types and edge values.** Qualify TIME/TIME_NS/TIMETZ,
   INTERVAL, VARIANT and other outstanding types, including nested values, nanoseconds,
   offsets, infinities and TIME 24:00. Define lossless Java values or explicit narrow
   rejection; do not pass through a lossy JDBC mapping as support.
-- [ ] **R04 — Rich read metadata contract.** Add opt-in companion/envelope APIs for
-  schema parentage, independent nullable bound exactness, nullable data/delete
-  row-group counts and actual layout/provenance/capabilities. Preserve every existing
-  Java constructor/accessor/record component and JSON shape. Missing metadata is
+- [ ] **R04 — Rich read metadata contract.** Expose schema parentage, independent
+  nullable bound exactness, nullable data/delete
+  row-group counts and actual layout/provenance/capabilities. Prefer preserving
+  existing Java/record/JSON contracts, but allow a justified documented change with
+  coordinated Trino/Doris updates and verification. Missing metadata is
   unknown, never false/zero/exact. Keep old statistics/pruning fallbacks safe.
 - [ ] **R05 — Parent-aware schema and path reads.** Resolve nested qualification by
   IDs across live/historical/retired metadata; reject missing parents, cycles and
@@ -45,8 +47,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
 
 ## Write support — do not enable during read work
 
-- [ ] **W01 — Versioned writer contract.** Define 1.1-capable fragments/capability
-  negotiation without altering existing record/JSON contracts; mixed old/new
+- [ ] **W01 — Versioned writer contract.** Define 1.1-capable fragments and a safe
+  rollout/capability strategy, preserving existing record/JSON contracts where practical or documenting
+  a coordinated owned-plugin cutover where a break is justified; mixed old/new
   producers must be rejected before side effects when unsupported.
 - [ ] **W02 — Version-aware metadata writes.** Implement final inline DDL/system
   names/reserved-name rules, schema parentage and statistics/exactness/row-group
@@ -74,7 +77,10 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
 - Keep dependency/corpus/preview/layout pins explicit; no moving `latest` targets.
 - Read work must leave **all 1.1 write guards and automatic-migration defaults unchanged**.
 - Preserve independently expected rows/bytes/IDs, native failures, existing exclusions
-  and frozen ABI/wire controls. Do not replace goldens with observed output.
+  and semantic wire controls. Keep ABI/shape tests as compatibility detectors until
+  an intentional contract change is documented and coordinated with both plugins;
+  compatibility is best effort, not a design veto. Do not replace correctness goldens
+  with observed output. See the [current consumer policy](DUCKLAKE-1.1-CONSUMER-CONTRACT.md).
 - Adopt upstream 1.1 tests as each capability is implemented. Keep original SQL and
   independent expected results, record exact source revisions/digests, and distinguish
   corpus tests matching the shipped extension from newer upstream regressions. Newer
@@ -89,7 +95,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
 - Baseline: [`505aeac`](UPGRADE-DUCKDB-2.0.0.md), 605 maintained JUnit tests,
   33 shipping direct-Java tests and 17,602 corpus records; exclusions remain explicit.
 - Completed increment: **R01**, typed missing-column defaults in the existing qualified
-  direct-Java final-1.1 reader. **R02 is active**; R03–R07 remain queued, not implicitly certified.
+  direct-Java final-1.1 reader. **R02 is paused at native acceptance**; R03–R07 remain
+  queued, not implicitly certified. The owner will revisit R02 when the fixes are
+  available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
   mirrors and exact newer upstream regressions queued for subsequent capabilities.
 
