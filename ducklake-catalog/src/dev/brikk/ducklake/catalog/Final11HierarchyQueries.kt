@@ -19,6 +19,7 @@ import org.jooq.Condition
 import org.jooq.DSLContext
 import org.jooq.Field
 import org.jooq.Record
+import org.jooq.SQLDialect
 import org.jooq.impl.DSL
 import org.jooq.impl.SQLDataType
 import java.time.Instant
@@ -128,6 +129,7 @@ internal class Final11HierarchyQueries(private val ctx: DSLContext, private val 
         val id = number("q", "data_file_id")
         val rawPath = DSL.field(DSL.name("q", "path"), String::class.java)
         val path = encoded(DSL.substring(rawPath, 1, Final11SchemaHierarchy.MAX_TEXT + 1))
+        val selectedPath = path.`as`("encoded_path")
         val relative = flag("q", "path_is_relative")
         spend(1)
         if (ctx.fetchExists(ctx.selectOne().from(t).where(id.isNull.or(id.lt(0L)).or(rawPath.isNull).or(rawPath.eq(""))
@@ -140,10 +142,11 @@ internal class Final11HierarchyQueries(private val ctx: DSLContext, private val 
                 .or(id.eq(after.dataFileId).and(path.eq(lastPath)).and(relative.gt(after.pathIsRelative)))
         }
         // Distinct encoded paths do not collapse case/Unicode variants under a text collation.
-        val rows = ctx.selectDistinct(id, path, relative).from(t).where(afterCondition)
-            .orderBy(id, path, relative).limit(limit).fetch()
+        val rows = ctx.selectDistinct(id, selectedPath, relative).from(t).where(afterCondition)
+            .orderBy(id, selectedPath, relative).limit(limit).fetch()
         return rows.map { r ->
-            val cursor = DucklakeScheduledPathCursor(identity(required(r, id)), Final11SchemaHierarchy.decodedPath(required(r, path)), required(r, relative))
+            val cursor = DucklakeScheduledPathCursor(identity(required(r, id)),
+                Final11SchemaHierarchy.decodedPath(required(r, selectedPath)), required(r, relative))
             val resolved = Final11SchemaHierarchy.path(cursor.path, cursor.pathIsRelative, if (cursor.pathIsRelative) root else null)
                 ?: invalid("relative scheduled reference has no catalog data_path root")
             DucklakeScheduledPathReference(cursor, resolved)
@@ -245,7 +248,8 @@ internal class Final11HierarchyQueries(private val ctx: DSLContext, private val 
             DSL.`val`("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), DSL.`val`("abcdefghijklmnopqrstuvwxyz"))
         return encoded(folded).eq(encoded(DSL.`val`(key(name))))
     }
-    private fun encoded(value: Field<String>): Field<ByteArray> = DSL.field("encode({0})", SQLDataType.VARBINARY, value)
+    private fun encoded(value: Field<String>): Field<ByteArray> = DSL.field(
+        if (ctx.dialect().family() == SQLDialect.POSTGRES) "convert_to({0}, 'UTF8')" else "encode({0})", SQLDataType.VARBINARY, value)
     private fun spend(amount: Int) { work += amount; if (work > MAX_WORK) invalid("hierarchy lookup/traversal budget exceeded") }
 
     companion object { private const val MAX_WORK = 8192 }

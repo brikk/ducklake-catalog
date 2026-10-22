@@ -35,6 +35,7 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
     fun hierarchy(): Final11HierarchyQueries = Final11HierarchyQueries(ctx, ::requireSnapshot)
 
     fun capabilities(): DucklakeReadMetadataCapabilities {
+        if (!route.duckDb) invalid("DuckDB-only capabilities cannot represent PostgreSQL provenance; use readBackendProfile")
         val version = ctx.fetch("SELECT library_version,source_id FROM pragma_version()").single()
         val extensions = ctx.fetch("SELECT extension_name,extension_version FROM duckdb_extensions() " +
             "WHERE loaded AND extension_name IN ('ducklake','quack')").associate { it.get(0, String::class.java) to it.get(1, String::class.java) }
@@ -175,7 +176,23 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
                 if (rows.count { it.tableName == table && it.columnName == name && metadataType(it.dataType, route) == type } != 1)
                     invalidLayout("missing or mismatched physical column $table.$name ($type)")
             } }
+            if (!route.duckDb) validatePostgresDimensions(ctx, columns)
             return rows.sortedWith(compareBy({ it.tableName }, { it.columnName }))
+        }
+
+        private fun validatePostgresDimensions(ctx: DSLContext, columns: Table<*>) {
+            fun text(name: String) = DSL.field(DSL.name("c", name), String::class.java)
+            fun number(name: String) = DSL.field(DSL.name("c", name), Int::class.javaObjectType)
+            val rows = ctx.select(text("table_name"), text("column_name"), text("domain_name"), number("character_maximum_length"),
+                number("datetime_precision")).from(columns)
+                .where(text("table_catalog").eq(DSL.field("current_database()", String::class.java)))
+                .and(text("table_schema").eq(DSL.field("current_schema()", String::class.java)))
+                .and(text("table_name").`in`(REQUIRED.keys)).limit(257).fetch()
+            if (rows.size > 256) invalidLayout("physical layout exceeds the column budget")
+            rows.filter { REQUIRED[it.value1()]?.containsKey(it.value2()) == true }.forEach {
+                if (it.value3() != null || it.value4() != null) invalidLayout("domain/narrowed metadata column ${it.value1()}.${it.value2()}")
+                if (it.value2() == "schedule_start" && it.value5() != 6) invalidLayout("schedule_start precision must be 6")
+            }
         }
 
         private fun metadataType(type: String, route: Final11ReadRoute): String = if (route.duckDb) type else when (type) {
@@ -183,6 +200,7 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
             "uuid" -> "UUID"
             "boolean" -> "BOOLEAN"
             "character varying", "text" -> "VARCHAR"
+            "timestamp with time zone" -> "TIMESTAMP WITH TIME ZONE"
             else -> type
         }
         private fun invalidLayout(message: String): Nothing = throw DucklakeInvalidOperationException("Final-1.1 rich metadata: $message")
@@ -201,7 +219,8 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
                 "contains_nan" to "BOOLEAN", "min_value" to "VARCHAR", "max_value" to "VARCHAR", "min_is_exact" to "BOOLEAN", "max_is_exact" to "BOOLEAN"),
             "ducklake_table" to mapOf("table_id" to "BIGINT", "table_uuid" to "UUID", "schema_id" to "BIGINT",
                 "begin_snapshot" to "BIGINT", "end_snapshot" to "BIGINT", "table_name" to "VARCHAR", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN"),
-            "ducklake_files_scheduled_for_deletion" to mapOf("data_file_id" to "BIGINT", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN"),
+            "ducklake_files_scheduled_for_deletion" to mapOf("data_file_id" to "BIGINT", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN",
+                "schedule_start" to "TIMESTAMP WITH TIME ZONE"),
         )
     }
 }

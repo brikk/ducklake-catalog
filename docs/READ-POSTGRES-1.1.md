@@ -1,7 +1,7 @@
 # PostgreSQL final-1.1 read subset
 
 **0.13.0-SNAPSHOT development tier, not full R06 closure.** Direct PostgreSQL JDBC
-now supports an explicit root-schema read subset with `enableFinal11Reads=true`.
+supports an explicit root-schema payload subset plus rich metadata/hierarchy with `enableFinal11Reads=true`.
 MySQL remains rejected. No 1.1 write or automatic migration is enabled.
 
 ```kotlin
@@ -51,9 +51,34 @@ whole-container non-NULL initial defaults, VARIANT/other unqualified types, temp
 infinities and TIME 24:00. Raw reads cannot bypass value guards. Even a missing
 column with a NULL initial default does not certify an unsupported type.
 
-Any nested-schema history remains rejected by ordinary APIs. The DuckDB-specific
-`readMetadata()` and `readHierarchy()` companions are **not qualified on PostgreSQL**
-yet and fail explicitly; their unported SQL is never sent to PostgreSQL.
+Any nested-schema history remains rejected by ordinary payload/descriptor APIs.
+The explicit `readMetadata()` data operations and `readHierarchy()` companion now
+support PostgreSQL without relaxing those legacy guards. The old
+`getReadMetadataCapabilities()` record is **DuckDB-only** and still fails explicitly
+on PostgreSQL; use `readBackendProfile()` for nullable provenance/availability.
+
+## Rich metadata and bounded hierarchy
+
+The same [raw metadata semantics](READ-METADATA.md) apply: parent IDs, independent
+nullable exactness and data/delete row groups are exposed as stored, never treated
+as typed bounds, qualified pruning or exact aggregates. Table statistics remain
+unversioned transaction-visible observations, not historical aggregates. Native
+1.0→1.1 migration leaves old unknown flags/counts unknown, including Puffin counts.
+
+The [hierarchy contract](SCHEMA-HIERARCHY.md) qualifies component/ID-based lookup,
+historical names and retained data/delete ownership at each file's original begin
+snapshot—even after its snapshot row expires. Schema paths remain catalog-root
+relative, not logical-parent relative. NULL directories inherit the base; missing
+roots remain unknown; absolute paths remain absolute. No URI/case/Unicode
+normalization, physical file lease or deletion permission is granted.
+
+Scheduled-reference cursors use `(file ID, UTF-8 path bytes, relative flag)` to retain
+case/Unicode distinctions even under PostgreSQL nondeterministic collations. They
+include future and unknown ages; age-gated deletion batches are not complete known
+sets or acknowledgement cursors. Every page/query is SQL-bounded before transfer,
+with the common node/depth/path/traversal budgets. Callers must also bound total
+enumeration within one owned session. Required native metadata columns/types,
+non-domain/unbounded dimensions and microsecond scheduling precision are validated.
 
 ## Physical storage and raw values
 
@@ -98,7 +123,8 @@ unsigned-extension setting and extension revisions can be **not applicable or
 unavailable**, never fabricated DuckDB facts. PostgreSQL reports the actual server
 `version()` and driver metadata with `accessRoute=postgres-jdbc`; DuckDB-only source/
 extension/unsigned facts are explicit NULL. API availability flags distinguish this
-subset from unavailable rich metadata/hierarchy and never grant writes.
+payload subset and available rich metadata/hierarchy data operations; they never
+grant writes or make the old DuckDB-only capability record portable.
 
 The existing DuckDB `DucklakeReadMetadataCapabilities` record, Java constructors,
 record components and JSON are unchanged. A separate profile is necessary because
@@ -113,5 +139,5 @@ upgraded. Native probes and JDBC reader assertions are separate; genuine native
 
 See [backend status](READ-BACKENDS.md), [support/evidence](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md)
 and [pristine upstream adoption](../dev-docs/UPSTREAM-1.1-READ-TESTS.md). Remaining R06
-work includes broader PostgreSQL evolution/metadata/hierarchy and MySQL, followed
+work includes broader PostgreSQL payload evolution and MySQL, followed
 by R07 acceptance. Existing R02–R04 native failures remain parked and distinct.

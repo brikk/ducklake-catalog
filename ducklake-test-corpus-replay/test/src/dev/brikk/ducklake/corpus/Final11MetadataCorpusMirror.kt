@@ -9,7 +9,8 @@ import org.assertj.core.api.Assertions.assertThat
 
 /** Scratch metadata is populated ONLY from public JVM read APIs, never native metadata SELECTs. */
 internal class Final11MetadataCorpusMirror(
-    private val server: TestingDucklakeDuckDbQuackCatalogServer, private val nativeQuack: Boolean = false,
+    private val server: TestingDucklakeDuckDbQuackCatalogServer? = null, private val nativeQuack: Boolean = false,
+    private val backend: Final11MirrorBackend? = null,
 ) : ReplayReadEngine {
     override val name = "final-11-rich-metadata"
     private val scratch = DriverManager.getConnection("jdbc:duckdb:")
@@ -18,14 +19,19 @@ internal class Final11MetadataCorpusMirror(
 
     override fun connect(attachment: OracleAttachment) {
         catalog?.close()
-        catalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
-            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${server.getHost()}:${server.getMappedPort()}" else
-                "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
-            catalogDatabasePassword = server.getToken()
+        catalog = JdbcDucklakeCatalog(backend?.configuration?.invoke(attachment) ?: quackConfiguration(attachment))
+    }
+
+    private fun quackConfiguration(attachment: OracleAttachment): DucklakeCatalogConfig {
+        val peer = requireNotNull(server)
+        return DucklakeCatalogConfig().apply {
+            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${peer.getHost()}:${peer.getMappedPort()}" else
+                "jdbc:quack://${peer.getHost()}:${peer.getMappedPort()}"
+            catalogDatabasePassword = peer.getToken()
             dataPath = attachment.dataPath
             maxCatalogConnections = 1
             enableFinal11Reads = true
-        })
+        }
     }
 
     override fun accepts(sql: String): Boolean = sql.contains("dl.ducklake_", ignoreCase = true) &&
@@ -46,8 +52,11 @@ internal class Final11MetadataCorpusMirror(
         val c = requireNotNull(catalog)
         c.readSession(Supplier {
             val metadata = c.readMetadata()
-            if (nativeQuack) assertThat(metadata.getReadMetadataCapabilities().accessRoute).isEqualTo("native-quack")
-            val snapshot = metadata.getReadMetadataCapabilities().snapshotId
+            val profile = c.readBackendProfile()
+            if (nativeQuack) assertThat(profile.accessRoute).isEqualTo("native-quack")
+            backend?.let { assertThat(profile.accessRoute).isEqualTo(it.expectedRoute) }
+            assertThat(profile.richMetadataAvailable).isTrue()
+            val snapshot = profile.snapshotId
             for (schema in c.listSchemas(snapshot)) for (table in c.listTables(schema.schemaId, snapshot)) {
                 insert("ducklake_table", listOf(table.tableId, table.tableName))
                 metadata.getFileReadMetadata(table.tableId, snapshot).forEach { f ->

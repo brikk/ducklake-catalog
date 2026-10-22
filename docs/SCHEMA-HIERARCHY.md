@@ -2,14 +2,14 @@
 
 Available in **0.13.0-SNAPSHOT development code** through
 `JdbcDucklakeCatalog.readHierarchy(): DucklakeHierarchyReader`. It is an additive,
-read-only companion, qualified on the same three [DuckDB-backed routes](READ-BACKENDS.md)
+read-only companion, qualified on the three DuckDB-backed and direct PostgreSQL [routes](READ-BACKENDS.md)
 as [rich metadata](READ-METADATA.md). Every operation requires
 `enableFinal11Reads=true` and the owning catalog's `readSession`. Other formats and
-routes (including PostgreSQL/MySQL) fail explicitly. No write, migration or physical-file scan is enabled.
+routes (including MySQL) fail explicitly. No write, migration or physical-file scan is enabled.
 
 ```kotlin
 catalog.readSession(java.util.function.Supplier {
-    val snapshot = catalog.readMetadata().getReadMetadataCapabilities().snapshotId
+    val snapshot = catalog.readBackendProfile().snapshotId
     val hierarchy = catalog.readHierarchy()
     // Two literal components, NOT a dotted SQL string:
     val schema = hierarchy.findSchema(listOf("sales", "north.america"), snapshot)
@@ -35,7 +35,8 @@ snapshot; historical requests retain the old IDs, names and table versions. Stor
 end snapshots remain the metadata's actual end values, even when later than the
 requested historical snapshot. Historical selection is not a rewritten metadata row.
 
-The `qualifiedNestedSchemaResolution` capability is now true for these R05 APIs.
+The DuckDB `qualifiedNestedSchemaResolution` capability is true for these R05 APIs;
+the portable backend profile reports `hierarchyAvailable=true` on PostgreSQL too.
 It does **not** unlock legacy flat APIs: their rejection of any nested-schema history
 (including retired children) remains unchanged. It also does not certify legacy
 inline/column/file-descriptor calls on nested catalogs or connector physical scans.
@@ -88,7 +89,8 @@ set**, including future dates and NULL/unknown ages. Its exact composite cursor 
 `(dataFileId, path bytes, pathIsRelative)`; data/delete ID cursors cannot substitute
 for it. Repeated identical references at different schedule times collapse only
 for this ownership view. Encoded path comparison keeps case/Unicode variants
-distinct even under a text collation. Cursor identity is not a queue-row identity
+distinct even under a text collation, including PostgreSQL nondeterministic ICU
+collations. Cursor identity is not a queue-row identity
 and must never be used for deletion acknowledgements.
 
 `listScheduledFiles(olderThan, limit)` returns an age-gated batch with the exact

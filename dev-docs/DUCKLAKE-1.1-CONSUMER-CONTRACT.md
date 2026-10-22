@@ -143,14 +143,33 @@ routes and legacy raw/writer contracts remain unchanged.
 the old DuckDB capability record's primitive component/constructor descriptors.
 PG server version/driver facts are real; DuckDB-only fields are explicit NULL.
 Known library API availability is separate from database facts. PostgreSQL rich
-metadata/hierarchy are still unavailable and the old companions reject rather than
-send unported SQL. MySQL remains closed. The subset requires strict read-only,
+metadata/hierarchy were initially unavailable; the follow-up below qualifies their
+data operations without porting the DuckDB-only capability record. MySQL remains closed. The subset requires strict read-only,
 repeatable-read ownership and a rollback-local interval display setting, never a
 timezone-dependent promotion or arbitrary default expression.
 
 This is not a plugin rollout, physical scan or cleanup authorization. Both plugin
 agents must adopt the declared subset/profile and raw/decoded semantics explicitly;
 no owned plugin changes are claimed by this library increment.
+
+### R06 PostgreSQL metadata/hierarchy follow-up
+
+The PostgreSQL route now qualifies all rich-metadata **data operations** and the
+bounded hierarchy/path companion under the same nullable/raw-bound/ownership
+contract as the DuckDB routes. `readBackendProfile()` reports both availability
+flags true only after physical-layout validation; its unavailable DuckDB source,
+unsigned and extension facts remain NULL. The old `getReadMetadataCapabilities()`
+record stays DuckDB-only and rejects PostgreSQL explicitly—no record/constructor/
+wire change or fabricated primitive false flag. Consumers must use the portable
+profile on PostgreSQL, not call the old provenance accessor indiscriminately.
+
+Retained ownership uses original file origins, not current names or surviving
+snapshot rows. Complete scheduled-reference cursors compare UTF-8 bytes, preserving
+case/Unicode variants even under nondeterministic PostgreSQL collations. All SQL
+pages and path transfers retain their budgets. This does not open ordinary nested
+payload APIs, broaden PostgreSQL conversions, enable optimization, grant cleanup
+permission or change any writer/migration guard. MySQL and R07 are still open.
+Pristine full-file native goldens and direct-JDBC mirrors remain mandatory.
 
 ## Required semantics (metadata and hierarchy exposed; optimization still gated)
 

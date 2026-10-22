@@ -4,15 +4,15 @@ Available in **0.13.0-SNAPSHOT development code**, through
 `JdbcDucklakeCatalog.readMetadata(): DucklakeReadMetadata`. This is an additive,
 read-only companion; existing `DucklakeCatalog` methods, records, constructors and
 fragment JSON are unchanged. It requires **`enableFinal11Reads=true`**, a
-[qualified DuckDB-backed route](READ-BACKENDS.md) and an owned `readSession`.
+[qualified DuckDB-backed or direct PostgreSQL route](READ-BACKENDS.md) and an owned `readSession`.
 Other formats/routes fail explicitly, rather than
 claiming missing metadata is known. See [setup and reader limits](READING-1.1.md).
 
 ```kotlin
 catalog.readSession(java.util.function.Supplier {
     val metadata = catalog.readMetadata()
-    val capabilities = metadata.getReadMetadataCapabilities()
-    val snapshot = capabilities.snapshotId
+    val profile = catalog.readBackendProfile()
+    val snapshot = profile.snapshotId
     val schemas = metadata.listSchemaMetadata(snapshot)
     // Choose a table ID from the same pinned session's qualified table discovery.
     val files = metadata.getFileReadMetadata(tableId, snapshot)
@@ -25,7 +25,7 @@ catalog.readSession(java.util.function.Supplier {
 
 ## Capabilities describe this session, not a version guess
 
-`getReadMetadataCapabilities()` returns the visible head snapshot, actual engine
+On DuckDB-backed routes, `getReadMetadataCapabilities()` returns the visible head snapshot, actual engine
 version/source ID, loaded DuckLake/Quack extension revisions (NULL if not loaded),
 the unsigned-extension setting, JDBC driver version, access route/backend and
 observed physical columns/types. This is **observed peer provenance**, not proof of
@@ -33,7 +33,12 @@ which historical writer produced a file, a checksum attestation or universal bac
 certification. No advertised metadata feature is inferred from `1.1-dev1`.
 The route identifies whether SQL executes remotely or locally; the JDBC driver's
 advertised version is not an artifact checksum or necessarily its Maven version.
-PostgreSQL/MySQL are not qualified by these DuckDB-specific facts.
+PostgreSQL is not described by these DuckDB-specific facts: this one method rejects
+that route instead of inventing a source ID or primitive unsigned-extension flag.
+Use `readBackendProfile()` for PostgreSQL provenance and metadata/hierarchy API
+availability; the other rich-metadata operations are qualified under the
+[PostgreSQL contract](READ-POSTGRES-1.1.md). MySQL remains closed. Existing capability
+records/constructors/JSON are unchanged.
 
 The reader verifies the required native columns/types for schema parentage, data
 and delete row groups, file exactness and table exactness. Missing/wrong-type columns

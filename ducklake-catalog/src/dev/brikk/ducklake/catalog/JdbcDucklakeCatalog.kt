@@ -410,8 +410,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (globalMetadataValue("version", ctx) != "1.1") {
             invalidRichMetadata("Rich metadata is currently qualified only for final 1.1")
         }
-        if (final11ReadRoute == Final11ReadRoute.POSTGRES) invalidRichMetadata(
-            "Rich metadata/hierarchy remains unqualified on PostgreSQL; use readBackendProfile for observed provenance")
         // Does not mark the legacy hierarchy preflight valid: raw parent IDs do not qualify flat reads.
         return Final11ReadMetadataQueries(ctx, requireNotNull(final11ReadRoute))
     }

@@ -62,8 +62,8 @@ class TestFinal11PostgresReads {
             assertThat(profile.unsignedExtensionsAllowed).isNull()
             assertThat(profile.ducklakeExtensionVersion).isNull()
             assertThat(profile.quackExtensionVersion).isNull()
-            assertThat(profile.richMetadataAvailable).isFalse()
-            assertThat(profile.hierarchyAvailable).isFalse()
+            assertThat(profile.richMetadataAvailable).isTrue()
+            assertThat(profile.hierarchyAvailable).isTrue()
             assertThat(profile.qualifiedWrites).isFalse()
             assertThatThrownBy { c.readMetadata().getReadMetadataCapabilities() }
                 .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("use readBackendProfile")

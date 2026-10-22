@@ -16,12 +16,13 @@ package dev.brikk.ducklake.catalog
 import com.fasterxml.jackson.annotation.JsonInclude
 
 /**
- * Optional read-only companion to [DucklakeCatalog]. Qualified for opt-in final-1.1 DuckDB metadata
- * over direct Java Quack, local read-only files and native Quack inside [DucklakeCatalog.readSession].
+ * Optional read-only companion to [DucklakeCatalog]. Qualified for opt-in final-1.1 metadata
+ * over DuckDB-backed routes and direct PostgreSQL inside [DucklakeCatalog.readSession].
  * Other routes/formats fail explicitly.
  * Metadata is not permission to prune, aggregate exactly, resolve nested paths or write.
  */
 interface DucklakeReadMetadata {
+    /** DuckDB-only provenance record; PostgreSQL callers must use JdbcDucklakeCatalog.readBackendProfile(). */
     fun getReadMetadataCapabilities(): DucklakeReadMetadataCapabilities
 
     /** Active schemas at a visible snapshot. Parent IDs are raw identity, not flattened names/paths. */
@@ -67,7 +68,7 @@ data class DucklakeReadMetadataCapabilities(
     val qualifiedWrites: Boolean,
 )
 
-/** NULL parent means root only with the schemaParentIds capability from this same session. */
+/** NULL parent means root only after parent-layout validation in this same qualified read session. */
 @JvmRecord
 @JacksonSerializedInternalJavaCompatibleClass
 @JsonInclude(JsonInclude.Include.ALWAYS)

@@ -10,7 +10,8 @@ import java.util.function.Supplier
 
 /** Mirrors hierarchy/paths, not native payload scans, exports, uncommitted state or SQL helper implementation. */
 internal class Final11HierarchyCorpusMirror(
-    private val server: TestingDucklakeDuckDbQuackCatalogServer, private val nativeQuack: Boolean = false,
+    private val server: TestingDucklakeDuckDbQuackCatalogServer? = null, private val nativeQuack: Boolean = false,
+    private val backend: Final11MirrorBackend? = null,
 ) : ReplayReadEngine {
     override val name = "final-11-hierarchy"
     private val scratch = DriverManager.getConnection("jdbc:duckdb:")
@@ -21,14 +22,19 @@ internal class Final11HierarchyCorpusMirror(
     override fun connect(attachment: OracleAttachment) {
         catalog?.close()
         alias = attachment.catalogAlias
-        catalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
-            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${server.getHost()}:${server.getMappedPort()}" else
-                "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
-            catalogDatabasePassword = server.getToken()
+        catalog = JdbcDucklakeCatalog(backend?.configuration?.invoke(attachment) ?: quackConfiguration(attachment))
+    }
+
+    private fun quackConfiguration(attachment: OracleAttachment): DucklakeCatalogConfig {
+        val peer = requireNotNull(server)
+        return DucklakeCatalogConfig().apply {
+            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${peer.getHost()}:${peer.getMappedPort()}" else
+                "jdbc:quack://${peer.getHost()}:${peer.getMappedPort()}"
+            catalogDatabasePassword = peer.getToken()
             dataPath = attachment.dataPath
             maxCatalogConnections = 1
             enableFinal11Reads = true
-        })
+        }
     }
 
     override fun accepts(sql: String): Boolean = sql.contains("duckdb_schemas()", true) ||
@@ -42,18 +48,20 @@ internal class Final11HierarchyCorpusMirror(
             "CREATE TABLE meta.ducklake_schema(schema_id BIGINT,schema_name VARCHAR,parent_schema_id BIGINT)") }
         val c = requireNotNull(catalog)
         c.readSession(Supplier {
-            val caps = c.readMetadata().getReadMetadataCapabilities()
-            if (nativeQuack) assertThat(caps.accessRoute).isEqualTo("native-quack")
-            assertThat(caps.qualifiedNestedSchemaResolution).isTrue()
+            val profile = c.readBackendProfile()
+            if (nativeQuack) assertThat(profile.accessRoute).isEqualTo("native-quack")
+            backend?.let { assertThat(profile.accessRoute).isEqualTo(it.expectedRoute) }
+            assertThat(profile.hierarchyAvailable).isTrue()
+            if (backend == null) assertThat(c.readMetadata().getReadMetadataCapabilities().qualifiedNestedSchemaResolution).isTrue()
             val h = c.readHierarchy()
-            h.listSchemas(caps.snapshotId).forEach { schema ->
+            h.listSchemas(profile.snapshotId).forEach { schema ->
                 insert("hierarchy_schemas", listOf(alias, schema.metadata.schema.schemaName, schema.names.dropLast(1).lastOrNull()))
                 insert("meta.ducklake_schema", listOf(schema.metadata.schema.schemaId, schema.metadata.schema.schemaName, schema.metadata.parentSchemaId))
                 // Exercise component lookup separately; identity is never recovered by splitting a dotted name.
-                assertThat(h.findSchema(schema.names, caps.snapshotId)!!.schemaIds).isEqualTo(schema.schemaIds)
+                assertThat(h.findSchema(schema.names, profile.snapshotId)!!.schemaIds).isEqualTo(schema.schemaIds)
             }
             if (sql.contains("ducklake_list_files", true)) {
-                val table = h.findTable(listOf("main"), "t", caps.snapshotId)!!
+                val table = h.findTable(listOf("main"), "t", profile.snapshotId)!!
                 h.listRetainedFiles(DucklakeFileKind.DATA, null, 1024).filter { it.owner.table.tableId == table.table.tableId }
                     .forEach { insert("hierarchy_files", listOf(it.resolvedPath)) }
             }

@@ -282,6 +282,45 @@ PG cases, eight strict value/profile tests, two source/default regressions and a
 four original PG SLT fixtures execute. Lint, frozen ABI/wire and Java 17 controls
 pass. Existing strict native failures stay parked, not skipped or waived.
 
+## R06 PostgreSQL rich metadata/hierarchy — direct-JDBC mirrors
+
+`TestUpstreamFinal11PostgresMetadata` replays seven additional whole pristine files
+at the same maintained `417a9117f590e8141742ac0579d02f6a90162e37` revision against
+real native PostgreSQL metadata, with independent library API mirrors. Scratch
+tables contain only direct-JDBC companion results, never native metadata SELECTs
+or alleged JVM Parquet scans. Every mirror checks `postgres-jdbc` provenance and
+the corresponding metadata/hierarchy availability flag.
+
+| Pristine corpus path | SHA-256 | Additional PG mirrors |
+|---|---|---:|
+| `metadata/row_group_count.test` | `603a0107ddf93c03a058bed34166bff23ad26c2a6d796d551950baeaee7bf357` | 6 |
+| `migration/v10_row_group_count.test` | `87fdbba98e3cca7b3afbecc3be6619977391f6cc5f916651a831801503d3dce6` | 4 |
+| `migration/v11_stats_exactness.test` | `9e9523e757416e6b4f6936e54179b46ef53dd76b6a3143001caf1fa8c8827d6b` | 7 |
+| `catalog/nested_schema/load_schema_tree.test` | `928f9604a973b368c94d945e92869e8c837f30554009d81424a4dd672e00be0e` | 2 |
+| `catalog/nested_schema/shared_schema_helpers.test` | `30d6280b4908ff776a7acd4a8d16ca13a73bd807a9e67185e2370da83a4e6659` | 1 |
+| `migration/schema_parent_column.test` | `bdde7edb231fa36ad4ae1793d008dd7b200b5099049cd4747f41bcfa7b6ab250` | 3 |
+| `general/null_schema_and_table_paths.test` | `7f487746d491d60a536ea904eee008e808604dae0680f454fa12065cecc80466` | 1 |
+
+These **24 additional mandatory mirrors** bring the transport total to **113**
+across the same twenty-one unique source files, plus the two separate drained-local
+final-state checks. Original SQL/goldens, migration/error cases and no-skip checks
+are preserved. Native Puffin counts, real 1.0→1.1 unknown metadata and schema-parent
+migrations all execute; this does not qualify broader PostgreSQL payload evolution,
+MySQL, native R02–R04 acceptance or connector scans/cleanup.
+
+Fifteen separate native/JDBC tests additionally observe physical PG columns/counts
+and native file paths before independent reader assertions, and cover repeatable
+read/refresh, retained historical ownership after origin expiry, nullable/raw
+metadata, exact Unicode/case cursors under nondeterministic collations, malformed
+layouts/graphs/counts, page edges and SQL text/result budgets. The old DuckDB-only
+capability accessor remains explicitly unavailable on PostgreSQL; nullable portable
+provenance is not fabricated to fit its primitive fields.
+
+Final forced verification passed **733 maintained JUnit tests + 86 separate
+direct-Java tests**, zero failed/errors/JUnit-skipped, plus **17,602 corpus records**
+with unchanged 100 file/12 record exclusions. Lint, frozen ABI/wire and Java 17
+controls pass. The strict native R02–R04 failures were not rerun, skipped or waived.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are adopted as

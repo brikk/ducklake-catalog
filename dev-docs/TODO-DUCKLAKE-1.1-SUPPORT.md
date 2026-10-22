@@ -46,7 +46,7 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   layouts/type representations, owned-session consistency, fresh and migrated lakes,
   and explicit rejection of malformed/unknown layouts on each claimed route.
   Partial increments qualify three DuckDB-backed routes and a narrower direct
-  PostgreSQL subset. Broader PostgreSQL evolution/rich metadata/hierarchy and MySQL
+  PostgreSQL payload subset plus rich metadata/hierarchy. Broader PostgreSQL payload evolution and MySQL
   remain open; this is implementation work, not an artifact wait or a shipping pass.
 - [ ] **R07 — Read acceptance and rollout.** Run maintained/frozen ABI/wire controls,
   matching pristine full corpus, strict native gates and real native↔JVM fixtures:
@@ -111,7 +111,7 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   The guarded R04 metadata increment is verified; its separate native gate remains
   failing. R05's explicit bounded hierarchy/path tier is verified; R06–R07 remain
   queued, not implicitly certified. R06's DuckDB-family expansion is active; full
-  complete PostgreSQL/MySQL qualification remains outstanding before R07 rollout.
+   PostgreSQL payload evolution and MySQL qualification remain outstanding before R07 rollout.
   The owner will revisit R02 when the fixes are
   available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
@@ -395,7 +395,8 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
 - Extends the existing opt-in final-1.1 reader/metadata/hierarchy tier to local
   DuckDB JDBC and native Quack, retaining direct Java Quack. No public record,
   constructor or JSON shape changes, dependency upgrades or write/migration guard
-  changes. PostgreSQL/MySQL still reject opt-in before connecting; **R06 stays open**.
+  changes. At this stage PostgreSQL/MySQL rejected opt-in before connecting; later
+  PostgreSQL increments are recorded below. **R06 stays open**.
 - Local mode requires an existing ordinary metadata file and opens DuckDB with
   database-level `duckdb.read_only=true`, with matching Hikari read-only state.
   Missing files and empty databases cannot be bootstrapped by opening/reading. A
@@ -433,7 +434,7 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   session-owned test workers were reaped. R02–R04 native defects remain parked and
   distinct, not rerun or waived here; no artifact upgrade or SQL-backend acceptance
   is implied.
-- **Remaining before R06 closure:** PostgreSQL/MySQL physical type mapping and
+- **Remaining at this checkpoint before R06 closure:** PostgreSQL/MySQL physical type mapping and
   layout validation, safe inline default/evolution handling over their text/BYTEA/
   narrow physical types, portable rich metadata/hierarchy SQL and truthful nullable/
   non-applicable provenance, with fresh/migrated/session/negative tests. Do not
@@ -459,8 +460,8 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   pin and next-session refresh preserves added initial defaults.
 - Adds portable `readBackendProfile()` with actual server/driver observations and
   nullable unavailable/not-applicable source/extension/unsigned facts. Old DuckDB
-  capability records, constructors/components/JSON remain intact. PG rich metadata
-  and hierarchy companions are explicitly unavailable, not fake empty results.
+  capability records, constructors/components/JSON remain intact. At this stage PG
+  rich metadata/hierarchy companions were unavailable; the follow-up below ports them.
 - Strict value decoding preserves complete STRUCT fields, ordered NULL/empty
   containers, exact UTF-8/BLOB/JSON/literal NULL values and original CDC identities.
   Duplicate fields/keys, logical non-NULL NULL-type values, source-domain corruption,
@@ -491,10 +492,52 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   17 artifacts). The final unchanged-source run took 13m31s; owned test workers and
   containers were reaped. The six PG mirrors bring total transport mirrors to 89
   across the same twenty-one pristine files, plus the separate local final-state checks.
-- **R06 remains unchecked.** Remaining work includes broader PostgreSQL evolution,
-  rich metadata/hierarchy and MySQL, followed by R07. No plugin implementation or
+- **R06 remains unchecked.** At this checkpoint broader PostgreSQL evolution,
+  rich metadata/hierarchy and MySQL remained, followed by R07. No plugin implementation or
   rollout, dependency/corpus upgrade, write guard or migration-default change.
   [Public subset/provenance/raw contract](../docs/READ-POSTGRES-1.1.md).
+
+### R06 — PostgreSQL rich metadata and bounded hierarchy
+
+- Qualifies the `readMetadata()` data operations and `readHierarchy()` companion on
+  direct PostgreSQL. Keeps raw bounds, independent nullable exactness, nullable
+  data/delete row groups, unversioned table statistics and conservative legacy
+  pruning. Real native 1.0→1.1 migration preserves unknown old metadata.
+- The portable backend profile reports metadata/hierarchy availability after layout
+  validation. The old DuckDB-specific capability record remains unchanged and its
+  accessor explicitly rejects PostgreSQL with guidance to `readBackendProfile()`;
+  no invented source IDs, extension revisions or unsigned flags.
+- Ports hierarchy byte expressions and DISTINCT/keyset ordering to PostgreSQL.
+  Component/ID lookup, historical rename/drop/reuse and retained data/delete
+  ownership use original file begin snapshots even after snapshot-row expiry.
+  Schema paths remain catalog-root-relative, not logical-parent-relative; nullable
+  directories, absolute resets and missing roots retain their exact meaning.
+- Complete scheduled references include future/NULL ages and compare UTF-8 path
+  bytes plus file ID/relative flag. Nondeterministic PostgreSQL collation tests
+  preserve distinct case and composed/decomposed Unicode keys. Age-gated batches
+  remain separate and are not complete known sets or acknowledgement cursors.
+- Existing SQL page/text/depth/traversal bounds remain; duplicate boundary IDs,
+  missing/cyclic/ambiguous owners, oversized paths/results, negative/missing counts,
+  domain/narrowed physical metadata and non-microsecond scheduling fail explicitly.
+  All operations require owned read-only REPEATABLE READ; independent native
+  publication stays outside the pin and the next session refreshes.
+- Adds **15 native/JDBC cases** and **seven whole pristine shipped files requiring
+  24 additional PostgreSQL mirrors** (17 metadata, 7 hierarchy). Together these bring
+  transport mirrors to **113 across the same 21 pristine files**; two drained-local
+  final-state checks remain separate. Original SQL/goldens/digests and exclusions
+  are unchanged. Focused PostgreSQL, all three DuckDB routes, pristine replay and
+  86 separate direct-Java tests pass. Final forced verification passed **733
+  maintained JUnit tests** (600 catalog, 51 SLT, 82 replay), **86 separate direct-Java
+  tests** and **17,602 corpus records**, zero failed/errors/JUnit-skipped; unchanged
+  exclusions remain 100 files/12 records. Lint, frozen Java/record/JSON and Java 17
+  controls pass (`checkAbi`: 7,779 classes, 17 artifacts). The final run took 14m32s;
+  owned test workers/containers were reaped. Log:
+  `/tmp/opencode/catalog-r06-pg-metadata-full.log`.
+- **R06 stays open:** broader PostgreSQL payload evolution and MySQL still need
+  implementation/qualification. Legacy nested payload/descriptor guards, writes,
+  migration defaults and all maintained pins are unchanged. Existing strict native
+  R02–R04 failures remain parked, not waived. No connector implementation, physical
+  scan/cleanup lease or rollout is certified.
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

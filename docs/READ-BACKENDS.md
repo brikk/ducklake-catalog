@@ -12,7 +12,7 @@ covering every platform or driver build.
 | `jdbc:quack://host:port` | Direct Java Quack, metadata SQL on the remote DuckDB | Java driver 0.8.0; no DuckDB JDBC required in the reading JVM |
 | `jdbc:duckdb:/existing/metadata.db` | Existing local DuckDB file, **database-level READ_ONLY** | File must exist; no memory/protocol URL or catalog creation; coordinate native writers by closing readers |
 | `jdbc:duckdb:quack://host:port?metadata_catalog=name` | Native DuckDB/Quack client, **metadata-only READ_ONLY attachment** | Library never invokes DuckLake bootstrap/version selection/migration on reader open |
-| `jdbc:postgresql://…` | **Limited direct-JDBC subset** | Same nested shape, scalar defaults and exact root integer widening; rich metadata/hierarchy and broader evolution still rejected |
+| `jdbc:postgresql://…` | **Limited direct-JDBC payloads; rich metadata/hierarchy** | Same nested shape, scalar defaults and exact root integer widening; broader payload evolution still rejected; provenance uses `readBackendProfile()` |
 | `jdbc:mysql://…` | **Not qualified for final 1.1** | Opt-in construction fails before connecting; physical-storage/projection/provenance work remains |
 
 All qualified routes require `enableFinal11Reads=true` and an owned
@@ -56,7 +56,7 @@ No independent RPC BEGIN or implicit retry/COMMIT behavior is introduced.
 The additive `readBackendProfile()` reports nullable portable observations on all
 four routes. PostgreSQL uses actual server/driver facts and explicit NULL for
 DuckDB-only source/extension/unsigned fields. Its availability flags identify the
-limited projection tier; see the PostgreSQL contract above. The existing
+limited projection tier plus available metadata/hierarchy data operations; see the PostgreSQL contract above. The existing
 DuckDB-only capability record below keeps its constructors and shape unchanged.
 
 Capabilities report `accessRoute` as `java-quack`, `local-duckdb` or `native-quack`;
@@ -91,7 +91,7 @@ Those local checks are not simultaneous RW/RO mirrors or alleged JVM Parquet sca
 Original SQL/goldens/digests and maintained corpus exclusions are preserved.
 
 **Still required before R06 can be checked:** broader PostgreSQL schema/type
-evolution and rich metadata/hierarchy SQL, MySQL storage/projection/provenance and
+evolution, MySQL storage/projection/provenance and
 full fresh/migrated/session/negative tests for every further claimed scope. The
 current PostgreSQL subset is qualified only under its explicit contract. A URL
 guard edit or a guessed DuckDB/extension/unsigned flag is not qualification. Any

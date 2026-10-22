@@ -18,7 +18,8 @@ import org.jooq.DSLContext
 
 /**
  * Nullable observations distinguish unavailable/not-applicable facts from false or fabricated source IDs.
- * Availability flags describe library APIs, not missing database metadata. No mutation/scan permission.
+ * Availability flags describe library data APIs, not missing database metadata. DuckDB-only capabilities
+ * still require a DuckDB route; this profile supplies PostgreSQL provenance. No mutation/scan permission.
  */
 @JvmRecord
 @JacksonSerializedInternalJavaCompatibleClass
@@ -56,6 +57,6 @@ internal class Final11BackendProfileQueries(private val ctx: DSLContext, private
         val snapshot = ctx.fetch("SELECT max(snapshot_id) FROM ducklake_snapshot").single().get(0, Long::class.javaObjectType)
             ?: throw DucklakeCatalogCorruptionException("Missing backend-profile snapshot")
         return DucklakeReadBackendProfile("1.1", snapshot, "postgresql", route.label, version, null, driver.first, driver.second,
-            null, null, null, "postgres-same-shape-integer-widening", false, false, false)
+            null, null, null, "postgres-same-shape-integer-widening", true, true, false)
     }
 }

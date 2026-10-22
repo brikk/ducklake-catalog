@@ -25,9 +25,11 @@ internal class Final11PostgresFixture(private val migrate: Boolean = false) : Au
     private val server = TestingDucklakePostgreSqlCatalogServer()
     private var initialized = false
 
-    fun native(sql: String) {
+    fun native(sql: String) { nativeRows(sql) }
+
+    fun nativeRows(sql: String): List<List<String?>> {
         Final11DuckDbBackendFixture.requirePinnedJdbc()
-        DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
+        return DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
             s.execute("INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres")
             s.executeQuery("PRAGMA version").use { r ->
                 check(r.next())
@@ -51,9 +53,12 @@ internal class Final11PostgresFixture(private val migrate: Boolean = false) : Au
             s.execute("ATTACH '${server.getDuckDbAttachUri().replace("'", "''")}' AS lake " +
                 "(DATA_PATH '${data.toString().replace("'", "''")}',DUCKLAKE_VERSION '$version'," +
                 "AUTOMATIC_MIGRATION ${if (migrate && initialized) "TRUE" else "FALSE"})")
-            s.execute(sql)
+            val rows = if (s.execute(sql)) s.resultSet.use { r -> buildList {
+                while (r.next()) add((1..r.metaData.columnCount).map { r.getString(it) })
+            } } else emptyList()
             s.execute("DETACH lake")
             initialized = true
+            rows
         } }
     }
 
@@ -69,13 +74,13 @@ internal class Final11PostgresFixture(private val migrate: Boolean = false) : Au
         } } }
     }
 
-    fun reader(): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
+    fun reader(enableFinal11Reads: Boolean = true): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
         catalogDatabaseUrl = server.getJdbcUrl()
         catalogDatabaseUser = server.getUser()
         catalogDatabasePassword = server.getPassword()
         dataPath = data.toString()
         maxCatalogConnections = 2
-        enableFinal11Reads = true
+        this.enableFinal11Reads = enableFinal11Reads
     })
 
     fun snapshot(): Long = rows("SELECT max(snapshot_id) FROM ducklake_snapshot").single().single()!!.toLong()
