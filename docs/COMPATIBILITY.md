@@ -47,10 +47,12 @@ registration into encrypted catalogs is rejected.
 
 ## DuckDB 2.0 / DuckLake 1.1
 
-The [conservative final-1.1 reader](READING-1.1.md) requires direct Java Quack and
-an owned read session, rejects nested-schema history, and suppresses legacy bounds/
-pruning. This limited tier is qualified on official 2.0 artifacts, **not general
-1.1 schema/type/statistics/nested-schema support**.
+The [conservative final-1.1 reader](READING-1.1.md) requires an owned read session
+on a [qualified DuckDB-backed route](READ-BACKENDS.md): direct Java Quack, read-only
+local DuckDB or native Quack. PostgreSQL/MySQL 1.1 qualification remains open.
+Legacy APIs still reject nested-schema history and suppress bounds/pruning; the
+explicit [hierarchy companion](SCHEMA-HIERARCHY.md) handles bounded names/paths.
+This is qualified on official 2.0 artifacts, **not blanket 1.1 or connector support**.
 Passing pinned native-preview CI is not passing every strict correctness gate.
 
 The [shipping qualification](../dev-docs/UPGRADE-DUCKDB-2.0.0.md) covers maintained

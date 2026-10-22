@@ -37,7 +37,7 @@ class TestInlinedMetadataLayouts {
     }
 
     @Test
-    fun final11ReadNamesRequireOptInAndDoNotEnableDdlOrOtherTransports() {
+    fun final11ReadNamesRequireOptInAndDoNotEnableDdlOrBootstrap() {
         assertThat(InlinedDataTables.readMetadataColumns("1.1", true)).isEqualTo(InlinedDataTables.metadataColumns("1.1-dev1"))
         assertThatThrownBy { InlinedDataTables.readMetadataColumns("1.1", false) }.isInstanceOf(DucklakeInvalidOperationException::class.java)
         assertThatThrownBy { InlinedDataTables.createTableSql("t", emptyList(), SQLDialect.DUCKDB, "1.1") }
@@ -46,7 +46,13 @@ class TestInlinedMetadataLayouts {
         assertThatThrownBy { JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
             catalogDatabaseUrl = "jdbc:duckdb:"
             enableFinal11Reads = true
-        }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("direct Java Quack")
+        }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("existing DuckDB metadata file")
+        for (url in listOf("jdbc:postgresql://unused/never-connect", "jdbc:mysql://unused/never-connect")) {
+            assertThatThrownBy { JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
+                catalogDatabaseUrl = url
+                enableFinal11Reads = true
+            }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("PostgreSQL/MySQL remain unqualified")
+        }
     }
 
     @Test

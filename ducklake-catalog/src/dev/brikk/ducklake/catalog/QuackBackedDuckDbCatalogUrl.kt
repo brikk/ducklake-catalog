@@ -41,7 +41,7 @@ internal class QuackBackedDuckDbCatalogUrl private constructor(
         private val port: Int,
         private val metadataCatalog: String,
         private val token: String,
-        private val dataPath: String,
+        private val dataPath: String?,
 ) {
 
     fun host(): String = host
@@ -50,6 +50,11 @@ internal class QuackBackedDuckDbCatalogUrl private constructor(
 
     fun metadataCatalog(): String = metadataCatalog
 
+    /** Metadata-only attachment: never invoke DuckLake bootstrap, version selection or migration while opening a reader. */
+    fun readConnectionInitSql(): String = "INSTALL quack; LOAD quack; CREATE OR REPLACE SECRET (TYPE quack, TOKEN '" +
+        escapeSqlString(token) + "'); ATTACH 'quack:" + escapeSqlString(host) + ":" + port + "' AS \"" +
+        metadataCatalog + "\" (READ_ONLY); USE \"" + metadataCatalog + "\".main;"
+
     /**
      * Multi-statement init script run by HikariCP on every new pooled connection.
      * DuckDB's JDBC driver accepts semicolon-separated statements in a single
@@ -57,6 +62,7 @@ internal class QuackBackedDuckDbCatalogUrl private constructor(
      * for `connectionInitSql`.
      */
     fun connectionInitSql(): String {
+        require(!dataPath.isNullOrEmpty()) { "Writing initialization requires a data path" }
         // host goes inside the single-quoted ATTACH literal below, so escape it for the same
         // reason token/dataPath are escaped. URI.getHost() rejects quote-bearing authorities
         // today, but escaping here keeps the literal safe regardless of how host is derived.
@@ -109,7 +115,11 @@ internal class QuackBackedDuckDbCatalogUrl private constructor(
          * @param dataPath where DuckLake parquet data files live (must be a path
          *                 the JVM can read/write — DuckLake resolves it on the client)
          */
-        fun parse(url: String, token: String?, dataPath: String?): QuackBackedDuckDbCatalogUrl {
+        fun parse(url: String, token: String?, dataPath: String?): QuackBackedDuckDbCatalogUrl = parse(url, token, dataPath, true)
+
+        fun parseRead(url: String, token: String?): QuackBackedDuckDbCatalogUrl = parse(url, token, null, false)
+
+        private fun parse(url: String, token: String?, dataPath: String?, requireDataPath: Boolean): QuackBackedDuckDbCatalogUrl {
             require(matches(url)) { "not a Quack-backed DuckDB catalog URL: $url" }
             // Strip the JDBC prefix to leave a parseable scheme://authority?query URI.
             val uriPart = url.substring("jdbc:duckdb:".length)
@@ -129,7 +139,7 @@ internal class QuackBackedDuckDbCatalogUrl private constructor(
             require(token != null && token.length >= 4) {
                 "Quack auth token must be at least 4 characters (Quack server-side requirement)"
             }
-            require(!dataPath.isNullOrEmpty()) {
+            require(!requireDataPath || !dataPath.isNullOrEmpty()) {
                 "data path is required for Quack-backed DuckLake catalogs (set ducklake.data-path)"
             }
             return QuackBackedDuckDbCatalogUrl(host, port, metadataCatalog, token, dataPath)

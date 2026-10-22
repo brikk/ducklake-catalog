@@ -9,7 +9,9 @@ import java.sql.DriverManager
 import java.util.function.Supplier
 
 /** Mirrors hierarchy/paths, not native payload scans, exports, uncommitted state or SQL helper implementation. */
-internal class Final11HierarchyCorpusMirror(private val server: TestingDucklakeDuckDbQuackCatalogServer) : ReplayReadEngine {
+internal class Final11HierarchyCorpusMirror(
+    private val server: TestingDucklakeDuckDbQuackCatalogServer, private val nativeQuack: Boolean = false,
+) : ReplayReadEngine {
     override val name = "final-11-hierarchy"
     private val scratch = DriverManager.getConnection("jdbc:duckdb:")
     private var catalog: JdbcDucklakeCatalog? = null
@@ -20,7 +22,8 @@ internal class Final11HierarchyCorpusMirror(private val server: TestingDucklakeD
         catalog?.close()
         alias = attachment.catalogAlias
         catalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
-            catalogDatabaseUrl = "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
+            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${server.getHost()}:${server.getMappedPort()}" else
+                "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
             catalogDatabasePassword = server.getToken()
             dataPath = attachment.dataPath
             maxCatalogConnections = 1
@@ -40,6 +43,7 @@ internal class Final11HierarchyCorpusMirror(private val server: TestingDucklakeD
         val c = requireNotNull(catalog)
         c.readSession(Supplier {
             val caps = c.readMetadata().getReadMetadataCapabilities()
+            if (nativeQuack) assertThat(caps.accessRoute).isEqualTo("native-quack")
             assertThat(caps.qualifiedNestedSchemaResolution).isTrue()
             val h = c.readHierarchy()
             h.listSchemas(caps.snapshotId).forEach { schema ->

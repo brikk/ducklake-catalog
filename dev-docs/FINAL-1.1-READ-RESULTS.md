@@ -1,5 +1,10 @@
 # First final-1.1 read tier — October 20
 
+**R06 partial follow-up:** the guarded tier now covers read-only local DuckDB and
+native Quack in addition to direct Java Quack. Native read initialization attaches
+only metadata, never DuckLake bootstrap/migration. PostgreSQL/MySQL remain rejected;
+R06 is not complete. See [route contracts](../docs/READ-BACKENDS.md).
+
 **R05 follow-up:** an explicit hierarchy companion now qualifies bounded stable-ID
 schema/table lookup, literal components, historical names, root-relative schema
 storage paths and retained data/delete ownership. Legacy flat guards remain; no

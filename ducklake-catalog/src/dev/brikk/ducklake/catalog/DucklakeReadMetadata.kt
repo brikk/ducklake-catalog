@@ -16,8 +16,9 @@ package dev.brikk.ducklake.catalog
 import com.fasterxml.jackson.annotation.JsonInclude
 
 /**
- * Optional read-only companion to [DucklakeCatalog]. Currently qualified only for opt-in final-1.1
- * direct Java Quack inside [DucklakeCatalog.readSession]. Other routes/formats fail explicitly.
+ * Optional read-only companion to [DucklakeCatalog]. Qualified for opt-in final-1.1 DuckDB metadata
+ * over direct Java Quack, local read-only files and native Quack inside [DucklakeCatalog.readSession].
+ * Other routes/formats fail explicitly.
  * Metadata is not permission to prune, aggregate exactly, resolve nested paths or write.
  */
 interface DucklakeReadMetadata {

@@ -5,9 +5,12 @@ import dev.brikk.ducklake.catalog.JdbcDucklakeCatalog
 import dev.brikk.ducklake.catalog.TestingDucklakeDuckDbQuackCatalogServer
 import java.sql.DriverManager
 import java.util.function.Supplier
+import org.assertj.core.api.Assertions.assertThat
 
 /** Scratch metadata is populated ONLY from public JVM read APIs, never native metadata SELECTs. */
-internal class Final11MetadataCorpusMirror(private val server: TestingDucklakeDuckDbQuackCatalogServer) : ReplayReadEngine {
+internal class Final11MetadataCorpusMirror(
+    private val server: TestingDucklakeDuckDbQuackCatalogServer, private val nativeQuack: Boolean = false,
+) : ReplayReadEngine {
     override val name = "final-11-rich-metadata"
     private val scratch = DriverManager.getConnection("jdbc:duckdb:")
     private var catalog: JdbcDucklakeCatalog? = null
@@ -16,7 +19,8 @@ internal class Final11MetadataCorpusMirror(private val server: TestingDucklakeDu
     override fun connect(attachment: OracleAttachment) {
         catalog?.close()
         catalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
-            catalogDatabaseUrl = "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
+            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${server.getHost()}:${server.getMappedPort()}" else
+                "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
             catalogDatabasePassword = server.getToken()
             dataPath = attachment.dataPath
             maxCatalogConnections = 1
@@ -42,6 +46,7 @@ internal class Final11MetadataCorpusMirror(private val server: TestingDucklakeDu
         val c = requireNotNull(catalog)
         c.readSession(Supplier {
             val metadata = c.readMetadata()
+            if (nativeQuack) assertThat(metadata.getReadMetadataCapabilities().accessRoute).isEqualTo("native-quack")
             val snapshot = metadata.getReadMetadataCapabilities().snapshotId
             for (schema in c.listSchemas(snapshot)) for (table in c.listTables(schema.schemaId, snapshot)) {
                 insert("ducklake_table", listOf(table.tableId, table.tableName))

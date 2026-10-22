@@ -201,6 +201,50 @@ and four new full-file adoption tests execute. Frozen Java/record/JSON, lint and
 Java 17 classfile checks pass. Existing separate R02–R04 native failures remain
 parked; this positive R05 scope is not their acceptance or a physical-file lease.
 
+## R06 partial — the same pristine fixtures over additional DuckDB routes
+
+`TestUpstreamFinal11DuckDbBackends` replays four existing entire pristine files at
+`417a9117f590e8141742ac0579d02f6a90162e37` over **native Quack**, not the Java driver.
+The shared mirrors explicitly require capability `accessRoute=native-quack` and
+retain their ordinary original SQL/golden and exact-digest checks:
+
+| Pristine corpus path | SHA-256 | Additional native-Quack JVM mirrors |
+|---|---|---:|
+| `default/add_column_if_not_exists_expression_default.test` | `3cec752529d12d57dc42891a519eeef9136a5fb69f954b1d1b96075639fe85b9` | 1 |
+| `data_inlining/data_inlining_time_ns.test` | `f7a58dae210d60604ee9da76fe7615d6513ec1990778d704e21a288a64eda075` | 2 |
+| `metadata/row_group_count.test` | `603a0107ddf93c03a058bed34166bff23ad26c2a6d796d551950baeaee7bf357` | 6 |
+| `catalog/nested_schema/load_schema_tree.test` | `928f9604a973b368c94d945e92869e8c837f30554009d81424a4dd672e00be0e` | 2 |
+
+That is **eleven additional transport mirrors, 83 with the existing 72 direct-Java
+mirrors**, not 83 unique files: the unique source inventory remains twenty-one.
+TIME_NS mirrors are bounded to the original two pre-flush queries; its original
+post-flush native golden still runs. No native scan is passed off as a JVM file read.
+
+Two additional local-file tests replay entire original files against all native
+goldens, with only the existing metadata-location rewrite seam pointing at an owned
+persistent fixture file. After the native oracle is fully closed, the JVM opens the
+file READ_ONLY and independently checks final inline state:
+
+- `issues/issue_1212_string_null_default.test`, digest
+  `a527746e673bde1e6df61b2b8b3bddd8641ae801ba01f7b99306e4ca13119bb5`:
+  two rows retain literal VARCHAR NULL, four BLOB bytes `4e554c4c` and the later
+  literal insert default, not SQL NULL.
+- `default/add_column_if_not_exists_expression_default.test`, digest above:
+  the old inline row projects the added initial default as integer 42.
+
+Both require empty Parquet candidate lists. These local final-state assertions are
+not counted as in-replay mirrors and do not claim simultaneous local RW/RO access,
+post-flush JVM file scans or full backend acceptance. R06 remains open for direct
+PostgreSQL/MySQL storage/projection/provenance qualification.
+
+Final forced verification of this partial R06 increment passed **685 maintained
+JUnit tests + 86 separate direct-Java qualification tests**, zero failed/errors/
+JUnit-skipped, and **17,602 corpus records** with unchanged 100 file/12 record
+exclusions. All 27 route cases and six transport/local adoption tests execute;
+frozen Java/record/JSON, lint and Java 17 classfile checks pass. This certifies the
+documented three DuckDB-backed routes only, not PostgreSQL/MySQL or the parked
+strict native failures.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are adopted as

@@ -3,8 +3,9 @@
 Available in **0.13.0-SNAPSHOT development code**, through
 `JdbcDucklakeCatalog.readMetadata(): DucklakeReadMetadata`. This is an additive,
 read-only companion; existing `DucklakeCatalog` methods, records, constructors and
-fragment JSON are unchanged. It requires **`enableFinal11Reads=true`**, direct Java
-Quack and an owned `readSession`. Other formats/routes fail explicitly, rather than
+fragment JSON are unchanged. It requires **`enableFinal11Reads=true`**, a
+[qualified DuckDB-backed route](READ-BACKENDS.md) and an owned `readSession`.
+Other formats/routes fail explicitly, rather than
 claiming missing metadata is known. See [setup and reader limits](READING-1.1.md).
 
 ```kotlin
@@ -30,6 +31,9 @@ the unsigned-extension setting, JDBC driver version, access route/backend and
 observed physical columns/types. This is **observed peer provenance**, not proof of
 which historical writer produced a file, a checksum attestation or universal backend
 certification. No advertised metadata feature is inferred from `1.1-dev1`.
+The route identifies whether SQL executes remotely or locally; the JDBC driver's
+advertised version is not an artifact checksum or necessarily its Maven version.
+PostgreSQL/MySQL are not qualified by these DuckDB-specific facts.
 
 The reader verifies the required native columns/types for schema parentage, data
 and delete row groups, file exactness and table exactness. Missing/wrong-type columns

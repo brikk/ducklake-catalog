@@ -2,10 +2,10 @@
 
 Available in **0.13.0-SNAPSHOT development code** through
 `JdbcDucklakeCatalog.readHierarchy(): DucklakeHierarchyReader`. It is an additive,
-read-only companion, qualified on the same direct Java Quack peer as
-[rich metadata](READ-METADATA.md). Every operation requires
+read-only companion, qualified on the same three [DuckDB-backed routes](READ-BACKENDS.md)
+as [rich metadata](READ-METADATA.md). Every operation requires
 `enableFinal11Reads=true` and the owning catalog's `readSession`. Other formats and
-routes fail explicitly. No write, migration or physical-file scan is enabled.
+routes (including PostgreSQL/MySQL) fail explicitly. No write, migration or physical-file scan is enabled.
 
 ```kotlin
 catalog.readSession(java.util.function.Supplier {

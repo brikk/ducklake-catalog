@@ -45,6 +45,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   local DuckDB and native Quack as well as direct Java Quack. Test native physical
   layouts/type representations, owned-session consistency, fresh and migrated lakes,
   and explicit rejection of malformed/unknown layouts on each claimed route.
+  Active partial increment qualifies the three DuckDB-backed routes. PostgreSQL/
+  MySQL remain rejected until their storage/projection/provenance port is qualified;
+  this is implementation work still outstanding, not an artifact wait or a shipping pass.
 - [ ] **R07 — Read acceptance and rollout.** Run maintained/frozen ABI/wire controls,
   matching pristine full corpus, strict native gates and real native↔JVM fixtures:
   file/inline mixes, delete vectors, snapshot-tagged rows/deletes, history/CDC,
@@ -107,7 +110,8 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   reader increment is verified, with native interval persistence still failing**.
   The guarded R04 metadata increment is verified; its separate native gate remains
   failing. R05's explicit bounded hierarchy/path tier is verified; R06–R07 remain
-  queued, not implicitly certified.
+  queued, not implicitly certified. R06's DuckDB-family expansion is active; full
+  PostgreSQL/MySQL qualification remains outstanding before R07 rollout.
   The owner will revisit R02 when the fixes are
   available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
@@ -385,6 +389,57 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   guards and opt-in/session requirements remain unchanged. The
   [public API and consumer handoff](../docs/SCHEMA-HIERARCHY.md) are documented;
   plugin implementation and physical scans remain with their agents.
+
+### R06 — partial: qualified DuckDB-backed route expansion
+
+- Extends the existing opt-in final-1.1 reader/metadata/hierarchy tier to local
+  DuckDB JDBC and native Quack, retaining direct Java Quack. No public record,
+  constructor or JSON shape changes, dependency upgrades or write/migration guard
+  changes. PostgreSQL/MySQL still reject opt-in before connecting; **R06 stays open**.
+- Local mode requires an existing ordinary metadata file and opens DuckDB with
+  database-level `duckdb.read_only=true`, with matching Hikari read-only state.
+  Missing files and empty databases cannot be bootstrapped by opening/reading. A
+  differently configured local RW instance is refused; native publication resumes
+  after closing readers and reopening. This is not local multi-writer certification.
+- Native Quack's opt-in initializer attaches raw `quack:` metadata READ_ONLY, with
+  no DuckLake load/ATTACH, format selection, data-path override or migration. Its
+  parser needs no data path. The flag-off writable 1.0 initializer and exact unit
+  SQL expectations remain unchanged. Remote reads still activate the owned native
+  transaction using `use_transaction := true`, never an unrelated RPC BEGIN.
+- Capabilities preserve actual configured access-route labels and query engine/core
+  on the executing metadata peer. Missing loaded extension revisions remain NULL.
+  DuckDB JDBC advertises driverVersion `1.0` despite artifact 2.0.0.0; qualification
+  checks the independently fetched Maven Central JAR SHA-256
+  `5170daa90a43296705127ef3c80834ba1cd275ec9d765a9f7eee346ab0087186`, core
+  `d54cbbe3df` and signed extension pins, not that misleading metadata version.
+- Nine shared tests execute on each of three routes: real fresh/migrated values,
+  initial defaults/nested evolution, temporal/container/BLOB/JSON/NULL/unsigned/
+  decimal values, raw/decoded CDC identities, metadata/hierarchy/file paths,
+  non-bootstrap/session/publication/refresh boundaries, native temporal-edge and
+  physical-layout/type corruption rejection, and unknown/dev-format rejection.
+- Four existing pristine upstream files require **eleven additional native-Quack
+  transport mirrors**, alongside the previous 72 direct-Java mirrors, across the
+  same twenty-one unique files. Two entire pristine default fixtures additionally
+  finish their native replay before independent drained local read-only assertions;
+  those are not simultaneous RW/RO mirrors or claimed JVM file scans. Original
+  SQL/goldens/pins/exclusions remain unchanged.
+- Final forced verification passed **685 maintained JUnit tests** (563 catalog,
+  51 SLT, 71 replay), **86 separate shipping direct-Java qualification tests** and
+  **17,602 corpus records**, zero failed/errors/JUnit-skipped. Existing 100 file/
+  12 record corpus exclusions remain unchanged. All 27 shared route cases, the
+  metadata-only initializer unit case and six pristine transport/local tests execute.
+  All module checks/detekt, frozen Java/record/JSON controls and Java 17 `checkAbi`
+  passed (7,770 classes, 17 artifacts). The unchanged-source forced run took 12m51s;
+  session-owned test workers were reaped. R02–R04 native defects remain parked and
+  distinct, not rerun or waived here; no artifact upgrade or SQL-backend acceptance
+  is implied.
+- **Remaining before R06 closure:** PostgreSQL/MySQL physical type mapping and
+  layout validation, safe inline default/evolution handling over their text/BYTEA/
+  narrow physical types, portable rich metadata/hierarchy SQL and truthful nullable/
+  non-applicable provenance, with fresh/migrated/session/negative tests. Do not
+  remove URL guards, fabricate capabilities or treat old 1.0 tests as 1.1 acceptance.
+  Model changes may follow the existing documented/versioned coordination policy;
+  compatibility is not a design veto. [Public route/handoff contract](../docs/READ-BACKENDS.md).
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

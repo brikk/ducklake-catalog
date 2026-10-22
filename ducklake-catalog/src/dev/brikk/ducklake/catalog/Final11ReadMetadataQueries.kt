@@ -29,13 +29,13 @@ internal class Final11ReadMetadataReader(private val queries: () -> Final11ReadM
 }
 
 /** Raw rich metadata, deliberately separate from the guarded legacy hierarchy/projection adapter. */
-internal class Final11ReadMetadataQueries(private val ctx: DSLContext) {
+internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private val route: Final11ReadRoute) {
     private val observed = validateLayout()
 
     fun hierarchy(): Final11HierarchyQueries = Final11HierarchyQueries(ctx, ::requireSnapshot)
 
     fun capabilities(): DucklakeReadMetadataCapabilities {
-        val version = ctx.fetch("PRAGMA version").single()
+        val version = ctx.fetch("SELECT library_version,source_id FROM pragma_version()").single()
         val extensions = ctx.fetch("SELECT extension_name,extension_version FROM duckdb_extensions() " +
             "WHERE loaded AND extension_name IN ('ducklake','quack')").associate { it.get(0, String::class.java) to it.get(1, String::class.java) }
         val unsigned = ctx.fetch("SELECT current_setting('allow_unsigned_extensions')").single().get(0, Boolean::class.javaObjectType)
@@ -43,7 +43,7 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext) {
         val driver = ctx.connectionResult { it.metaData.driverVersion }
         val snapshot = ctx.fetch("SELECT max(snapshot_id) FROM ducklake_snapshot").single().get(0, Long::class.javaObjectType)
             ?: corrupt("missing visible snapshot")
-        return DucklakeReadMetadataCapabilities("1.1", snapshot, "duckdb", "java-quack",
+        return DucklakeReadMetadataCapabilities("1.1", snapshot, "duckdb", route.label,
             version.get(0, String::class.java) ?: corrupt("NULL engine version"),
             version.get(1, String::class.java) ?: corrupt("NULL engine source ID"), extensions["ducklake"], extensions["quack"],
             unsigned, driver, observed, true, true, true, true, true, false, false, false)

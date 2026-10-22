@@ -102,6 +102,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /** Pool-backed context: each statement checks out a connection and autocommits. */
     private val pooledDsl: DSLContext
     private val final11ReadsEnabled: Boolean
+    private val final11ReadRoute: Final11ReadRoute?
 
     /** Set on a thread for the duration of [readSession]: every read on that thread uses it. */
     private val readSessionDsl: ThreadLocal<DSLContext?> = ThreadLocal()
@@ -138,12 +139,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val configuredUrl: String = requireNotNull(config.catalogDatabaseUrl) {
             "DucklakeCatalogConfig.catalogDatabaseUrl is required (jdbc:postgresql://…, jdbc:duckdb:…)"
         }
-        if (final11ReadsEnabled && !configuredUrl.startsWith("jdbc:quack:")) {
-            throw DucklakeInvalidOperationException("Final-1.1 reads are currently qualified only through direct Java Quack (jdbc:quack:)")
+        final11ReadRoute = if (final11ReadsEnabled) Final11ReadRoute.forUrl(configuredUrl) else null
+        if (final11ReadRoute == Final11ReadRoute.LOCAL_DUCKDB) {
+            hikariConfig.addDataSourceProperty("duckdb.read_only", "true")
+            hikariConfig.isReadOnly = true // Hikari must not try to flip the driver's database-level access mode.
         }
         val dialectInferenceUrl: String
         val metadataQuery: MetadataQuery
         if (QuackBackedDuckDbCatalogUrl.matches(configuredUrl)) {
+            // Opt-in readers attach only remote metadata; the legacy flag-off writer initializer is unchanged.
             // Synthetic URL — `jdbc:duckdb:quack://host:port[?metadata_catalog=name]`.
             // Open a plain in-memory DuckDB JDBC connection and let HikariCP run a
             // per-connection init script that loads quack + ducklake, creates the
@@ -151,10 +155,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // METADATA_CATALOG name, and USEs that catalog's main schema. After init,
             // bare references to `ducklake_*` tables resolve directly to the remote
             // metadata storage — JdbcDucklakeCatalog's jOOQ DSL stays unchanged.
-            val quack = QuackBackedDuckDbCatalogUrl.parse(
-                configuredUrl, config.catalogDatabasePassword, config.dataPath)
+            val quack = if (final11ReadsEnabled) QuackBackedDuckDbCatalogUrl.parseRead(configuredUrl, config.catalogDatabasePassword) else
+                QuackBackedDuckDbCatalogUrl.parse(configuredUrl, config.catalogDatabasePassword, config.dataPath)
             hikariConfig.jdbcUrl = QuackBackedDuckDbCatalogUrl.UNDERLYING_JDBC_URL
-            hikariConfig.connectionInitSql = quack.connectionInitSql()
+            hikariConfig.connectionInitSql = if (final11ReadsEnabled) quack.readConnectionInitSql() else quack.connectionInitSql()
             // The user/password slots aren't used at the JDBC layer for this backend;
             // the token is interpolated into the CREATE SECRET statement inside the
             // init script.
@@ -401,7 +405,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             invalidRichMetadata("Rich metadata is currently qualified only for final 1.1")
         }
         // Does not mark the legacy hierarchy preflight valid: raw parent IDs do not qualify flat reads.
-        return Final11ReadMetadataQueries(ctx)
+        return Final11ReadMetadataQueries(ctx, requireNotNull(final11ReadRoute))
     }
 
     private fun invalidRichMetadata(message: String): Nothing = throw DucklakeInvalidOperationException(message)

@@ -2,7 +2,7 @@
 
 The [conservative legacy read tier](../docs/READING-1.1.md) and additive
 [rich read-metadata companion](../docs/READ-METADATA.md) are implemented for opt-in
-direct Java Quack. The legacy adapter still omits bounds and rejects unqualified
+the three [qualified DuckDB-backed routes](../docs/READ-BACKENDS.md). The legacy adapter still omits bounds and rejects unqualified
 cases; the companion exposes raw metadata without qualifying typed pruning,
 or exact aggregates. The explicit [R05 hierarchy reader](../docs/SCHEMA-HIERARCHY.md)
 adds bounded parent-aware names/paths without unlocking legacy flat APIs. None
@@ -106,6 +106,28 @@ No existing record shape or constructor changes. New qualified record JSON fixtu
 preserve literal components, raw path spelling, nullable directories and ended
 ownership. Both plugin agents must explicitly adopt/verify this contract; their
 implementations, physical scans and cleanup effects remain outside this increment.
+
+## R06 partial backend handoff
+
+The same guarded reader, raw metadata and hierarchy interfaces now cover direct
+Java Quack, database-read-only local DuckDB files and native Quack's metadata-only
+attachment. Existing records/constructors/JSON and 1.0 default writer initialization
+are unchanged. `accessRoute` is observed from the configured qualified route rather
+than always claiming Java Quack; engine/core provenance refers to the executing
+metadata SQL engine. Driver metadata is advertised, not an artifact attestation.
+
+Local READ_ONLY cannot coexist with a differently configured local RW file instance;
+coordinate close/publish/reopen. Quack's tested publication boundary is an owned
+remote transaction, not a physical-file lease. Native reader initialization never
+bootstraps DuckLake or selects/migrates its format. Configured data paths do not
+override stored reader path namespaces.
+
+R06 is **not complete**: PostgreSQL/MySQL opt-in remains rejected pending portable
+storage/projection/provenance and acceptance work. Do not fill unavailable provenance
+with fabricated DuckDB source IDs or false unsigned-extension facts. Any required
+intentional model change follows the existing version/coordination policy. Plugin
+agents own route selection, dependencies, publication/worker handling and scans;
+no plugin rollout is certified by this library increment.
 
 ## Required semantics (metadata and hierarchy exposed; optimization still gated)
 

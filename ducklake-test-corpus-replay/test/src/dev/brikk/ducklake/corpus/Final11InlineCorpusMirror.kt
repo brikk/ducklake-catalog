@@ -24,6 +24,7 @@ internal class Final11InlineCorpusMirror(
     private val mirrorLimit: Int = Int.MAX_VALUE,
     private val payloadQuery: (String) -> Boolean = { true },
     private val queryTimeZone: (String) -> String = { "UTC" },
+    private val nativeQuack: Boolean = false,
 ) : ReplayReadEngine {
     override val name = "final-11-catalog-inline"
     private val scratch = DriverManager.getConnection("jdbc:duckdb:")
@@ -35,7 +36,8 @@ internal class Final11InlineCorpusMirror(
         catalog?.close()
         alias = attachment.catalogAlias
         catalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
-            catalogDatabaseUrl = "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
+            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${server.getHost()}:${server.getMappedPort()}" else
+                "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
             catalogDatabasePassword = server.getToken()
             dataPath = attachment.dataPath
             maxCatalogConnections = 1
@@ -61,6 +63,7 @@ internal class Final11InlineCorpusMirror(
         scratch.createStatement().use { it.execute("SET TimeZone='$zone'") }
         c.readSession(Supplier {
             assertThat(c.getSpecVersion()).isEqualTo("1.1")
+            if (nativeQuack) assertThat(c.readMetadata().getReadMetadataCapabilities().accessRoute).isEqualTo("native-quack")
             val snapshot = c.currentSnapshotId
             val table = requireNotNull(c.getTable("main", tableName, snapshot))
             assertThat(c.getDataFiles(table.tableId, snapshot)).`as`("the mirror must read ONLY JVM-decoded inline rows").isEmpty()

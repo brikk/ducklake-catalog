@@ -1,10 +1,12 @@
 # Conservative DuckLake 1.1 reads
 
 Available on **0.13.0-SNAPSHOT development code**, not stable 0.12.0. This is an
-explicit, limited read tier over **direct Java Quack** (`quack-jdbc 0.8.0`), qualified
+explicit, limited read tier over **direct Java Quack**, read-only local DuckDB files
+and native Quack, qualified
 against official DuckDB **2.0.0**, DuckLake `417a9117f5` and Quack `f96420ed46`
 (protocol v3). It is not full 1.1 support,
-other-backend certification or permission to write/migrate a catalog.
+PostgreSQL/MySQL certification or permission to write/migrate a catalog.
+See [qualified backend routes and restrictions](READ-BACKENDS.md); R06 remains partial.
 
 ## Enable and use an owned read session
 
@@ -36,8 +38,11 @@ The flag defaults to **false**. Use **`readSession` for all catalog reads**;
 metadata access outside it fails explicitly. This makes layout/hierarchy
 validation and the data queries see the same metadata snapshot. Validation is
 repeated for each new session, never cached across migrations or native commits.
-Only `jdbc:quack:` is accepted for this opt-in mode. Applications supply the Java
-driver; no embedded DuckDB JDBC is required.
+Qualified URLs are `jdbc:quack:`, existing-file `jdbc:duckdb:` and
+`jdbc:duckdb:quack:`. Applications supply the selected driver; direct Java Quack
+still requires no embedded DuckDB JDBC. Local readers are database-level read-only;
+native Quack uses a metadata-only non-bootstrapping initializer. Other transports
+remain rejected. Read the route-specific restrictions above before enabling.
 
 ## Supported scope and deliberate fallbacks
 

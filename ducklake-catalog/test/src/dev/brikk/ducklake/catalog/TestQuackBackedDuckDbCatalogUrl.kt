@@ -131,4 +131,13 @@ internal class TestQuackBackedDuckDbCatalogUrl {
         assertThat(sql).contains("TOKEN 'tok''en''!'")
         assertThat(sql).contains("DATA_PATH '/tmp/data''with''quotes'")
     }
+
+    @Test
+    fun readInitAttachesOnlyMetadataWithoutDucklakeBootstrapOrMigration() {
+        val read = QuackBackedDuckDbCatalogUrl.parseRead("jdbc:duckdb:quack://h:9494?metadata_catalog=123", "tok'en")
+        val sql = read.readConnectionInitSql()
+        assertThat(sql).contains("LOAD quack", "TOKEN 'tok''en'", "ATTACH 'quack:h:9494' AS \"123\" (READ_ONLY)", "USE \"123\".main")
+        assertThat(sql).doesNotContain("ducklake", "DUCKLAKE_VERSION", "AUTOMATIC_MIGRATION", "DATA_PATH")
+        assertThatThrownBy { read.connectionInitSql() }.isInstanceOf(IllegalArgumentException::class.java).hasMessageContaining("requires a data path")
+    }
 }
