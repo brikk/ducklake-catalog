@@ -17,8 +17,9 @@ import org.jooq.DSLContext
 import org.jooq.Field
 import org.jooq.impl.DSL
 import java.math.BigInteger
+import java.math.BigDecimal
 
-/** Bounded PostgreSQL subset: unchanged nested shape, scalar initial defaults and exact integral widening. */
+/** Bounded PostgreSQL subset: unchanged nested shape, scalar initial defaults and exact root numeric widening. */
 internal class Final11PostgresProjection(
     private val ctx: DSLContext, private val source: Final11InlineSchema, private val target: Final11InlineSchema,
 ) {
@@ -48,7 +49,7 @@ internal class Final11PostgresProjection(
         fun apply(raw: Any?, decode: Boolean): Any? {
             val value = if (origin == null) (if (defaultValue is ByteArray) defaultValue.copyOf() else defaultValue) else {
                 val old = Final11PostgresValues.decode(raw, origin.type)
-                if (origin.type.type == destination.type.type || old == null) old else convertInteger(old, destination.type)
+                if (origin.type.type == destination.type.type || old == null) old else convertNumeric(old, destination.type)
             }
             return when {
                 decode -> value
@@ -64,7 +65,7 @@ internal class Final11PostgresProjection(
         val next = destination.type.type
         Final11InlineTypes.requireConversion(old, next)
         val unchanged = old == next || old == "null"
-        if (!unchanged && !(integral(old) && integral(next))) invalid("scalar conversion $old to $next is not yet qualified")
+        if (!unchanged && !exactNumeric(old, next)) invalid("scalar conversion $old to $next is not yet qualified")
         if (origin.children.size != destination.children.size) invalid("nested schema evolution is not yet qualified")
         origin.children.zip(destination.children).forEach { (a, b) ->
             if (!sameNestedIdentity(a, b)) {
@@ -143,9 +144,22 @@ internal class Final11PostgresProjection(
         }
         private fun integral(type: String) = type in INTEGRAL
         private fun mapKey(type: String) = integral(type) || type in setOf("varchar", "uuid") || type.startsWith("decimal")
-        private fun convertInteger(value: Any, target: InlinedTypeNode): Any? {
-            val number = when (value) { is Boolean -> if (value) BigInteger.ONE else BigInteger.ZERO; else -> BigInteger(value.toString()) }
-            return Final11PostgresValues.decode(number, target)
+        private fun exactNumeric(from: String, to: String): Boolean = when {
+            integral(from) && integral(to) -> true
+            to.startsWith("decimal") -> (integral(from) && from != "boolean") || from.startsWith("decimal")
+            else -> from == "float32" && to == "float64"
+        }
+        private fun convertNumeric(value: Any, target: InlinedTypeNode): Any? {
+            val numeric = when {
+                target.type == "float64" -> (value as Float).toDouble()
+                target.type.startsWith("decimal") -> when (value) {
+                    is BigDecimal -> value
+                    else -> BigDecimal(value.toString())
+                }
+                value is Boolean -> if (value) BigInteger.ONE else BigInteger.ZERO
+                else -> BigInteger(value.toString())
+            }
+            return Final11PostgresValues.decode(numeric, target)
         }
         private fun storageValue(value: Any?, type: InlinedTypeNode): Any? = when {
             value == null -> null

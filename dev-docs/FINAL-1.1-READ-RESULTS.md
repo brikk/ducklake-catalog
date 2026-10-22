@@ -1,10 +1,13 @@
 # First final-1.1 read tier — October 20
 
 **R06 PostgreSQL follow-up:** a direct-JDBC subset now reads unchanged nested
-values, scalar defaults and exact root integer widening with source-domain/value
+values, scalar defaults and exact root numeric widening with source-domain/value
 validation and portable nullable provenance. Rich metadata/hierarchy data operations
 are now qualified too; broader PostgreSQL payload evolution remains rejected and MySQL is still closed. See the
 [PostgreSQL contract](../docs/READ-POSTGRES-1.1.md); R06 remains open.
+Exact numeric widening now includes integer-to-DECIMAL, exact DECIMAL precision/
+scale extension and stored FLOAT-to-DOUBLE; approximate/narrowing/temporal and
+nested payload conversions remain unqualified.
 
 **R06 partial follow-up:** the guarded tier now covers read-only local DuckDB and
 native Quack in addition to direct Java Quack. Native read initialization attaches

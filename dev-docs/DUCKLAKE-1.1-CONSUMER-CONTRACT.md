@@ -171,6 +171,23 @@ payload APIs, broaden PostgreSQL conversions, enable optimization, grant cleanup
 permission or change any writer/migration guard. MySQL and R07 are still open.
 Pristine full-file native goldens and direct-JDBC mirrors remain mandatory.
 
+### R06 PostgreSQL exact root numeric follow-up
+
+The PostgreSQL root payload subset now additionally qualifies native-allowed
+integer-to-DECIMAL and exact DECIMAL precision/scale widening, plus FLOAT-to-DOUBLE.
+Source-domain checks precede conversion. DECIMAL results use target-scale
+`BigDecimal` in raw/decoded reads and CDC; FLOAT widens its stored binary value,
+not its short decimal text. Missing-field initial defaults retain native literal
+semantics, while stored NULL stays NULL. Boolean-to-DECIMAL is native-rejected and
+reader-rejected; approximate integer/decimal-to-float, narrowing, temporal and nested
+evolution are not opened by this increment.
+
+The descriptive profile label advances from `postgres-same-shape-integer-widening`
+to `postgres-same-shape-exact-numeric-widening`. No record components, constructors
+or JSON fields change. This opt-in development-tier label is not writer/worker
+capability negotiation; both owned connector agents must adopt and qualify the
+scope explicitly. No plugin implementation or rollout is claimed.
+
 ## Required semantics (metadata and hierarchy exposed; optimization still gated)
 
 | Metadata | Representation | Consumer obligation |

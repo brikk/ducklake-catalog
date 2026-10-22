@@ -321,6 +321,45 @@ direct-Java tests**, zero failed/errors/JUnit-skipped, plus **17,602 corpus reco
 with unchanged 100 file/12 record exclusions. Lint, frozen ABI/wire and Java 17
 controls pass. The strict native R02–R04 failures were not rerun, skipped or waived.
 
+## R06 PostgreSQL exact root numeric evolution — payload mirrors
+
+`TestUpstreamFinal11PostgresNumeric` uses the same maintained corpus revision and
+three whole pristine files, with their original statements, expected errors and
+goldens. Native and scratch/JVM results must match independent upstream expected
+values; mirror counts and no-skip assertions are mandatory.
+
+| Pristine corpus path | SHA-256 | Additional PG payload mirrors |
+|---|---|---:|
+| `alter/alter_type_stale_stats_cache.test` | `0416ab66c67c85b8e7db1908169de17a5c6bb1c3aa7f2b283f3f57472f7df306` | 2 |
+| `data_inlining/data_inlining_transaction_local_alter_type_rename.test` | `773e1bdf4464d726376c1c1e8144a73dabc50444613475708459ed6cdde0b2ff` | 1 |
+| `default/literal_default_rendering.test` | `f804d019c04643e7f9804218906e492e63e1fab5773fdf9174ac2cfcdafc03d2` | 1 |
+
+The decimal-cache source normally flushes 100-row inserts under the stock 10-row
+threshold. It first runs entirely as that **native control**, then repeats with a
+separate explicit `ducklake_default_data_inlining_row_limit=1000` fixture profile
+so its unchanged decimal `t3` queries exercise actual older inline schemas. This
+profile does not replace the stock run, rewrite original SQL or waive native
+failures; both complete with no skips. JVM mirrors assert empty file candidates.
+
+Only committed decimal `t3`, float `type_test2` and default `fl` queries are mirrored.
+Transaction-local queries still execute natively, never as alleged independent
+committed reads. Other native queries, including unsupported temporal promotions,
+execute unchanged but are not claimed as JVM support. These **four additional
+mirrors** bring the total to **117 across 23 unique pristine files**, plus the two
+separate drained-local checks. Corpus/dependency/extension/layout pins are unchanged.
+
+Nine independent native/JDBC fixtures additionally qualify exact DECIMAL scale/
+precision, integer extremes, original history/CDC, stored FLOAT binary values versus
+missing initial literals, NaN/infinities/signed zero/subnormals/extremes, source-domain
+and physical-dimension negatives, native migration and pinned publication. A pure
+schema regression retains rejection of Boolean-to-DECIMAL, narrowing, approximate
+promotions and nested changes. The native Boolean-to-DECIMAL error is preserved.
+
+Final forced verification passed **746 maintained JUnit tests + 86 separate
+direct-Java tests**, zero failed/errors/JUnit-skipped, and **17,602 corpus records**
+with unchanged 100 file/12 record exclusions. Lint, frozen ABI/wire and Java 17 checks
+pass. Existing strict R02–R04 native gates remain parked, not rerun or waived.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are adopted as

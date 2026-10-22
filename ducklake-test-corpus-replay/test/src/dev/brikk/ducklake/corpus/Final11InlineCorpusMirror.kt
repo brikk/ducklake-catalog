@@ -136,6 +136,7 @@ internal class Final11InlineCorpusMirror(
 
     private fun physicalType(type: InlinedTypeNode): String {
         SCALAR_SQL[type.type]?.let { return it }
+        if (Regex("decimal\\([0-9]{1,2},[0-9]{1,2}\\)").matches(type.type)) return type.type
         return when (type.type) {
             "struct" -> "STRUCT(" + type.children.joinToString(",") { "${quote(it.name)} ${physicalType(it)}" } + ")"
             "list" -> physicalType(type.children.single()) + "[]"

@@ -27,14 +27,17 @@ No session-zone-dependent promotion or arbitrary default SQL is evaluated.
 
 ## Qualified projections
 
-- Stored finite values whose nested schema shape and **every nested field ID** are
+- Stored values whose nested schema shape and **every nested field ID** are
   unchanged. STRUCT text is decoded by names, never physical positions; LIST/MAP,
   NULL parents/elements, empty containers, nested dates/BLOB/JSON and literal NULL
   strings remain distinct. MAP keys are currently Boolean, integer, VARCHAR, UUID
   or DECIMAL; other key families are explicitly unqualified.
 - Top-level column add/drop/reorder/rename by stable IDs, qualified scalar initial
-  defaults and exact root Boolean/integer widening under the existing native
-  conversion allowlist. A stored NULL is not replaced by a default. Same-named
+  defaults and exact root numeric widening under the existing native
+  conversion allowlist: Boolean/integer widening, integer-to-DECIMAL, DECIMAL
+  precision/scale widening without losing integral capacity, and FLOAT-to-DOUBLE.
+  Boolean-to-DECIMAL remains rejected by the native build and reader. A stored NULL
+  is not replaced by a default. Same-named
   replacement columns do not inherit old values.
 - Historical snapshots and raw/decoded CDC using their intended target columns and
   original row/begin/end identity. Requested columns are re-resolved from catalog
@@ -46,9 +49,11 @@ No session-zone-dependent promotion or arbitrary default SQL is evaluated.
   DuckLake writes SQL NULL there; it is not a qualified physical ordering fact.
 
 **Still rejected:** nested field add/drop/rename/reorder/type/ID replacement,
-non-integral scalar promotions (including decimal/float/date/timestamp changes),
+other scalar promotions (including integer/decimal-to-float, narrowing, date/timestamp changes),
 whole-container non-NULL initial defaults, VARIANT/other unqualified types, temporal
-infinities and TIME 24:00. Raw reads cannot bypass value guards. Even a missing
+infinities and TIME 24:00. Floating NaN/infinities and signed zero remain supported;
+their exact FLOAT-to-DOUBLE conversion does not certify temporal infinities.
+Raw reads cannot bypass value guards. Even a missing
 column with a NULL initial default does not certify an unsupported type.
 
 Any nested-schema history remains rejected by ordinary payload/descriptor APIs.
@@ -56,6 +61,24 @@ The explicit `readMetadata()` data operations and `readHierarchy()` companion no
 support PostgreSQL without relaxing those legacy guards. The old
 `getReadMetadataCapabilities()` record is **DuckDB-only** and still fails explicitly
 on PostgreSQL; use `readBackendProfile()` for nullable provenance/availability.
+
+### Exact root numeric evolution
+
+Source values are decoded and domain-checked before widening. DECIMAL conversion
+uses exact scale extension, not rounding or approximate binary intermediates; raw
+and decoded evolved roots return target-scale `BigDecimal`. FLOAT-to-DOUBLE widens
+the stored binary float to `Double`, not its short decimal display: stored FLOAT
+`0.1` becomes `0.10000000149011612`. A missing field's initial literal `0.1` is
+interpreted under the target schema instead, matching native default semantics.
+Stored NULL never becomes a default. Raw reads and CDC use the same validation and
+preserve original row/begin/end snapshot identity. Native 1.0→1.1 fixtures and pinned
+publication tests qualify this subset; nested numeric changes are still rejected.
+
+The backend profile's descriptive `inlineProjection` label is now
+`postgres-same-shape-exact-numeric-widening` (previously
+`postgres-same-shape-integer-widening`). Record components/constructors/JSON fields
+are unchanged. This is an expanded opt-in read-tier observation, not writer or
+mixed-worker capability negotiation; consumers must adopt the documented subset.
 
 ## Rich metadata and bounded hierarchy
 
@@ -105,7 +128,7 @@ the calendar value.
 Prefer decoded APIs. Raw unchanged roots keep their PostgreSQL storage shape:
 BYTEA text/BLOB, native numeric values and named nested text. Native temporal roots
 are read as validated text so JDBC cannot lose microseconds/offsets. Added defaults
-and integer-widened roots return the corresponding PostgreSQL target-storage shape;
+and numeric-widened roots return the corresponding PostgreSQL target-storage shape;
 mutable BLOB defaults are independently copied per result. This is a newly
 qualified opt-in PostgreSQL contract, not a change to legacy 0.4/1.0 raw APIs.
 

@@ -12,7 +12,7 @@ covering every platform or driver build.
 | `jdbc:quack://host:port` | Direct Java Quack, metadata SQL on the remote DuckDB | Java driver 0.8.0; no DuckDB JDBC required in the reading JVM |
 | `jdbc:duckdb:/existing/metadata.db` | Existing local DuckDB file, **database-level READ_ONLY** | File must exist; no memory/protocol URL or catalog creation; coordinate native writers by closing readers |
 | `jdbc:duckdb:quack://host:port?metadata_catalog=name` | Native DuckDB/Quack client, **metadata-only READ_ONLY attachment** | Library never invokes DuckLake bootstrap/version selection/migration on reader open |
-| `jdbc:postgresql://…` | **Limited direct-JDBC payloads; rich metadata/hierarchy** | Same nested shape, scalar defaults and exact root integer widening; broader payload evolution still rejected; provenance uses `readBackendProfile()` |
+| `jdbc:postgresql://…` | **Limited direct-JDBC payloads; rich metadata/hierarchy** | Same nested shape, scalar defaults and exact root numeric widening (integer/decimal/FLOAT-to-DOUBLE); broader payload evolution still rejected; provenance uses `readBackendProfile()` |
 | `jdbc:mysql://…` | **Not qualified for final 1.1** | Opt-in construction fails before connecting; physical-storage/projection/provenance work remains |
 
 All qualified routes require `enableFinal11Reads=true` and an owned

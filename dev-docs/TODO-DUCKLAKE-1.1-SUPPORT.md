@@ -539,5 +539,43 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   R02–R04 failures remain parked, not waived. No connector implementation, physical
   scan/cleanup lease or rollout is certified.
 
+### R06 — PostgreSQL exact root numeric widening
+
+- Extends the unchanged-nested-shape PostgreSQL payload tier to native-allowed
+  integer-to-DECIMAL, exact DECIMAL precision/scale widening and FLOAT-to-DOUBLE.
+  Source domains and actual physical dimensions are validated before conversion;
+  no decimal rounding, string-to-infinity coercion or approximate intermediates.
+  Raw/decoded evolved decimals return target-scale BigDecimal; evolved floats
+  return the exact widened binary value (FLOAT 0.1 → DOUBLE 0.10000000149011612).
+- Missing-field initial float defaults preserve native literal intent (0.1), while
+  actual stored FLOAT uses its binary value and stored NULL stays NULL. Historical
+  target schemas and raw/decoded CDC preserve original row/begin/end identity.
+  Real native 1.0→1.1 migration and concurrent publication/pinned refresh pass.
+- Native probes reject Boolean-to-DECIMAL; the PostgreSQL reader explicitly keeps
+  it closed. Approximate integer/decimal-to-float, narrowing, temporal and nested
+  conversions stay unqualified. Invalid old integer domains cannot masquerade as
+  wider decimal values, even via raw reads. Incorrect source numeric dimensions
+  fail before a wider target could hide corruption.
+- The descriptive backend-profile label advances to
+  `postgres-same-shape-exact-numeric-widening`; record/constructor/JSON-field shapes
+  stay unchanged. The label is not writer or worker capability negotiation.
+- Adds **nine native/JDBC cases**, one pure schema-guard regression and three
+  whole pristine corpus fixtures requiring **four additional payload mirrors**.
+  The decimal source uses a separate stock-threshold native control, followed by
+  an explicitly configured 1000-row inline profile with unchanged SQL/goldens;
+  its JVM mirror requires no Parquet candidates. No default-threshold file scan is
+  misrepresented as an inline JVM read. Total mirrors are **117 across 23 pristine
+  source files**, plus two separate local final-state checks. Pins/exclusions stay fixed.
+- Final forced verification passed **746 maintained JUnit tests** (610 catalog,
+  51 SLT, 85 replay), **86 separate direct-Java tests** and **17,602 corpus records**,
+  zero failed/errors/JUnit-skipped. Unchanged corpus exclusions: 100 files/12 records.
+  Lint, frozen Java/record/JSON and Java 17 checks pass (`checkAbi`: 7,779 classes,
+  17 artifacts). The final run took 15m10s; owned test workers/containers were reaped.
+  Log: `/tmp/opencode/catalog-r06-pg-numeric-full.log`.
+- **R06 stays open:** broader PostgreSQL payload evolution and MySQL remain.
+  Writes, automatic-migration defaults, dependency/corpus/layout pins and legacy
+  nested payload guards are unchanged. Parked native R02–R04 failures were not
+  rerun or waived. No plugin implementation or rollout was performed.
+
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

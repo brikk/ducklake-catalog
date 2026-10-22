@@ -43,6 +43,22 @@ class TestFinal11InlineProjection {
     }
 
     @Test
+    fun postgresExactNumericScopeRejectsRoundingNarrowingAndNestedConversionsBeforePayloadSql() {
+        for ((from, to) in listOf("boolean" to "decimal(5,4)", "int32" to "float64", "decimal(9,2)" to "float64",
+            "float64" to "float32", "decimal(9,2)" to "decimal(9,3)", "decimal(9,2)" to "decimal(10,1)",
+            "int64" to "decimal(20,2)", "uint64" to "decimal(21,2)")) {
+            assertThatThrownBy { Final11PostgresProjection(DSL.using(SQLDialect.POSTGRES),
+                Final11InlineSchema(listOf(column(1, "v", from))), Final11InlineSchema(listOf(column(1, "v", to)))).plan("t", listOf(1)) }
+                .`as`("$from to $to").isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("scalar conversion")
+        }
+        val before = listOf(column(1, "s", "struct"), column(2, "v", "float32", 1))
+        val after = listOf(column(1, "s", "struct"), column(2, "v", "float64", 1))
+        assertThatThrownBy { Final11PostgresProjection(DSL.using(SQLDialect.POSTGRES), Final11InlineSchema(before),
+            Final11InlineSchema(after)).plan("t", listOf(1)) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("nested schema evolution")
+    }
+
+    @Test
     fun parserAcceptsQualifiedNestedTypesButDoesNotTreatStructOrderAsIdentity() {
         val first = Final11InlineTypes.parsePhysical("STRUCT(a INTEGER, \"comma, quote\"\"\" MAP(VARCHAR, STRUCT(x DECIMAL(10,2))[]))")
         val reordered = Final11InlineTypes.parsePhysical("STRUCT(\"comma, quote\"\"\" MAP(VARCHAR, STRUCT(x DECIMAL(10,2))[]), a INTEGER)")
