@@ -47,11 +47,11 @@ class TestInlinedMetadataLayouts {
             catalogDatabaseUrl = "jdbc:duckdb:"
             enableFinal11Reads = true
         }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("existing DuckDB metadata file")
-        for (url in listOf("jdbc:postgresql://unused/never-connect", "jdbc:mysql://unused/never-connect")) {
+        for (url in listOf("jdbc:h2:unused", "jdbc:mysql://unused/never-connect")) {
             assertThatThrownBy { JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
                 catalogDatabaseUrl = url
                 enableFinal11Reads = true
-            }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("PostgreSQL/MySQL remain unqualified")
+            }) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("MySQL remains unqualified")
         }
     }
 

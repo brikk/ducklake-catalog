@@ -127,25 +127,7 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
         }
     }
 
-    private fun validateLayout(): List<DucklakeMetadataColumn> {
-        val columns = DSL.table(DSL.sql("information_schema.columns")).`as`("c")
-        fun field(name: String) = DSL.field(DSL.name("c", name), String::class.java)
-        val rows = ctx.select(DSL.substring(field("table_name"), 1, 129), DSL.substring(field("column_name"), 1, 129),
-            DSL.substring(field("data_type"), 1, 129)).from(columns)
-            .where(field("table_catalog").eq(DSL.field("current_database()", String::class.java)))
-            .and(field("table_schema").eq(DSL.field("current_schema()", String::class.java)))
-            .and(field("table_name").`in`(REQUIRED.keys)).limit(257)
-            .fetch { DucklakeMetadataColumn(it.value1(), it.value2(), it.value3()) }
-        if (rows.size > 256) invalid("physical layout exceeds the column budget")
-        if (rows.any { listOf(it.tableName, it.columnName, it.dataType).any { text -> text.length > 128 } }) {
-            invalid("physical layout name/type exceeds the text budget")
-        }
-        REQUIRED.forEach { (table, fields) -> fields.forEach { (name, type) ->
-            if (rows.count { it.tableName == table && it.columnName == name && it.dataType == type } != 1)
-                invalid("missing or mismatched physical column $table.$name ($type)")
-        } }
-        return rows.sortedWith(compareBy({ it.tableName }, { it.columnName }))
-    }
+    private fun validateLayout(): List<DucklakeMetadataColumn> = observedLayout(ctx, route)
 
     private fun requireSnapshot(snapshot: Long) {
         if (snapshot < 0 || !ctx.fetchExists(ctx.selectOne().from(DSL.table(DSL.name("ducklake_snapshot")))
@@ -176,6 +158,34 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
     companion object {
         const val MAX_ROWS = 65536
         const val MAX_TEXT = 16384
+        fun observedLayout(ctx: DSLContext, route: Final11ReadRoute): List<DucklakeMetadataColumn> {
+            val columns = DSL.table(DSL.sql("information_schema.columns")).`as`("c")
+            fun field(name: String) = DSL.field(DSL.name("c", name), String::class.java)
+            val rows = ctx.select(DSL.substring(field("table_name"), 1, 129), DSL.substring(field("column_name"), 1, 129),
+                DSL.substring(field("data_type"), 1, 129)).from(columns)
+                .where(field("table_catalog").eq(DSL.field("current_database()", String::class.java)))
+                .and(field("table_schema").eq(DSL.field("current_schema()", String::class.java)))
+                .and(field("table_name").`in`(REQUIRED.keys)).limit(257)
+                .fetch { DucklakeMetadataColumn(it.value1(), it.value2(), it.value3()) }
+            if (rows.size > 256) invalidLayout("physical layout exceeds the column budget")
+            if (rows.any { listOf(it.tableName, it.columnName, it.dataType).any { text -> text.length > 128 } }) {
+                invalidLayout("physical layout name/type exceeds the text budget")
+            }
+            REQUIRED.forEach { (table, fields) -> fields.forEach { (name, type) ->
+                if (rows.count { it.tableName == table && it.columnName == name && metadataType(it.dataType, route) == type } != 1)
+                    invalidLayout("missing or mismatched physical column $table.$name ($type)")
+            } }
+            return rows.sortedWith(compareBy({ it.tableName }, { it.columnName }))
+        }
+
+        private fun metadataType(type: String, route: Final11ReadRoute): String = if (route.duckDb) type else when (type) {
+            "bigint" -> "BIGINT"
+            "uuid" -> "UUID"
+            "boolean" -> "BOOLEAN"
+            "character varying", "text" -> "VARCHAR"
+            else -> type
+        }
+        private fun invalidLayout(message: String): Nothing = throw DucklakeInvalidOperationException("Final-1.1 rich metadata: $message")
         private val REQUIRED = mapOf(
             "ducklake_schema" to mapOf("schema_id" to "BIGINT", "schema_uuid" to "UUID", "begin_snapshot" to "BIGINT",
                 "end_snapshot" to "BIGINT", "schema_name" to "VARCHAR", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN", "parent_schema_id" to "BIGINT"),

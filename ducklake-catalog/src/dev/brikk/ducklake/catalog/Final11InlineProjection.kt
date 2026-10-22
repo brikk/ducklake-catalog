@@ -17,18 +17,20 @@ import org.jooq.DSLContext
 import org.jooq.Field
 import org.jooq.QueryPart
 import org.jooq.impl.DSL
-import java.util.Locale
-import dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_COLUMN
 
 /** Pure read expressions: identity mapping first, strict casts only after physical validation. */
 internal class Final11InlineProjection(
     private val ctx: DSLContext, private val source: Final11InlineSchema, private val target: Final11InlineSchema,
 ) {
-    data class Projection(val field: Field<*>, val type: InlinedTypeNode, val losslessText: Boolean)
+    data class Projection(
+        val field: Field<*>, val type: InlinedTypeNode, val losslessText: Boolean,
+        val transform: ((Any?, Boolean) -> Any?)? = null,
+    )
     private var variable = 0
 
     fun plan(tableName: String, ids: List<Long>): Map<Long, Projection> = ids.distinct().associateWith { id ->
         val destination = target.roots[id] ?: throw DucklakeInvalidOperationException("Unknown final-1.1 requested column $id")
+        Final11InlineTypes.validate(destination.type)
         if (Final11InlineTypes.identifierKey(destination.column.columnName).startsWith("_ducklake_")) {
             invalid("inline payload column uses a reserved metadata name")
         }
@@ -69,24 +71,8 @@ internal class Final11InlineProjection(
     }
 
     private fun missing(destination: Final11InlineSchema.Node): Field<*> {
-        val value = destination.column.initialDefault
-        if (value != null && destination.type.type == "null") invalid("NULL-typed field has a non-NULL initial default")
-        // Whitelist non-NULL literals before any query/type text is used (also in no-connection tests).
-        val result = if (value == null) DSL.inline(null as Any?) else {
-            if (destination.type.type in CONTAINERS) invalid("initial default for nested column ${destination.column.columnId} is not qualified")
-            cast(DSL.`val`(value), destination.type)
-        }
-        val col = DUCKLAKE_COLUMN
-        val first = ctx.select(DSL.substring(col.DEFAULT_VALUE_TYPE, 1, 33)).from(col)
-            .where(col.TABLE_ID.eq(destination.column.tableId)).and(col.COLUMN_ID.eq(destination.column.columnId))
-            .orderBy(col.BEGIN_SNAPSHOT).limit(1).fetchOne()
-            ?: throw DucklakeCatalogCorruptionException("Missing final-1.1 initial-default history for column ${destination.column.columnId}")
-        val kind = first.value1()?.lowercase(Locale.ROOT)
-        if (value == null && kind == "expression") {
-            invalid("non-literal initial-default history for field ${destination.column.columnId} cannot be projected safely")
-        }
-        if (value == null && kind !in setOf(null, "", "literal")) invalid("unknown initial-default history kind for field ${destination.column.columnId}")
-        return result
+        val value = Final11InlineDefaults.value(ctx, destination)
+        return if (value == null) DSL.inline(null as Any?) else cast(DSL.`val`(value), destination.type)
     }
 
     private fun structure(origin: Final11InlineSchema.Node, destination: Final11InlineSchema.Node, field: Field<*>): Field<*> {

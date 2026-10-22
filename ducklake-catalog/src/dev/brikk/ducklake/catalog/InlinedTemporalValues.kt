@@ -79,6 +79,11 @@ internal object InlinedTemporalValues {
 
     fun localTimestampText(text: String): LocalDateTime = timestamp(splitOffset(finite(text, "TIMESTAMP")).first)
 
+    fun hasExplicitOffset(text: String): Boolean {
+        val match = OFFSET.find(text.trim()) ?: return false
+        return text.trim().substring(0, match.range.first).contains(':')
+    }
+
     private fun splitOffset(value: String): Pair<String, ZoneOffset?> {
         val match = OFFSET.find(value) ?: return value to null
         val prefix = value.substring(0, match.range.first)

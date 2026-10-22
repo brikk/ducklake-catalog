@@ -24,6 +24,25 @@ class TestFinal11InlineProjection {
         DucklakeColumn(id, 0, null, 1, id, name, type, true, parent, default)
 
     @Test
+    fun missingNullDefaultsDoNotCertifyUnqualifiedPayloadTypesOnEitherProjectionEngine() {
+        val target = listOf(column(1, "v", "variant"))
+        assertThatThrownBy { Final11ReadCompatibility.projections(DSL.using(SQLDialect.DUCKDB), "t", emptyList(), target, listOf(1)) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("variant")
+        assertThatThrownBy { Final11PostgresProjection(DSL.using(SQLDialect.POSTGRES), Final11InlineSchema(emptyList()),
+            Final11InlineSchema(target)).plan("t", listOf(1)) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("variant")
+    }
+
+    @Test
+    fun postgresNeverReusesAReplacedGrandchildWhoseNameAndTypeMatch() {
+        val before = listOf(column(1, "s", "struct"), column(2, "nested", "struct", 1), column(3, "v", "int32", 2))
+        val after = listOf(column(1, "s", "struct"), column(2, "nested", "struct", 1), column(4, "v", "int32", 2, "42"))
+        assertThatThrownBy { Final11PostgresProjection(DSL.using(SQLDialect.POSTGRES), Final11InlineSchema(before),
+            Final11InlineSchema(after)).plan("t", listOf(1)) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("nested schema evolution")
+    }
+
+    @Test
     fun parserAcceptsQualifiedNestedTypesButDoesNotTreatStructOrderAsIdentity() {
         val first = Final11InlineTypes.parsePhysical("STRUCT(a INTEGER, \"comma, quote\"\"\" MAP(VARCHAR, STRUCT(x DECIMAL(10,2))[]))")
         val reordered = Final11InlineTypes.parsePhysical("STRUCT(\"comma, quote\"\"\" MAP(VARCHAR, STRUCT(x DECIMAL(10,2))[]), a INTEGER)")

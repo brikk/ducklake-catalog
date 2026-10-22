@@ -19,12 +19,13 @@ import java.util.function.Supplier
 
 /** Evaluate pristine SQL over ONLY JVM-decoded inline rows, never over a native DuckLake scan. */
 internal class Final11InlineCorpusMirror(
-    private val server: TestingDucklakeDuckDbQuackCatalogServer,
+    private val server: TestingDucklakeDuckDbQuackCatalogServer? = null,
     private val allowUnqualified: Boolean = false,
     private val mirrorLimit: Int = Int.MAX_VALUE,
     private val payloadQuery: (String) -> Boolean = { true },
     private val queryTimeZone: (String) -> String = { "UTC" },
     private val nativeQuack: Boolean = false,
+    private val backend: Final11MirrorBackend? = null,
 ) : ReplayReadEngine {
     override val name = "final-11-catalog-inline"
     private val scratch = DriverManager.getConnection("jdbc:duckdb:")
@@ -35,14 +36,20 @@ internal class Final11InlineCorpusMirror(
     override fun connect(attachment: OracleAttachment) {
         catalog?.close()
         alias = attachment.catalogAlias
-        catalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
-            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${server.getHost()}:${server.getMappedPort()}" else
-                "jdbc:quack://${server.getHost()}:${server.getMappedPort()}"
-            catalogDatabasePassword = server.getToken()
+        val config = backend?.configuration?.invoke(attachment) ?: quackConfiguration(attachment)
+        catalog = JdbcDucklakeCatalog(config)
+    }
+
+    private fun quackConfiguration(attachment: OracleAttachment): DucklakeCatalogConfig {
+        val peer = requireNotNull(server)
+        return DucklakeCatalogConfig().apply {
+            catalogDatabaseUrl = if (nativeQuack) "jdbc:duckdb:quack://${peer.getHost()}:${peer.getMappedPort()}" else
+                "jdbc:quack://${peer.getHost()}:${peer.getMappedPort()}"
+            catalogDatabasePassword = peer.getToken()
             dataPath = attachment.dataPath
             maxCatalogConnections = 1
             enableFinal11Reads = true
-        })
+        }
     }
 
     private fun source(sql: String): String? {
@@ -64,6 +71,7 @@ internal class Final11InlineCorpusMirror(
         c.readSession(Supplier {
             assertThat(c.getSpecVersion()).isEqualTo("1.1")
             if (nativeQuack) assertThat(c.readMetadata().getReadMetadataCapabilities().accessRoute).isEqualTo("native-quack")
+            backend?.let { assertThat(c.readBackendProfile().accessRoute).isEqualTo(it.expectedRoute) }
             val snapshot = c.currentSnapshotId
             val table = requireNotNull(c.getTable("main", tableName, snapshot))
             assertThat(c.getDataFiles(table.tableId, snapshot)).`as`("the mirror must read ONLY JVM-decoded inline rows").isEmpty()
@@ -162,3 +170,5 @@ internal class Final11InlineCorpusMirror(
             .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true).toFormatter()
     }
 }
+
+internal data class Final11MirrorBackend(val expectedRoute: String, val configuration: (OracleAttachment) -> DucklakeCatalogConfig)

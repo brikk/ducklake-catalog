@@ -51,7 +51,7 @@ class DucklakeCatalogConfig {
     var maxCatalogConnections: Int = 10
 
     /**
-     * Opt in to conservative final-1.1 reads over direct Java Quack, read-only local DuckDB or native Quack:
+     * Opt in to qualified final-1.1 reads over DuckDB-backed routes or the narrower direct-PostgreSQL subset:
      * legacy APIs require root-schema catalogs; the explicit hierarchy companion handles parent-aware names/paths. No legacy MIN/MAX
      * bounds or range pruning. All reads must run inside readSession on an owned snapshot. Does not enable any 1.1 writes
      * or migration; existing record/wire shapes omit advisory 1.1 metadata.

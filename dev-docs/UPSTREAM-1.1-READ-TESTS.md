@@ -245,6 +245,43 @@ frozen Java/record/JSON, lint and Java 17 classfile checks pass. This certifies 
 documented three DuckDB-backed routes only, not PostgreSQL/MySQL or the parked
 strict native failures.
 
+## R06 PostgreSQL subset — actual direct-JDBC payload mirrors
+
+`TestUpstreamFinal11Postgres` executes four whole pristine files at the maintained
+`417a9117f590e8141742ac0579d02f6a90162e37` revision against a real PostgreSQL-backed
+native lake, then independently reconstructs scratch rows from the library's direct
+PostgreSQL JDBC decoded values. Each mirror requires backend profile
+`accessRoute=postgres-jdbc`; it cannot silently substitute a Quack/native lake scan.
+
+| Pristine corpus path | SHA-256 | Additional PostgreSQL JVM mirrors |
+|---|---|---:|
+| `default/add_column_if_not_exists_expression_default.test` | `3cec752529d12d57dc42891a519eeef9136a5fb69f954b1d1b96075639fe85b9` | 1 |
+| `issues/issue_1212_string_null_default.test` | `a527746e673bde1e6df61b2b8b3bddd8641ae801ba01f7b99306e4ca13119bb5` | 1 |
+| `default/cast_defaults_not_literal.test` | `ed4ecb85e6ee7f654eab503adc25598735278cfd63943d0fd0048b9a0aa3830b` | 2 |
+| `data_inlining/data_inlining_time_ns.test` | `f7a58dae210d60604ee9da76fe7615d6513ec1990778d704e21a288a64eda075` | 2 |
+
+Six additional mirrors bring the transport total to **89** across the same
+twenty-one unique pristine source files; the two drained local assertions remain
+separate, not in-replay mirrors. TIME_NS mirrors retain the bounded two pre-flush
+queries and all post-flush native goldens still execute. Native errors and failed
+expression-default cases remain unmodified; no expected value is replaced with
+observed output. Whole-file and mirror/no-skip assertions are mandatory.
+
+Independent native PostgreSQL layout probes record BYTEA/narrow/native/nullable
+physical storage and nanosecond/offset/BCE/interval text before the JDBC reader is
+tested. Core/JDBC/DuckLake pins remain unchanged; the already-used signed PG scanner
+revision is explicitly recorded as `c0f5a3c0c4`. Positive native fixture migration is
+actual 1.0→1.1 setup, never an adapter-side migration. Current subset limitations
+and remaining R06 work are explicit; rich PG metadata/hierarchy, broader schema
+evolution, MySQL, physical scans and native R02–R04 acceptance are not claimed here.
+
+Final forced verification of the PG subset passed **711 maintained JUnit tests +
+86 separate direct-Java tests**, zero failed/errors/JUnit-skipped, and **17,602
+corpus records** with unchanged 100 file/12 record exclusions. Twelve native/JDBC
+PG cases, eight strict value/profile tests, two source/default regressions and all
+four original PG SLT fixtures execute. Lint, frozen ABI/wire and Java 17 controls
+pass. Existing strict native failures stay parked, not skipped or waived.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are adopted as

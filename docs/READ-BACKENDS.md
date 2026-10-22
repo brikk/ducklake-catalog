@@ -1,8 +1,8 @@
 # Final-1.1 read backend qualification
 
 **R06 is partially implemented in 0.13.0-SNAPSHOT.** The guarded read tier now
-covers three DuckDB-backed routes. PostgreSQL/MySQL final-1.1 reads remain
-explicitly rejected; R06 is not complete and this is not blanket backend support.
+covers three DuckDB-backed routes and a [narrow direct PostgreSQL subset](READ-POSTGRES-1.1.md).
+Broader PostgreSQL features and MySQL remain unqualified; R06 is not complete.
 The maintained 0.4/1.0 lane and all 1.1 write/migration guards are unchanged.
 Qualification here uses Linux and the maintained locked artifacts, not a claim
 covering every platform or driver build.
@@ -12,9 +12,10 @@ covering every platform or driver build.
 | `jdbc:quack://host:port` | Direct Java Quack, metadata SQL on the remote DuckDB | Java driver 0.8.0; no DuckDB JDBC required in the reading JVM |
 | `jdbc:duckdb:/existing/metadata.db` | Existing local DuckDB file, **database-level READ_ONLY** | File must exist; no memory/protocol URL or catalog creation; coordinate native writers by closing readers |
 | `jdbc:duckdb:quack://host:port?metadata_catalog=name` | Native DuckDB/Quack client, **metadata-only READ_ONLY attachment** | Library never invokes DuckLake bootstrap/version selection/migration on reader open |
-| `jdbc:postgresql://…`, `jdbc:mysql://…` | **Not qualified for final 1.1** | Opt-in construction fails before connecting; portable physical-storage/projection/provenance work remains |
+| `jdbc:postgresql://…` | **Limited direct-JDBC subset** | Same nested shape, scalar defaults and exact root integer widening; rich metadata/hierarchy and broader evolution still rejected |
+| `jdbc:mysql://…` | **Not qualified for final 1.1** | Opt-in construction fails before connecting; physical-storage/projection/provenance work remains |
 
-All three qualified routes require `enableFinal11Reads=true` and an owned
+All qualified routes require `enableFinal11Reads=true` and an owned
 `readSession`. Existing records/constructors/fragment JSON remain unchanged. The
 same [read limits](READING-1.1.md), [raw metadata contract](READ-METADATA.md) and
 [explicit hierarchy/path companion](SCHEMA-HIERARCHY.md) apply. Legacy nested
@@ -52,6 +53,12 @@ No independent RPC BEGIN or implicit retry/COMMIT behavior is introduced.
 
 ## Provenance is observed, not inferred
 
+The additive `readBackendProfile()` reports nullable portable observations on all
+four routes. PostgreSQL uses actual server/driver facts and explicit NULL for
+DuckDB-only source/extension/unsigned fields. Its availability flags identify the
+limited projection tier; see the PostgreSQL contract above. The existing
+DuckDB-only capability record below keeps its constructors and shape unchanged.
+
 Capabilities report `accessRoute` as `java-quack`, `local-duckdb` or `native-quack`;
 `metadataBackend` remains `duckdb`. Engine version/source are queried where the
 metadata SQL executes—on the remote server for both Quack routes, locally for a file.
@@ -83,10 +90,10 @@ local read-only final-state assertions, with the native file owner fully closed.
 Those local checks are not simultaneous RW/RO mirrors or alleged JVM Parquet scans.
 Original SQL/goldens/digests and maintained corpus exclusions are preserved.
 
-**Still required before R06 can be checked:** PostgreSQL/MySQL physical layout and
-type mapping, safe defaults/evolution over their text/BYTEA/narrow storage forms,
-portable rich metadata/hierarchy SQL, appropriate nullable/non-applicable provenance
-and full fresh/migrated/session/negative tests on each claimed SQL backend. A URL
+**Still required before R06 can be checked:** broader PostgreSQL schema/type
+evolution and rich metadata/hierarchy SQL, MySQL storage/projection/provenance and
+full fresh/migrated/session/negative tests for every further claimed scope. The
+current PostgreSQL subset is qualified only under its explicit contract. A URL
 guard edit or a guessed DuckDB/extension/unsigned flag is not qualification. Any
 necessary model change follows the documented version/consumer coordination policy,
 not a compatibility veto or silent break. Neither SQL backend is newly certified by

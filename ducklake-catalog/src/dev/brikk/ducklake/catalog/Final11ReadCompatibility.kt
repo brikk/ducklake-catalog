@@ -26,6 +26,9 @@ internal object Final11ReadCompatibility {
         if (version != "1.1") {
             throw DucklakeInvalidOperationException("Opt-in final-1.1 reader cannot qualify catalog version $version")
         }
+        if (ctx.dialect().family() == org.jooq.SQLDialect.POSTGRES) {
+            Final11ReadMetadataQueries.observedLayout(ctx, Final11ReadRoute.POSTGRES)
+        }
         val schema = DUCKLAKE_SCHEMA.`as`("read_schema")
         val parent = DSL.field(DSL.name("read_schema", "parent_schema_id"), Long::class.javaObjectType)
         // Checks the actual required column, not just the version string. Bound the SQL result;
@@ -47,8 +50,19 @@ internal object Final11ReadCompatibility {
             .fetch { listOf(it.value1(), it.value2()) }
         // Lazy/nonmaterialized optional tables remain absent. Existing tables must have the
         // actual metadata prefix, not user fields with matching names later in a legacy layout.
-        if (names.isNotEmpty() && names != INLINE_SYSTEM_NAMES.map { listOf(it, "BIGINT") }) {
+        val normalized = names.map { listOf(it[0], it[1]?.uppercase(java.util.Locale.ROOT)) }
+        if (normalized.isNotEmpty() && normalized != INLINE_SYSTEM_NAMES.map { listOf(it, "BIGINT") }) {
             throw DucklakeInvalidOperationException("Unsupported final-1.1 physical inline metadata layout for $tableName")
+        }
+        if (normalized.isNotEmpty() && ctx.dialect().family() == org.jooq.SQLDialect.POSTGRES) {
+            fun id(name: String) = DSL.field(DSL.quotedName(name), Long::class.javaObjectType)
+            val row = id(INLINE_SYSTEM_NAMES[0])
+            val begin = id(INLINE_SYSTEM_NAMES[1])
+            val end = id(INLINE_SYSTEM_NAMES[2])
+            if (ctx.fetchExists(ctx.selectOne().from(DSL.table(DSL.quotedName(tableName)))
+                    .where(row.isNull.or(row.lt(0L)).or(begin.isNull).or(begin.lt(0L)).or(end.lt(begin))).limit(1))) {
+                throw DucklakeCatalogCorruptionException("Invalid PostgreSQL inline row/snapshot identity")
+            }
         }
     }
 

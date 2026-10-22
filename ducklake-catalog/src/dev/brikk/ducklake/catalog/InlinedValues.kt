@@ -24,6 +24,8 @@ import java.time.OffsetTime
 import java.time.ZoneOffset
 import java.util.Locale
 import java.util.UUID
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
 
 /**
  * A DuckLake column type as a tree — what [InlinedValues.decode] needs to interpret a nested
@@ -94,12 +96,17 @@ object InlinedValues {
     }
 
     /** Decodes one physical [raw] value under [type]; `null` stays `null`. */
-    fun decode(raw: Any?, type: InlinedTypeNode): Any? {
+    fun decode(raw: Any?, type: InlinedTypeNode): Any? = decodeValue(raw, type, false)
+
+    /** Text-backed final-1.1 storage has no native STRUCT/leaf domain enforcement. */
+    internal fun decodeQualified(raw: Any?, type: InlinedTypeNode): Any? = decodeValue(raw, type, true)
+
+    private fun decodeValue(raw: Any?, type: InlinedTypeNode, strict: Boolean): Any? {
         if (raw == null) {
             return null
         }
         return try {
-            decodeNonNull(raw, type)
+            decodeNonNull(raw, type, strict)
         }
         catch (e: DucklakeException) {
             throw e // Preserve corruption vs explicit unsupported-value classification.
@@ -117,17 +124,22 @@ object InlinedValues {
     }
 
     @Suppress("CyclomaticComplexMethod")
-    private fun decodeNonNull(raw: Any, type: InlinedTypeNode): Any {
+    private fun decodeNonNull(raw: Any, type: InlinedTypeNode, strict: Boolean = false): Any {
         val t = type.type
+        if (strict && t == "null") throw DucklakeCatalogCorruptionException("Non-NULL value in logical NULL storage")
+        if (strict && raw is String && t in setOf("timetz", "timestamptz", "timestamptz_ns")) {
+            val nonfinite = raw.trim().lowercase(Locale.ROOT) in setOf("infinity", "+infinity", "-infinity")
+            require(nonfinite || InlinedTemporalValues.hasExplicitOffset(raw)) { "missing explicit temporal offset" }
+        }
         return when {
             t == "boolean" -> toBoolean(raw)
             t == "int8" || t == "int16" || t == "int32" -> checkedInteger(raw, t).intValueExact()
             t == "int64" || t == "uint8" || t == "uint16" || t == "uint32" -> checkedInteger(raw, t).longValueExact()
             t == "uint64" || t == "int128" || t == "uint128" -> checkedInteger(raw, t)
-            t == "float32" -> toDouble(raw).toFloat()
-            t == "float64" -> toDouble(raw)
+            t == "float32" -> toDouble(raw).toFloat().also { requireQualifiedFloat(raw, it.isInfinite(), strict) }
+            t == "float64" -> toDouble(raw).also { requireQualifiedFloat(raw, it.isInfinite(), strict) }
             t.startsWith("decimal") -> if (raw is BigDecimal) raw else BigDecimal(text(raw))
-            t == "varchar" || t == "json" -> text(raw)
+            t == "varchar" || t == "json" -> if (strict && raw is ByteArray) qualifiedUtf8(raw) else text(raw)
             t == "blob" -> toBytes(raw)
             t == "uuid" -> if (raw is UUID) raw else UUID.fromString(text(raw))
             t == "date" -> if (raw is java.sql.Date) raw.toLocalDate() else if (raw is LocalDate) raw else InlinedTemporalValues.date(text(raw))
@@ -136,8 +148,22 @@ object InlinedValues {
             t == "timestamptz" || t == "timestamptz_ns" -> toOffsetDateTime(raw)
             t.startsWith("timestamp") -> toLocalDateTime(raw)
             t == "interval" -> toInterval(raw)
-            t == "struct" || t == "list" || t == "map" -> decodeNested(raw, type)
+            t == "struct" || t == "list" || t == "map" -> decodeNested(raw, type, strict)
             else -> raw // unknown / unsupported type: pass through untouched
+        }
+    }
+
+    private fun qualifiedUtf8(raw: ByteArray): String = try {
+        Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(raw)).toString()
+    } catch (e: CharacterCodingException) {
+        throw DucklakeCatalogCorruptionException("Invalid UTF-8 in qualified inline text storage", e)
+    }
+
+    private fun requireQualifiedFloat(raw: Any, infinite: Boolean, strict: Boolean) {
+        if (strict && infinite && raw is String) {
+            require(raw.trim().lowercase(Locale.ROOT) in setOf("inf", "+inf", "-inf", "infinity", "+infinity", "-infinity")) {
+                "finite floating-point text overflows its declared type"
+            }
         }
     }
 
@@ -288,7 +314,7 @@ object InlinedValues {
 
     // ---- nested values ------------------------------------------------------------------------
 
-    private fun decodeNested(raw: Any, type: InlinedTypeNode): Any {
+    private fun decodeNested(raw: Any, type: InlinedTypeNode, strict: Boolean): Any {
         // Native driver objects (DuckDB backend) first; everything else is DuckDB's text form.
         nativeNested(raw, type)?.let { native ->
             when {
@@ -301,7 +327,7 @@ object InlinedValues {
                 native is List<*> && type.type == "list" -> return native.map { decode(it, type.children[0]) }
             }
         }
-        val parser = NestedTextParser(text(raw))
+        val parser = NestedTextParser(text(raw), strict)
         val value = parser.parseValue(type) ?: throw IllegalArgumentException("nested value text is NULL")
         parser.expectEnd()
         return value
@@ -342,10 +368,12 @@ object InlinedValues {
 
     private val NULL_TERMINATORS = setOf(',', ']', '}', ' ')
 
-    private class NestedTextParser(private val text: String) {
+    private class NestedTextParser(private val text: String, private val strict: Boolean) {
         private var pos = 0
+        private var nodes = 0
 
         fun parseValue(type: InlinedTypeNode): Any? {
+            if (strict && ++nodes > 65536) throw DucklakeInvalidOperationException("Inline value node budget exceeded")
             skipWs()
             if (peekBareNull()) {
                 pos += "NULL".length
@@ -355,7 +383,7 @@ object InlinedValues {
                 "list" -> parseList(type)
                 "struct" -> parseStruct(type)
                 "map" -> parseMap(type)
-                else -> decodeNonNull(unwrapCastLiteral(readScalarToken()), type)
+                else -> decodeNonNull(unwrapCastLiteral(readScalarToken()), type, strict)
             }
         }
 
@@ -395,6 +423,7 @@ object InlinedValues {
             skipWs()
             if (peek() == '}') {
                 pos++
+                require(!strict || type.children.isEmpty()) { "missing STRUCT fields" }
                 return out
             }
             while (true) {
@@ -402,12 +431,16 @@ object InlinedValues {
                 val key = readScalarToken(stopAtColon = true)
                 skipWs()
                 expect(':')
-                val child = type.children.firstOrNull { it.name == key }
+                val child = type.children.firstOrNull {
+                    if (strict) Final11InlineTypes.identifierKey(it.name) == Final11InlineTypes.identifierKey(key) else it.name == key
+                }
                     ?: throw IllegalArgumentException("struct field '$key' is not declared (fields: ${type.children.map { it.name }})")
-                out[key] = parseValue(child)
+                require(!strict || !out.containsKey(child.name)) { "duplicate STRUCT field" }
+                out[if (strict) child.name else key] = parseValue(child)
                 skipWs()
                 if (peek() == '}') {
                     pos++
+                    require(!strict || out.size == type.children.size) { "missing STRUCT fields" }
                     return out
                 }
                 expect(',')
@@ -424,8 +457,11 @@ object InlinedValues {
             }
             while (true) {
                 skipWs()
+                val nullKey = peekBareNull() || text.startsWith("NULL=", pos)
+                if (strict && nullKey) throw IllegalArgumentException("NULL MAP key")
                 val key = if (type.children[0].type in setOf("struct", "list", "map")) parseValue(type.children[0])
-                else decodeNonNull(readScalarToken(stopAtEquals = true), type.children[0])
+                else decodeNonNull(readScalarToken(stopAtEquals = true), type.children[0], strict)
+                if (strict && out.containsKey(key)) throw IllegalArgumentException("duplicate MAP key")
                 skipWs()
                 expect('=')
                 out[key] = parseValue(type.children[1])

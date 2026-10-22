@@ -16,14 +16,17 @@ package dev.brikk.ducklake.catalog
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** Qualified physical DuckDB routes; other backends need their own projection/provenance contract. */
+/** Qualified routes; PostgreSQL has a narrower projection contract and MySQL remains closed. */
 internal enum class Final11ReadRoute(val label: String) {
-    JAVA_QUACK("java-quack"), LOCAL_DUCKDB("local-duckdb"), NATIVE_QUACK("native-quack");
+    JAVA_QUACK("java-quack"), LOCAL_DUCKDB("local-duckdb"), NATIVE_QUACK("native-quack"), POSTGRES("postgres-jdbc");
+
+    val duckDb: Boolean get() = this != POSTGRES
 
     companion object {
         private val PROTOCOL = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
         fun forUrl(url: String): Final11ReadRoute = when {
             url.startsWith("jdbc:quack:") -> JAVA_QUACK
+            url.startsWith("jdbc:postgresql:") -> POSTGRES
             QuackBackedDuckDbCatalogUrl.matches(url) -> NATIVE_QUACK
             url.startsWith("jdbc:duckdb:") -> {
                 val file = url.removePrefix("jdbc:duckdb:")
@@ -34,7 +37,7 @@ internal enum class Final11ReadRoute(val label: String) {
                 LOCAL_DUCKDB
             }
             else -> throw DucklakeInvalidOperationException(
-                "Final-1.1 reads are qualified only for direct Java Quack, local DuckDB and native Quack; PostgreSQL/MySQL remain unqualified")
+                "Final-1.1 reads require a qualified DuckDB or PostgreSQL route; MySQL remains unqualified")
         }
     }
 }

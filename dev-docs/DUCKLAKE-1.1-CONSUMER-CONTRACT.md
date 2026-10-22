@@ -122,12 +122,35 @@ remote transaction, not a physical-file lease. Native reader initialization neve
 bootstraps DuckLake or selects/migrates its format. Configured data paths do not
 override stored reader path namespaces.
 
-R06 is **not complete**: PostgreSQL/MySQL opt-in remains rejected pending portable
-storage/projection/provenance and acceptance work. Do not fill unavailable provenance
+The first R06 increment left PostgreSQL/MySQL opt-in rejected. The next PostgreSQL
+subset below opens only its qualified scope; R06 is **not complete**. Do not fill unavailable provenance
 with fabricated DuckDB source IDs or false unsigned-extension facts. Any required
 intentional model change follows the existing version/coordination policy. Plugin
 agents own route selection, dependencies, publication/worker handling and scans;
 no plugin rollout is certified by this library increment.
+
+### R06 PostgreSQL subset and portable provenance profile
+
+The next increment opens only the documented [PostgreSQL subset](../docs/READ-POSTGRES-1.1.md):
+unchanged nested shape, scalar initial defaults, root renames and exact root
+Boolean/integer widening, with strict source-domain validation before conversion.
+Other nested/schema/type changes fail explicitly; raw results remain storage-shaped
+and validated, never DuckDB SQL cast into apparent correctness. Standard JSON text,
+UTF-8, domains, physical precision and value budgets are guarded. Existing DuckDB
+routes and legacy raw/writer contracts remain unchanged.
+
+`readBackendProfile()` adds a separate nullable observation record instead of changing
+the old DuckDB capability record's primitive component/constructor descriptors.
+PG server version/driver facts are real; DuckDB-only fields are explicit NULL.
+Known library API availability is separate from database facts. PostgreSQL rich
+metadata/hierarchy are still unavailable and the old companions reject rather than
+send unported SQL. MySQL remains closed. The subset requires strict read-only,
+repeatable-read ownership and a rollback-local interval display setting, never a
+timezone-dependent promotion or arbitrary default expression.
+
+This is not a plugin rollout, physical scan or cleanup authorization. Both plugin
+agents must adopt the declared subset/profile and raw/decoded semantics explicitly;
+no owned plugin changes are claimed by this library increment.
 
 ## Required semantics (metadata and hierarchy exposed; optimization still gated)
 

@@ -256,10 +256,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // Best effort per backend: PostgreSQL / MySQL honour both; DuckDB's JDBC driver rejects
             // levels other than its own (its transactions are snapshot-isolated regardless) and may
             // reject read-only, so neither is fatal. HikariCP resets whatever changed on return.
-            trySetting("read-only") { conn.isReadOnly = true }
-            trySetting("REPEATABLE READ") { conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ }
+            if (final11ReadRoute == Final11ReadRoute.POSTGRES) {
+                conn.isReadOnly = true
+                conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
+            } else {
+                trySetting("read-only") { conn.isReadOnly = true }
+                trySetting("REPEATABLE READ") { conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ }
+            }
             val sessionDsl = forConnection(conn)
             metadata.begin(sessionDsl)
+            if (final11ReadRoute == Final11ReadRoute.POSTGRES) sessionDsl.execute("SET LOCAL intervalstyle='postgres'")
             readSessionDsl.set(sessionDsl)
             try {
                 return action.get()
@@ -404,6 +410,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (globalMetadataValue("version", ctx) != "1.1") {
             invalidRichMetadata("Rich metadata is currently qualified only for final 1.1")
         }
+        if (final11ReadRoute == Final11ReadRoute.POSTGRES) invalidRichMetadata(
+            "Rich metadata/hierarchy remains unqualified on PostgreSQL; use readBackendProfile for observed provenance")
         // Does not mark the legacy hierarchy preflight valid: raw parent IDs do not qualify flat reads.
         return Final11ReadMetadataQueries(ctx, requireNotNull(final11ReadRoute))
     }
@@ -412,6 +420,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     /** Read-only rich metadata companion; each operation requires this catalog's owned readSession. */
     fun readMetadata(): DucklakeReadMetadata = Final11ReadMetadataReader(::richMetadata)
+
+    /** Observed, nullable backend provenance; not DuckDB-specific capability or historical-writer attestation. */
+    fun readBackendProfile(): DucklakeReadBackendProfile {
+        if (!final11ReadsEnabled) invalidRichMetadata("Backend profile requires enableFinal11Reads")
+        val ctx = readSessionDsl.get() ?: invalidRichMetadata("Backend profile requires readSession")
+        if (globalMetadataValue("version", ctx) != "1.1") invalidRichMetadata("Backend profile requires final 1.1")
+        return Final11BackendProfileQueries(ctx, requireNotNull(final11ReadRoute)).profile()
+    }
 
     /** Parent-aware names and storage references; legacy flat APIs keep their hierarchy rejection. */
     fun readHierarchy(): DucklakeHierarchyReader = Final11HierarchyReader { richMetadata().hierarchy() }
@@ -571,6 +587,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 deleteFileFooterSize,
                 delfile.FORMAT,
                 deleteFilePartialMax,
+                delfile.DELETE_FILE_ID,
             )
                 .from(file)
                 .leftJoin(delfile)
@@ -580,6 +597,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .and(activeAt(file, snapshotId))
                 .orderBy(file.DATA_FILE_ID),
         ) { r ->
+            requireReadDescriptor(listOf(r.get(file.DATA_FILE_ID), r.get(file.TABLE_ID), r.get(file.BEGIN_SNAPSHOT),
+                r.get(dataFilePath), r.get(dataFilePathIsRelative), r.get(file.FILE_FORMAT), r.get(file.RECORD_COUNT),
+                r.get(file.FILE_SIZE_BYTES), r.get(dataFileFooterSize)))
+            if (r.get(delfile.DELETE_FILE_ID) != null) requireReadDescriptor(listOf(r.get(deleteFilePath), r.get(deleteFilePathIsRelative),
+                r.get(deleteFileFooterSize), r.get(delfile.FORMAT)))
             DucklakeDataFile(
                 orZero(r.get(file.DATA_FILE_ID)),
                 orZero(r.get(file.TABLE_ID)),
@@ -727,8 +749,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     previous = previousDelete(deletesByDataFileId, orZero(dataFile.dataFileId), end))
             }
 
-    private fun toDataFileNoDelete(r: DucklakeDataFileRecord): DucklakeDataFile =
-        DucklakeDataFile(
+    private fun toDataFileNoDelete(r: DucklakeDataFileRecord): DucklakeDataFile {
+        requireReadDescriptor(listOf(r.dataFileId, r.tableId, r.beginSnapshot, r.path, r.pathIsRelative,
+            r.fileFormat, r.recordCount, r.fileSizeBytes, r.footerSize))
+        return DucklakeDataFile(
             orZero(r.dataFileId),
             orZero(r.tableId),
             orZero(r.beginSnapshot),
@@ -750,6 +774,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             r.partialMax,
             null,
         )
+    }
+
+    private fun requireReadDescriptor(values: List<Any?>) {
+        if (!final11ReadsEnabled) return
+        if (values.any { it == null }) throw DucklakeCatalogCorruptionException("NULL required opt-in file descriptor value; cannot fabricate zero/false")
+        if (values.filterIsInstance<Long>().any { it < 0 }) throw DucklakeCatalogCorruptionException("Negative opt-in file descriptor count/identity")
+    }
 
     private fun buildDeletion(
         snapshotId: Long,
@@ -2100,7 +2131,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     for (i in columnIds.indices) {
                         val raw = rec.get(3 + i)
                         val node = projection.types[i]
-                        values.add(inlineProjectedValue(raw, node, decode))
+                        values.add(inlineProjectedValue(raw, node, decode, projection.transforms[i]))
                     }
                     DucklakeInlinedChangeRow(
                         orZero(rec.get(0, Long::class.java)),
@@ -2175,7 +2206,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * `interval` → a driver class) are read as text via [textCastIfNeeded]; [InlinedValues] then
      * parses them. Absent columns project SQL NULL, or a qualified final-1.1 typed initial default.
      */
-    private class InlinedProjection(val fields: List<Field<*>>, val types: List<InlinedTypeNode?>)
+    private class InlinedProjection(
+        val fields: List<Field<*>>, val types: List<InlinedTypeNode?>,
+        val transforms: List<((Any?, Boolean) -> Any?)?>,
+    )
 
     private fun inlinedProjection(
         sourceColumnsById: Map<Long, DucklakeColumn>,
@@ -2187,9 +2221,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ): InlinedProjection {
         val fields = ArrayList<Field<*>>(columnIds.size)
         val types = ArrayList<InlinedTypeNode?>(columnIds.size)
+        val transforms = ArrayList<((Any?, Boolean) -> Any?)?>(columnIds.size)
         for (index in columnIds.indices) {
             val alias = "$aliasPrefix$index"
             val evolved = readProjections[columnIds[index]]
+            transforms.add(evolved?.transform)
             val sourceColumn = sourceColumnsById[columnIds[index]]
             if (evolved != null) {
                 fields.add(evolved.field.`as`(alias))
@@ -2207,13 +2243,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 types.add(node)
             }
         }
-        return InlinedProjection(fields, types)
+        return InlinedProjection(fields, types, transforms)
     }
 
     private fun textCastIfNeeded(field: Field<*>, type: String): Field<*> =
         if (dialect != SQLDialect.DUCKDB && type in TEXT_CAST_TYPES) DSL.cast(field, org.jooq.impl.SQLDataType.VARCHAR) else field
 
-    private fun inlineProjectedValue(raw: Any?, type: InlinedTypeNode?, decode: Boolean): Any? {
+    private fun inlineProjectedValue(raw: Any?, type: InlinedTypeNode?, decode: Boolean, transform: ((Any?, Boolean) -> Any?)?): Any? {
+        if (transform != null) return transform(raw, decode)
         if (type == null) return raw
         // Raw final-1.1 temporal text still passes value validation: no edge-value bypass.
         val value = InlinedValues.decode(raw, type)
@@ -2226,6 +2263,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val ctx = dsl
         if (!conservativeFinal11Read(ctx)) return emptyMap()
         val allTargetColumns = getAllColumnsWithParentage(tableId, snapshotId)
+        if (final11ReadRoute == Final11ReadRoute.POSTGRES) {
+            return Final11PostgresProjection(ctx, Final11InlineSchema(source), Final11InlineSchema(allTargetColumns)).plan(tableName, ids)
+        }
         return Final11ReadCompatibility.projections(ctx, tableName, source, allTargetColumns, ids)
     }
 
@@ -2266,7 +2306,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 for (i in 0 until columnCount) {
                     val raw = rec.get(i)
                     val node = projection.types[i]
-                    row.add(inlineProjectedValue(raw, node, decode))
+                    row.add(inlineProjectedValue(raw, node, decode, projection.transforms[i]))
                 }
                 rows.add(row)
             }

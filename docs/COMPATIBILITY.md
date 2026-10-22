@@ -49,7 +49,8 @@ registration into encrypted catalogs is rejected.
 
 The [conservative final-1.1 reader](READING-1.1.md) requires an owned read session
 on a [qualified DuckDB-backed route](READ-BACKENDS.md): direct Java Quack, read-only
-local DuckDB or native Quack. PostgreSQL/MySQL 1.1 qualification remains open.
+local DuckDB or native Quack. Direct PostgreSQL has a separate
+[limited subset](READ-POSTGRES-1.1.md); broader PostgreSQL/MySQL qualification remains open.
 Legacy APIs still reject nested-schema history and suppress bounds/pruning; the
 explicit [hierarchy companion](SCHEMA-HIERARCHY.md) handles bounded names/paths.
 This is qualified on official 2.0 artifacts, **not blanket 1.1 or connector support**.

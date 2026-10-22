@@ -91,6 +91,13 @@ internal class TestFinal11DuckDbBackends {
                     assertThat(caps.ducklakeExtensionVersion).isNull() // Metadata server/RO file engine did not load the writer extension.
                     assertThat(caps.quackExtensionVersion).isEqualTo(if (route == Final11ReadRoute.LOCAL_DUCKDB) null else "f96420ed46")
                     assertThat(caps.unsignedExtensionsAllowed).isFalse()
+                    val profile = c.readBackendProfile()
+                    assertThat(profile.accessRoute).isEqualTo(caps.accessRoute)
+                    assertThat(profile.sqlEngineVersion).isEqualTo(caps.engineVersion)
+                    assertThat(profile.sqlEngineSourceId).isEqualTo(caps.engineSourceId)
+                    assertThat(profile.unsignedExtensionsAllowed).isEqualTo(caps.unsignedExtensionsAllowed)
+                    assertThat(profile.richMetadataAvailable).isTrue()
+                    assertThat(profile.hierarchyAvailable).isTrue()
                     assertThat(caps.qualifiedWrites).isFalse()
                     val h = c.readHierarchy()
                     val table = h.findTable(listOf("a", "child"), "t", caps.snapshotId)!!

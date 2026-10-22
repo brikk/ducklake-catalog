@@ -33,13 +33,14 @@ internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private 
         Final11ReadRoute.LOCAL_DUCKDB -> "jdbc:duckdb:$file"
         Final11ReadRoute.NATIVE_QUACK -> "jdbc:duckdb:quack://${server!!.getHost()}:${server.getMappedPort()}?metadata_catalog=r06_meta"
         Final11ReadRoute.JAVA_QUACK -> "jdbc:quack://${server!!.getHost()}:${server.getMappedPort()}"
+        Final11ReadRoute.POSTGRES -> error("Use Final11PostgresFixture for PostgreSQL")
     }
     private fun q(value: String) = "'${value.replace("'", "''")}'"
 
     fun native(sql: String) {
         DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
             // DuckDB's JDBC metadata reports "1.0"; qualify the published artifact independently.
-            assertThat(jdbcSha256).isEqualTo("5170daa90a43296705127ef3c80834ba1cd275ec9d765a9f7eee346ab0087186")
+            requirePinnedJdbc()
             s.execute("INSTALL ducklake; LOAD ducklake")
             s.executeQuery("PRAGMA version").use { r ->
                 assertThat(r.next()).isTrue()
@@ -116,6 +117,9 @@ internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private 
     }
 
     companion object {
+        fun requirePinnedJdbc() {
+            assertThat(jdbcSha256).isEqualTo("5170daa90a43296705127ef3c80834ba1cd275ec9d765a9f7eee346ab0087186")
+        }
         // Maven Central org.duckdb:duckdb_jdbc:2.0.0.0 .jar.sha256, checked independently of driverVersion.
         private val jdbcSha256: String by lazy {
             val jar = Path.of(Class.forName("org.duckdb.DuckDBDriver").protectionDomain.codeSource.location.toURI())
