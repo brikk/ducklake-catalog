@@ -35,10 +35,12 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   Additive companion implemented and verified below. Raw metadata
   presence does not qualify optimization/hierarchy; the newer native migrated-bound
   regression remains a separate failing gate, detailed below.
-- [ ] **R05 — Parent-aware schema and path reads.** Resolve nested qualification by
+- [x] **R05 — Parent-aware schema and path reads.** Resolve nested qualification by
   IDs across live/historical/retired metadata; reject missing parents, cycles and
   ambiguity with bounded depth/traversal. Preserve relative/absolute storage-path
   semantics and retained-file ownership. Legacy APIs must not flatten hierarchy.
+  Explicit hierarchy companion implemented and verified below. This does not unlock
+  legacy nested payload/descriptor APIs or physical scans.
 - [ ] **R06 — Backend coverage.** Extend/qualify final-1.1 reads on PostgreSQL, MySQL,
   local DuckDB and native Quack as well as direct Java Quack. Test native physical
   layouts/type representations, owned-session consistency, fresh and migrated lakes,
@@ -104,7 +106,8 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   direct-Java final-1.1 reader. **R02 is paused at native acceptance; the R03 guarded
   reader increment is verified, with native interval persistence still failing**.
   The guarded R04 metadata increment is verified; its separate native gate remains
-  failing. R05–R07 remain queued, not implicitly certified.
+  failing. R05's explicit bounded hierarchy/path tier is verified; R06–R07 remain
+  queued, not implicitly certified.
   The owner will revisit R02 when the fixes are
   available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
@@ -327,6 +330,61 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   opt-in/session rules and dependency pins remain unchanged.
   [Public API/nullability and consumer handoff](../docs/READ-METADATA.md) is documented;
   neither owned plugin has been updated or certified by this increment.
+
+### R05 — parent-aware hierarchy/path reader
+
+- `JdbcDucklakeCatalog.readHierarchy()` adds a separate `DucklakeHierarchyReader`;
+  no existing interface/record/constructor/fragment shape changes. Every operation
+  uses the owning opt-in final-1.1 direct-Java session. Legacy flat APIs still reject
+  all nested-schema history and cannot be unlocked by a successful new lookup.
+- Schemas resolve through stable IDs, returning separate ordered IDs/name components.
+  Literal dots/quotes and same-named children of different parents stay distinct.
+  ASCII folding matches native identifiers without merging distinct Unicode names.
+  Missing parents, cycles, duplicate identities/names and overlapping table versions
+  fail explicitly. Current/history/drop/name-reuse checks retain original identity.
+- Physical schema directories use the catalog root, **not logical parent paths**;
+  tables/files resolve from their own scopes. NULL directories inherit, absolute
+  flags reset, and non-NULL paths require a known flag. Root-only scheduled paths
+  stay separate from table paths. Stored bytes/percent escapes/slashes/dot segments
+  are not normalized or trimmed; unqualified root separators fail, not guessed.
+- Retained data/delete pages include ended files and dropped owners. Ownership is
+  resolved at the original file begin snapshot, not the latest name/version, even
+  if that snapshot row has expired. Missing historic metadata fails instead of
+  dropping references through a join or reporting an empty successful known set.
+  A bounded extra row catches duplicate IDs at keyset page edges.
+- The complete scheduled path known set has a separate exact composite cursor
+  `(file ID, encoded path, relative flag)`, preserving case variants and future/
+  unknown-age references. Duplicate identical path references collapse only for
+  ownership, never for acknowledgements. The separate age-gated queue batch is not
+  misrepresented as a complete known set. NULL/negative retained IDs cannot hide
+  beyond a keyset cursor. No file/queue mutation is added or enabled.
+- Listings bound SQL to 4,097 rows/4,096 nodes, depth to 64 and text/composed paths to
+  16,384 characters. Point/history/ambiguity queries transfer at most two rows;
+  retained pages are at most 1,024 plus one sentinel, with 8,192 operation-local
+  lookup/traversal units. Caches never cross session boundaries. This is read-only
+  metadata/ownership, not a lease or permission for physical deletion.
+- The existing `qualifiedNestedSchemaResolution` flag becomes true for the explicit
+  new API after physical validation (including table/path fields); optimization and
+  write flags stay false. R04 peer tests deliberately now assert that API-specific
+  capability while retaining independent legacy hierarchy rejection checks.
+- Four entire pristine shipped files require **seven new JVM hierarchy/path mirrors**,
+  72 across twenty-one R01–R05 files. Native SQL/goldens/pins/exclusions are unchanged;
+  exports, helpers, uncommitted rows and Parquet payload queries are never falsely
+  claimed as JVM scans. [Exact digests/limits](UPSTREAM-1.1-READ-TESTS.md) are recorded.
+- Final forced verification passed **651 maintained JUnit tests** (535 catalog,
+  51 SLT, 65 replay), **86 shipping direct-Java tests** and **17,602 corpus records**,
+  zero failed/errors/JUnit-skipped. Existing 100 file/12 record corpus exclusions
+  remain unchanged. All eight R05 pure/JSON, twelve R05 peer and four R05 upstream
+  tests execute. All module checks/detekt, frozen Java/record/JSON controls and Java
+  17 `checkAbi` passed (7,768 classes across 17 artifacts). The unchanged-source run
+  took 12m04s. Session-owned test processes were reaped.
+- R05 is checked only for the explicit documented schema/path/ownership tier; it
+  certifies no physical scan, lease or destructive workflow. Existing R02/R03/R04
+  strict native failures remain parked and distinct, not rerun or waived here;
+  there is no artifact upgrade or claimed native repair. All 1.1 write/migration
+  guards and opt-in/session requirements remain unchanged. The
+  [public API and consumer handoff](../docs/SCHEMA-HIERARCHY.md) are documented;
+  plugin implementation and physical scans remain with their agents.
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

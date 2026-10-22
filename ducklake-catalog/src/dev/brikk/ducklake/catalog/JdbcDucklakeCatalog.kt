@@ -409,6 +409,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /** Read-only rich metadata companion; each operation requires this catalog's owned readSession. */
     fun readMetadata(): DucklakeReadMetadata = Final11ReadMetadataReader(::richMetadata)
 
+    /** Parent-aware names and storage references; legacy flat APIs keep their hierarchy rejection. */
+    fun readHierarchy(): DucklakeHierarchyReader = Final11HierarchyReader { richMetadata().hierarchy() }
+
     override fun listSchemas(snapshotId: Long): List<DucklakeSchema> {
         val sch = DUCKLAKE_SCHEMA.`as`("sch")
         return dsl.selectFrom(sch)

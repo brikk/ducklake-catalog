@@ -69,7 +69,8 @@ class TestFinal11ReadMetadata {
         assertThat(caps.unsignedExtensionsAllowed).isFalse()
         assertThat(caps.observedColumns).contains(DucklakeMetadataColumn("ducklake_schema", "parent_schema_id", "BIGINT"))
         assertThat(listOf(caps.schemaParentIds, caps.boundExactness, caps.dataFileRowGroups, caps.deleteFileRowGroups)).containsOnly(true)
-        assertThat(listOf(caps.qualifiedNestedSchemaResolution, caps.qualifiedRangePruning, caps.qualifiedExactAggregates, caps.qualifiedWrites))
+        assertThat(caps.qualifiedNestedSchemaResolution).isTrue()
+        assertThat(listOf(caps.qualifiedRangePruning, caps.qualifiedExactAggregates, caps.qualifiedWrites))
             .containsOnly(false)
         Unit
     }
@@ -171,7 +172,7 @@ class TestFinal11ReadMetadata {
             val schemas = metadata.listSchemaMetadata(snapshot)
             assertThat(schemas.single { it.schema.schemaId == 900001L }.parentSchemaId).isEqualTo(900000L)
             assertThat(schemas.single { it.schema.schemaId == 900000L }.parentSchemaId).isNull()
-            assertThat(metadata.getReadMetadataCapabilities().qualifiedNestedSchemaResolution).isFalse()
+            assertThat(metadata.getReadMetadataCapabilities().qualifiedNestedSchemaResolution).isTrue()
             assertThatThrownBy { reader.listSchemas(snapshot) }.isInstanceOf(DucklakeInvalidOperationException::class.java)
                 .hasMessageContaining("nested-schema history")
         } }

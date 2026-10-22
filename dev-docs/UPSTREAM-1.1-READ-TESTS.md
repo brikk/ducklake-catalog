@@ -163,6 +163,44 @@ planning only**. It does not claim that raw old-type text is a qualified typed b
 that JVM physical file scans ran or that the newer native SLT passed. The strict
 task remains separate from maintained `check` just like R02/R03's native lanes.
 
+## R05 shipped corpus — hierarchy and storage-reference JVM mirrors
+
+`TestUpstreamFinal11Hierarchy` adds four whole pristine files at maintained revision
+`417a9117f590e8141742ac0579d02f6a90162e37`. Its shared mirror reconstructs scratch
+schema/helper projections **only through public JVM hierarchy APIs**, separately
+exercises literal-component lookup, then evaluates the original selected projection.
+For the nullable-directory fixture it resolves file paths through the retained-owner
+API, not a native `ducklake_list_files` scan as its alleged JVM result.
+
+| Pristine corpus path | SHA-256 | Required JVM mirrors |
+|---|---|---:|
+| `catalog/nested_schema/load_schema_tree.test` | `928f9604a973b368c94d945e92869e8c837f30554009d81424a4dd672e00be0e` | 2 |
+| `catalog/nested_schema/shared_schema_helpers.test` | `30d6280b4908ff776a7acd4a8d16ca13a73bd807a9e67185e2370da83a4e6659` | 1 |
+| `migration/schema_parent_column.test` | `bdde7edb231fa36ad4ae1793d008dd7b200b5099049cd4747f41bcfa7b6ab250` | 3 |
+| `general/null_schema_and_table_paths.test` | `7f487746d491d60a536ea904eee008e808604dae0680f454fa12065cecc80466` | 1 |
+
+That is **seven new required JVM mirrors, 72 across twenty-one R01–R05 files**.
+The gate selects committed `duckdb_schemas()` metadata projections, parent-ID
+queries on `meta.ducklake_schema`, and the one nullable-directory list-files path
+predicate. Scratch table substitution replaces only the helper source, not native
+SQL/goldens or observed expected values. Explicit native 1.0/dev1 migrations remain
+fixture setup, never a reader action. Native exports/imports, uncommitted local
+state, SQL-helper semantics and Parquet payload scans still execute as original
+native goldens, not claimed JVM scans. Mirror/no-skip counts are mandatory.
+
+Pure/real-peer cases independently cover quoted/literal/Unicode names, malformed ID
+graphs, history/drop/reuse, original file-origin owner paths after rename and origin
+snapshot expiry, path namespaces/NULL/absolute cases, session pin/refresh, result/
+text/depth bounds and duplicate IDs at page boundaries. Legacy nested guards remain
+asserted. No R02–R04 failing native gate is waived by these positive hierarchy cases.
+
+Final forced R05 qualification passed **651 maintained + 86 direct-Java JUnit
+tests**, zero failed/errors/JUnit-skipped, and **17,602 corpus records** with
+unchanged 100 file/12 record exclusions. All eight new pure/JSON, twelve new peer
+and four new full-file adoption tests execute. Frozen Java/record/JSON, lint and
+Java 17 classfile checks pass. Existing separate R02–R04 native failures remain
+parked; this positive R05 scope is not their acceptance or a physical-file lease.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are adopted as

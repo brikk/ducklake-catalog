@@ -37,10 +37,11 @@ fail; they do not become false capabilities or synthesized NULL rows. Layout rea
 and data reads share the owned transaction. Validation is repeated, never cached
 across sessions/migrations.
 
-The four metadata-presence flags are true only after validation. The separate
-`qualifiedNestedSchemaResolution`, `qualifiedRangePruning`,
-`qualifiedExactAggregates` and `qualifiedWrites` flags remain **false**.
-Accessing metadata does not relax any existing guards.
+The four metadata-presence flags are true only after validation. R05 additionally
+sets `qualifiedNestedSchemaResolution=true` for the explicit
+[hierarchy companion](SCHEMA-HIERARCHY.md), not legacy flat APIs. The separate
+`qualifiedRangePruning`, `qualifiedExactAggregates` and `qualifiedWrites` flags
+remain **false**. Accessing raw metadata does not relax any existing guards.
 
 ## Value semantics
 
@@ -48,7 +49,8 @@ Accessing metadata does not relax any existing guards.
   `parentSchemaId`. NULL denotes root under this session's validated parent-ID
   capability, never schema ID 0. It preserves names and physical path flags; it does
   not flatten hierarchy, resolve qualifications or construct nested paths. Legacy
-  APIs still reject any nested-schema history. Graph/name/path resolution is R05.
+  APIs still reject any nested-schema history. Use the R05 hierarchy companion for
+  validated graph/name/path resolution.
 - **File metadata:** `getFileReadMetadata(tableId, snapshot)` returns active data/delete
   associations by IDs, with independent `rowGroupCount` and `deleteRowGroupCount`.
   NULL = unknown, including migrated files and Puffin deletes; 0 stays 0. Counts are
@@ -94,4 +96,5 @@ snapshot and raw-bound semantics before relying on it. Their implementations and
 physical scans are not certified here. All 1.1 writes and automatic migration stay
 disabled. [Support/evidence](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md) and
 [consumer contract](../dev-docs/DUCKLAKE-1.1-CONSUMER-CONTRACT.md) define the remaining
-R05–R07 and write rollout work.
+backend/rollout and write work. Parent-aware schema/path semantics and their limits
+are in [Schema hierarchy](SCHEMA-HIERARCHY.md).

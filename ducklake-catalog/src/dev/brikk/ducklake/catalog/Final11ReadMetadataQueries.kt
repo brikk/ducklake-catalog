@@ -32,6 +32,8 @@ internal class Final11ReadMetadataReader(private val queries: () -> Final11ReadM
 internal class Final11ReadMetadataQueries(private val ctx: DSLContext) {
     private val observed = validateLayout()
 
+    fun hierarchy(): Final11HierarchyQueries = Final11HierarchyQueries(ctx, ::requireSnapshot)
+
     fun capabilities(): DucklakeReadMetadataCapabilities {
         val version = ctx.fetch("PRAGMA version").single()
         val extensions = ctx.fetch("SELECT extension_name,extension_version FROM duckdb_extensions() " +
@@ -44,7 +46,7 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext) {
         return DucklakeReadMetadataCapabilities("1.1", snapshot, "duckdb", "java-quack",
             version.get(0, String::class.java) ?: corrupt("NULL engine version"),
             version.get(1, String::class.java) ?: corrupt("NULL engine source ID"), extensions["ducklake"], extensions["quack"],
-            unsigned, driver, observed, true, true, true, true, false, false, false, false)
+            unsigned, driver, observed, true, true, true, true, true, false, false, false)
     }
 
     fun schemas(snapshot: Long): List<DucklakeSchemaMetadata> {
@@ -178,14 +180,18 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext) {
             "ducklake_schema" to mapOf("schema_id" to "BIGINT", "schema_uuid" to "UUID", "begin_snapshot" to "BIGINT",
                 "end_snapshot" to "BIGINT", "schema_name" to "VARCHAR", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN", "parent_schema_id" to "BIGINT"),
             "ducklake_data_file" to mapOf("data_file_id" to "BIGINT", "table_id" to "BIGINT", "begin_snapshot" to "BIGINT",
-                "end_snapshot" to "BIGINT", "record_count" to "BIGINT", "row_group_count" to "BIGINT"),
+                "end_snapshot" to "BIGINT", "record_count" to "BIGINT", "row_group_count" to "BIGINT", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN"),
             "ducklake_delete_file" to mapOf("delete_file_id" to "BIGINT", "data_file_id" to "BIGINT", "table_id" to "BIGINT",
-                "begin_snapshot" to "BIGINT", "end_snapshot" to "BIGINT", "delete_count" to "BIGINT", "format" to "VARCHAR", "row_group_count" to "BIGINT"),
+                "begin_snapshot" to "BIGINT", "end_snapshot" to "BIGINT", "delete_count" to "BIGINT", "format" to "VARCHAR",
+                "row_group_count" to "BIGINT", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN"),
             "ducklake_file_column_stats" to mapOf("data_file_id" to "BIGINT", "table_id" to "BIGINT", "column_id" to "BIGINT",
                 "column_size_bytes" to "BIGINT", "value_count" to "BIGINT", "null_count" to "BIGINT", "contains_nan" to "BOOLEAN",
                 "min_value" to "VARCHAR", "max_value" to "VARCHAR", "min_is_exact" to "BOOLEAN", "max_is_exact" to "BOOLEAN"),
             "ducklake_table_column_stats" to mapOf("table_id" to "BIGINT", "column_id" to "BIGINT", "contains_null" to "BOOLEAN",
                 "contains_nan" to "BOOLEAN", "min_value" to "VARCHAR", "max_value" to "VARCHAR", "min_is_exact" to "BOOLEAN", "max_is_exact" to "BOOLEAN"),
+            "ducklake_table" to mapOf("table_id" to "BIGINT", "table_uuid" to "UUID", "schema_id" to "BIGINT",
+                "begin_snapshot" to "BIGINT", "end_snapshot" to "BIGINT", "table_name" to "VARCHAR", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN"),
+            "ducklake_files_scheduled_for_deletion" to mapOf("data_file_id" to "BIGINT", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN"),
         )
     }
 }

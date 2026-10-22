@@ -1,5 +1,11 @@
 # First final-1.1 read tier — October 20
 
+**R05 follow-up:** an explicit hierarchy companion now qualifies bounded stable-ID
+schema/table lookup, literal components, historical names, root-relative schema
+storage paths and retained data/delete ownership. Legacy flat guards remain; no
+physical scan, cleanup side effect or write is enabled. See the
+[current hierarchy contract](../docs/SCHEMA-HIERARCHY.md).
+
 **R04 follow-up:** the additive rich read companion exposes parent IDs, independent
 nullable exactness, nullable data/delete row-group counts and observed layout/peer
 provenance. Legacy statistics/pruning remain conservative. The newer native

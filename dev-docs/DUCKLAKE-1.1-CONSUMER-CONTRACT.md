@@ -4,7 +4,9 @@ The [conservative legacy read tier](../docs/READING-1.1.md) and additive
 [rich read-metadata companion](../docs/READ-METADATA.md) are implemented for opt-in
 direct Java Quack. The legacy adapter still omits bounds and rejects unqualified
 cases; the companion exposes raw metadata without qualifying typed pruning,
-exact aggregates or parent-aware path resolution. Neither enables 1.1 writes.
+or exact aggregates. The explicit [R05 hierarchy reader](../docs/SCHEMA-HIERARCHY.md)
+adds bounded parent-aware names/paths without unlocking legacy flat APIs. None
+enables 1.1 writes.
 
 ## Compatibility policy — best effort, coordinated changes allowed
 
@@ -74,11 +76,38 @@ from qualification: nested resolution, pruning, exact aggregates and writes are
 still false. Peer provenance is observed in-session, not historical file provenance.
 
 Both owned plugin agents must qualify their use of these distinctions and scans;
-no plugin changes/verification are claimed. R05 owns hierarchy/path interpretation;
+no plugin changes/verification are claimed. R05 supplies explicit hierarchy/path interpretation;
 R06 owns other routes/backends. The separate strict R04 migration gate fails on the
 shipped peer, so exposure of raw bounds is not a migration/optimization endorsement.
 
-## Required semantics (metadata exposed; higher-level interpretation still gated)
+## R05 implemented hierarchy/path handoff
+
+`JdbcDucklakeCatalog.readHierarchy()` returns a separate additive interface, leaving
+the R04 interface and old DTO/fragment contracts intact. Qualification uses stable
+parent IDs with separate literal name components; ASCII-only folding does not merge
+Unicode or confuse literal dots/quotes with separators. Current/historical lookup,
+retired owner resolution, cycles/missing parents/ambiguity and traversal budgets
+are explicit. Legacy flat methods remain guarded even after successful hierarchy
+reads; existing nested inline/file-descriptor methods are not silently enabled.
+
+Schema storage paths remain catalog-root-relative, not relative to the logical
+parent schema. Retained file ownership uses the original file begin snapshot's
+table/schema identity even after drop or snapshot expiry; missing historic owner
+metadata fails rather than disappearing. Scheduled paths keep their root namespace;
+the complete path-reference known set includes future/unknown ages and has an exact
+composite cursor separate from age-gated deletion batches. Do not substitute an
+eligible batch for all referenced paths or acknowledge deletion using a path cursor.
+Paths are not canonicalized or treated as filesystem deletion permission. Caller
+total page/path budgets and retention/lease coordination remain mandatory.
+
+The existing `qualifiedNestedSchemaResolution` field becomes true for these explicit
+APIs after physical layout validation; pruning/exact aggregates/writes remain false.
+No existing record shape or constructor changes. New qualified record JSON fixtures
+preserve literal components, raw path spelling, nullable directories and ended
+ownership. Both plugin agents must explicitly adopt/verify this contract; their
+implementations, physical scans and cleanup effects remain outside this increment.
+
+## Required semantics (metadata and hierarchy exposed; optimization still gated)
 
 | Metadata | Representation | Consumer obligation |
 |---|---|---|

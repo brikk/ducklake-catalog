@@ -50,7 +50,9 @@ driver; no embedded DuckDB JDBC is required.
   Advisory 1.1 row-group counts are omitted, not fabricated as zero.
   The optional [rich metadata companion](READ-METADATA.md) exposes parent IDs,
   nullable exactness/row-group counts and actual layout/peer provenance without
-  changing these legacy values or qualifying pruning, aggregates or nested paths.
+  changing these legacy values or qualifying pruning/aggregates. The separate
+  [parent-aware hierarchy reader](SCHEMA-HIERARCHY.md) qualifies bounded names and
+  storage references without unlocking legacy flat APIs or physical scans.
 - Missing columns in older inline schemas project their **qualified scalar initial
   defaults**, using the target snapshot's metadata. Ordinary raw/decoded reads and
   CDC share the same projection. This never replaces an existing stored NULL or
@@ -71,9 +73,9 @@ driver; no embedded DuckDB JDBC is required.
   old DTOs cannot carry exactness, so this sacrifices optimization rather than rows.
 - Legacy reads of catalogs with **any nested-schema history** are rejected, including retired child
   rows. Missing `parent_schema_id` is an error, not an assumption that every schema
-  is a root. Parent-aware qualification/path resolution remains separate work.
+  is a root. Use the explicit parent-aware companion instead of flattening names.
   Raw parent-ID inspection is available through the rich metadata companion;
-  parent-aware qualification/path resolution remains R05, not a relaxed legacy guard.
+  parent-aware qualification/path resolution is provided by R05, not a relaxed legacy guard.
 
 ## Explicitly unsupported inline projections
 
