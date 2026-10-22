@@ -3,7 +3,9 @@
 **Limited read tier, not full support.** [Opt-in final-1.1 reads](../docs/READING-1.1.md)
 are qualified on the official 2.0 direct-Java peer. The [shipping upgrade](UPGRADE-DUCKDB-2.0.0.md)
 qualifies JDBC/local/native-Quack/Java-Quack 1.0 access and native migration rehearsals.
-Richer 1.1 metadata, other 1.1 backends and all 1.1 writes remain gated below.
+The additive [rich metadata companion](../docs/READ-METADATA.md) exposes raw R04
+metadata, not qualified hierarchy/pruning/aggregate interpretation. The newer R04
+migration native gate still fails; other 1.1 backends and all 1.1 writes remain gated below.
 The preview results further down are historical; dates do not replace artifact verification.
 
 ## Before touching a real catalog

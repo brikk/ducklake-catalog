@@ -394,6 +394,21 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .fetch { toDucklakeSnapshotChange(it) }
     }
 
+    private fun richMetadata(): Final11ReadMetadataQueries {
+        if (!final11ReadsEnabled) invalidRichMetadata("Rich metadata requires enableFinal11Reads")
+        val ctx = readSessionDsl.get() ?: invalidRichMetadata("Rich metadata requires readSession")
+        if (globalMetadataValue("version", ctx) != "1.1") {
+            invalidRichMetadata("Rich metadata is currently qualified only for final 1.1")
+        }
+        // Does not mark the legacy hierarchy preflight valid: raw parent IDs do not qualify flat reads.
+        return Final11ReadMetadataQueries(ctx)
+    }
+
+    private fun invalidRichMetadata(message: String): Nothing = throw DucklakeInvalidOperationException(message)
+
+    /** Read-only rich metadata companion; each operation requires this catalog's owned readSession. */
+    fun readMetadata(): DucklakeReadMetadata = Final11ReadMetadataReader(::richMetadata)
+
     override fun listSchemas(snapshotId: Long): List<DucklakeSchema> {
         val sch = DUCKLAKE_SCHEMA.`as`("sch")
         return dsl.selectFrom(sch)

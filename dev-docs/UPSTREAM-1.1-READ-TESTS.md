@@ -99,18 +99,82 @@ inline reader, not lossless interval file persistence. Shipped
 [DuckLake #1727](https://github.com/duckdb/ducklake/pull/1727) rejects new negative
 inline intervals; it does not fix this precision/component change.
 
+## R04 shipped corpus — rich metadata JVM mirrors
+
+`TestUpstreamFinal11ReadMetadata` adds three whole pristine files at the maintained
+`417a9117f590e8141742ac0579d02f6a90162e37` revision. `Final11MetadataCorpusMirror`
+populates plain scratch metadata exclusively through public JVM read APIs, then
+executes the original selected metadata query. It never uses native metadata SELECTs
+as its alleged JVM result. The native oracle still executes every pristine golden.
+
+| Pristine corpus path | SHA-256 | Required JVM mirrors |
+|---|---|---:|
+| `metadata/row_group_count.test` | `603a0107ddf93c03a058bed34166bff23ad26c2a6d796d551950baeaee7bf357` | 6 |
+| `migration/v10_row_group_count.test` | `87fdbba98e3cca7b3afbecc3be6619977391f6cc5f916651a831801503d3dce6` | 4 |
+| `migration/v11_stats_exactness.test` | `9e9523e757416e6b4f6936e54179b46ef53dd76b6a3143001caf1fa8c8827d6b` | 7 |
+
+That is **17 new required JVM mirrors, 65 across seventeen R01–R04 files**. The
+mirror selects queries containing `row_group_count` or `min_is_exact` against the
+fixture's `dl.ducklake_*` tables, excluding the oracle's footer-derived
+`getvariable('added_rg_count')` comparison. This bounded adoption includes native
+Puffin delete NULL counts, pre-migration unknown counts/flags, independent file/table
+exactness after migration, and native compaction/inline flush metadata. Rejected
+queries still run against original native goldens; no physical Parquet reader,
+footer scan, live aggregate or native migration repair is claimed as a JVM mirror.
+
+Final R04 maintained-reader qualification passed **639 maintained + 74 direct-Java
+JUnit tests**, zero failed/errors/JUnit-skipped, and **17,602 corpus records** with
+unchanged 100 file/12 record exclusions. All twelve new R04 peer tests execute;
+frozen Java/record/JSON, lint and Java 17 classfile controls pass. This result does
+not include a pass or waiver for any separate strict native lane.
+
+### R04 strict newer-upstream migrated-bound gate — NOT GREEN
+
+`upstreamR04NativeTest` adopts the **whole pristine**
+`test/sql/migration/v10_retyped_bounds.test` at `ea543c71` (SHA-256
+`3694ae485e41fe81c4efd63028c2cbdf2bd83351d12ea569c61bb66b36b8409b`). It prepares only
+the known gzip directive, verifies every byte input and replays all original SQL and
+goldens against the asserted shipping peer in a bounded isolated child JVM.
+
+The genuine 1.5.6-written `data/old_ducklake/migrate_bounds.db.gz` is **12,454 bytes**,
+SHA-256 `f9ad3a91468c3e3c96b1d3587214885b20fedd86c8a89b84efab2a7487188528`.
+Its **ten Parquet inputs (2,132 bytes)** are `double.parquet`, `float.parquet`,
+`ts_ns.parquet`, `tz_ns.parquet` and the six exact UUID-named files under
+`main/dc`, `main/i2f`, `main/r` (two), `main/st` and `main/tf`. Every full path and
+SHA-256 is inventoried in [fixture preparation](probes/prepare_11_read_fixtures.py)
+and checked independently by `UpstreamR04NativeWorker`. The script now verifies
+16 R02/R04 inputs at the same immutable revision; no maintained corpus pin moved.
+The gzip is bounded to 64 MiB, all fixture files are copied into owned temporary
+storage before native use, and the parent reaps workers on failure/crash/timeout.
+
+The strict gate reports **1 JUnit failure, 0 skipped**: **14 original records pass,
+10 fail**. The first query reads timestamp `.123457` but native equality counts 0
+instead of 1 and less-than counts 1 instead of 0. Float comparisons lose rows and
+native MIN returns `0.1` instead of `0.10000000149011612`. Suspect file/table bounds
+survive migration instead of clearing. Both genuine-seed and second config-lake
+parts execute; no native error is hidden, skipped or rebaselined. Full output is
+retained under replay module `build/reports/upstream-r04-native/`.
+
+[Fork #94](https://github.com/PeterVanHolland/ducklake/pull/94), merged through
+[duckdb/ducklake #1806](https://github.com/duckdb/ducklake/pull/1806), fixes this
+migration but is absent from shipped `417a9117f5`. The separate direct-Java genuine
+seed test verifies raw text/unknown flags and **legacy bound suppression/retain-all
+planning only**. It does not claim that raw old-type text is a qualified typed bound,
+that JVM physical file scans ran or that the newer native SLT passed. The strict
+task remains separate from maintained `check` just like R02/R03's native lanes.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
-These are **new after the shipped extension**. The first three are now adopted as
-whole pristine cases in the separate strict `upstreamR02NativeTest` task; none is
-claimed as a shipping-native pass. The fourth remains queued for R04.
+These are **new after the shipped extension**. The first three are adopted as
+whole pristine cases in `upstreamR02NativeTest`; the fourth is adopted in
+`upstreamR04NativeTest`. None is claimed as a shipping-native pass.
 
 | Upstream main path at `ea543c71` | SHA-256 | Queue |
 |---|---|---|
 | `test/sql/alter/add_struct_field_non_literal_default.test` | `53e969c884d09270376b2d7553978751a7b81882337b6efbdcdd0ac719c8286a` | **Native FAIL:** expected-error ALTER succeeds and old rows read NULL; JVM rejects the recorded non-literal history |
 | `test/sql/migration/v10_inlined_struct_field_order.test` | `a015a0482246894223944f601b29b5663087c2cf40631ed2a9e4751095a3c257` | **Native FAIL:** physical order blocks original DELETE/read/CHECKPOINT; separate JVM reads of the genuine migrated seed pass |
 | `test/sql/alter/add_struct_alter_same_transaction.test` | `94bcc8bbc2b810588a081d94c117acd8f449f93dc46caa9f0b0e815fbe85e43d` | **Native SIGSEGV:** same-transaction field identity case fails its isolated parent gate, never skips |
-| `test/sql/migration/v10_retyped_bounds.test` | `3694ae485e41fe81c4efd63028c2cbdf2bd83351d12ea569c61bb66b36b8409b` | R04: migrated bounds in physical-file/older column types must not cause false pruning or exact aggregates |
+| `test/sql/migration/v10_retyped_bounds.test` | `3694ae485e41fe81c4efd63028c2cbdf2bd83351d12ea569c61bb66b36b8409b` | **Native FAIL:** migrated old-type bounds cause missing matches/wrong MIN; separate JVM legacy fallback checks remain safe |
 
 The STRUCT-order test depends on the genuine 1.5.6-written
 `data/old_ducklake/inlined_struct_field_order.db.gz` at the same source revision:
@@ -121,8 +185,8 @@ check their own fixed digests and bound decompression to 64 MiB. The strict lane
 actually prepares the one known gzip directive, then executes every original SQL/
 golden record; it does not blanket-enable arbitrary `unzip` directives or count a skip
 as adoption. Child processes are bounded and reaped after failure/crash.
-The retyped-bounds fixture additionally requires its pinned metadata/data inputs;
-those must be inventoried before that entire case can be claimed as adopted.
+The retyped-bounds fixture's complete pinned metadata/data inventory is adopted
+in R04 above; the observed native failures are not claimed as passes.
 
 The JVM legacy fixture reads the **untouched 1.5.6 seed immediately after explicit
 native migration**, with independent expected values across eight tables. It does
@@ -141,7 +205,7 @@ child log. The same-transaction case's native SIGSEGV is preserved as a failure.
 
 The native-rejected whole-container defaults in `default/nested_column_default.test`
 still guide subsequent type coverage; this document does not claim blanket mirror
-coverage for them or queued R04 cases. R03 literal-default coverage is bounded above.
+coverage for them. R03 literal-default and R04 metadata coverage are bounded above.
 
 See the [read/write support TODO](TODO-DUCKLAKE-1.1-SUPPORT.md). New upstream cases
 must be added alongside our focused NULL/bytes/identity/failure regressions, not used

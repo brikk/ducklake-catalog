@@ -48,6 +48,9 @@ driver; no embedded DuckDB JDBC is required.
   advisory semantics; they are not a new exact `COUNT(*)` optimization contract.
 - Existing public records, Java constructors and fragment JSON remain unchanged.
   Advisory 1.1 row-group counts are omitted, not fabricated as zero.
+  The optional [rich metadata companion](READ-METADATA.md) exposes parent IDs,
+  nullable exactness/row-group counts and actual layout/peer provenance without
+  changing these legacy values or qualifying pruning, aggregates or nested paths.
 - Missing columns in older inline schemas project their **qualified scalar initial
   defaults**, using the target snapshot's metadata. Ordinary raw/decoded reads and
   CDC share the same projection. This never replaces an existing stored NULL or
@@ -66,9 +69,11 @@ driver; no embedded DuckDB JDBC is required.
 - Legacy column statistics expose **NULL MIN/MAX endpoints**, even when a native
   exactness flag is true. Range-pruning requests return all active file IDs. The
   old DTOs cannot carry exactness, so this sacrifices optimization rather than rows.
-- Catalogs with **any nested-schema history** are rejected, including retired child
+- Legacy reads of catalogs with **any nested-schema history** are rejected, including retired child
   rows. Missing `parent_schema_id` is an error, not an assumption that every schema
-  is a root. A parent-aware companion API remains separate work.
+  is a root. Parent-aware qualification/path resolution remains separate work.
+  Raw parent-ID inspection is available through the rich metadata companion;
+  parent-aware qualification/path resolution remains R05, not a relaxed legacy guard.
 
 ## Explicitly unsupported inline projections
 
@@ -136,6 +141,9 @@ The separate R03 interval persistence gate also fails: native flush changes
 and changing day/microsecond components. Qualified inline reads do not repair
 native Parquet persistence. Negative/extreme component reader fixtures are not a
 claim that native INSERT/flush accepts them.
+The newer R04 retyped-bounds migration gate also fails: native timestamp/float
+filters lose matches and MIN can be wrong. Rich metadata exposes raw values and
+flags only; it does not fix native migration or enable exact aggregates/pruning.
 
 All **1.1 mutations remain blocked**, including file registration, DDL, ANALYZE,
 expiry and cleanup acknowledgements. The reader never bootstraps or migrates a

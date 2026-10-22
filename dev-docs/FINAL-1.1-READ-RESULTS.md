@@ -1,5 +1,11 @@
 # First final-1.1 read tier — October 20
 
+**R04 follow-up:** the additive rich read companion exposes parent IDs, independent
+nullable exactness, nullable data/delete row-group counts and observed layout/peer
+provenance. Legacy statistics/pruning remain conservative. The newer native
+retyped-bounds migration gate is **not green**; raw metadata exposure does not
+qualify optimization or repair migration. See [current contract](../docs/READ-METADATA.md).
+
 **R03 follow-up:** finite temporal/interval/NULL-type reads now use lossless native
 text before decoding. Raw temporal roots intentionally return validated text;
 VARIANT, temporal infinities and TIME 24:00 remain rejected. A separate strict

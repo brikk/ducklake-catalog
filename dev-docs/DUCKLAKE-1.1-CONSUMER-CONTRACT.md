@@ -1,9 +1,10 @@
-# 1.1 consumer contract — specification, not implementation
+# 1.1 consumer contract — implemented read companion and remaining specification
 
-The richer envelopes below remain a specification. A first
-[conservative legacy read tier](../docs/READING-1.1.md) is implemented as an opt-in
-direct-Java adapter: it omits bounds and rejects unrepresentable/unqualified cases
-rather than adding facts to the old records. It enables no 1.1 writes.
+The [conservative legacy read tier](../docs/READING-1.1.md) and additive
+[rich read-metadata companion](../docs/READ-METADATA.md) are implemented for opt-in
+direct Java Quack. The legacy adapter still omits bounds and rejects unqualified
+cases; the companion exposes raw metadata without qualifying typed pruning,
+exact aggregates or parent-aware path resolution. Neither enables 1.1 writes.
 
 ## Compatibility policy — best effort, coordinated changes allowed
 
@@ -55,7 +56,29 @@ performed here**; do not infer coordinated rollout from catalog tests. Native
 interval flush remains a separate failing precision/component gate, not proof of
 lossless Parquet persistence. Full public scope: [Reading 1.1](../docs/READING-1.1.md).
 
-## Required semantics of the future envelopes
+## R04 implemented companion and consumer obligations
+
+`JdbcDucklakeCatalog.readMetadata()` returns `DucklakeReadMetadata`, with explicit
+methods for observed capabilities, active schema parent IDs, active data/delete
+row-group metadata, raw per-file bounds/exactness and unversioned native table
+bounds/exactness. Every operation requires the owning catalog's opt-in read session.
+Existing interfaces/records/constructors/fragment JSON and frozen consumer tests
+remain unchanged. This additive interface does not require a coordinated old-model
+break; consumers must explicitly adopt it rather than silently infer capabilities.
+
+The new records preserve independent unknown/false/true and unknown/zero counts,
+with JSON fixtures. They do not label old-type bound strings as values of the
+current column type. Table stats have no historical snapshot parameter because
+the native table is unversioned. Capabilities distinguish physical metadata presence
+from qualification: nested resolution, pruning, exact aggregates and writes are
+still false. Peer provenance is observed in-session, not historical file provenance.
+
+Both owned plugin agents must qualify their use of these distinctions and scans;
+no plugin changes/verification are claimed. R05 owns hierarchy/path interpretation;
+R06 owns other routes/backends. The separate strict R04 migration gate fails on the
+shipped peer, so exposure of raw bounds is not a migration/optimization endorsement.
+
+## Required semantics (metadata exposed; higher-level interpretation still gated)
 
 | Metadata | Representation | Consumer obligation |
 |---|---|---|
@@ -71,7 +94,7 @@ bound. Never use an approximate endpoint as an exact MIN/MAX aggregate. Aggregat
 counts retain current unknown-count propagation and NaN handling is qualified
 independently; do not remove current conservative guards based only on new flags.
 
-## Legacy reads in a future 1.1 implementation
+## Legacy reads alongside the companion
 
 The unchanged old DTOs cannot describe every 1.1 fact. A safe adapter may omit
 unsupported advisory row-group counts, but must omit unsafe/unknown bounds and
@@ -108,5 +131,6 @@ record-component lock prevents accidental expansion. Old statistics JSON preserv
 unknown versus false/zero. Existing `TestJacksonWireFormat` goldens cover the
 other DTOs. The fixture's source and Maven JAR SHA-256 are recorded beside it.
 
-This does not claim full ABI scanning or finalize new envelope code. Richer 1.1
-model/envelope and write implementation remains separate from the limited legacy reader.
+This does not claim full ABI scanning or connector rollout. R04 companion models
+are additive; richer hierarchy/optimization interpretation and all write contracts
+remain gated independently of the limited legacy reader.

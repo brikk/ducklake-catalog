@@ -32,6 +32,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   existing Java/record/JSON contracts, but allow a justified documented change with
   coordinated Trino/Doris updates and verification. Missing metadata is
   unknown, never false/zero/exact. Keep old statistics/pruning fallbacks safe.
+  Additive companion implemented and verified below. Raw metadata
+  presence does not qualify optimization/hierarchy; the newer native migrated-bound
+  regression remains a separate failing gate, detailed below.
 - [ ] **R05 — Parent-aware schema and path reads.** Resolve nested qualification by
   IDs across live/historical/retired metadata; reject missing parents, cycles and
   ambiguity with bounded depth/traversal. Preserve relative/absolute storage-path
@@ -100,7 +103,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
 - Completed increment: **R01**, typed missing-column defaults in the existing qualified
   direct-Java final-1.1 reader. **R02 is paused at native acceptance; the R03 guarded
   reader increment is verified, with native interval persistence still failing**.
-  R04–R07 remain queued, not implicitly certified. The owner will revisit R02 when the fixes are
+  The guarded R04 metadata increment is verified; its separate native gate remains
+  failing. R05–R07 remain queued, not implicitly certified.
+  The owner will revisit R02 when the fixes are
   available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
   mirrors and exact newer upstream regressions queued for subsequent capabilities.
@@ -267,6 +272,61 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   The unchanged-source full run took 11m35s; the separate native gate remains red as
   described above. All 1.1 write guards, migration defaults, opt-in/owned-session
   rules and dependency pins remain. Session-owned test processes were reaped.
+
+### R04 — rich metadata companion; native migrated-bound acceptance remains open
+
+- `JdbcDucklakeCatalog.readMetadata()` exposes an additive `DucklakeReadMetadata`
+  interface. Existing records, constructors, `DucklakeCatalog` and fragment JSON
+  are unchanged. No new metadata is silently threaded into legacy writer models.
+- All operations require opt-in final 1.1/direct Java Quack and an owned session.
+  Actual physical column/type validation is distinct from the legacy flat-schema
+  preflight: raw parent inspection does not mark legacy hierarchy safe or unlock
+  old reads. Parent-aware qualification/path traversal remains R05.
+- Capabilities report actual engine/core, loaded extension revisions, JDBC driver,
+  unsigned setting, physical columns and the transaction's visible head snapshot.
+  Unknown extension provenance stays NULL. Metadata-presence flags do not enable
+  hierarchy resolution, pruning, exact aggregates or writes (all remain false).
+- File/group queries preserve independent nullable data/delete row-group counts,
+  joined delete IDs/format/count and gross physical record counts. File stats retain
+  independent nullable endpoint flags, values/counts/NaNs without target-type casts.
+  Native table stats are explicitly unversioned, not historical aggregates. New
+  companion JSON fixtures preserve unknown/false/true and unknown/zero distinctly.
+- SQL bounds results to 65,536 rows and text transfer to 16,385 characters (a guard
+  character permits rejection instead of silent truncation). Oversize results/text,
+  missing/wrong-type columns, NULL required values, negative counts and invisible
+  snapshot requests fail explicitly. Same-session pinning/next-session refresh and
+  genuine native migration unknowns have independent direct-Java checks.
+- Three pristine shipped-upstream files require **17 new metadata JVM mirrors**, 65
+  across seventeen R01–R04 files. Original SQL/goldens/pins/exclusions are unchanged.
+  Scratch metadata is populated solely from public JVM read APIs; native Parquet
+  and footer-dependent goldens are not misrepresented as JVM physical scans.
+- The whole newer `v10_retyped_bounds.test` at `ea543c71` is adopted in separate
+  `upstreamR04NativeTest`, with exact SQL/gzip/ten-Parquet inventory and bounded
+  decompression/child isolation. It reports **1 failed JUnit gate, 0 skipped**:
+  **14 original records pass and 10 fail**. Timestamp equality misses a row, a
+  less-than predicate wrongly includes it, float filters lose matches and native
+  MIN returns `0.1` rather than `0.10000000149011612`. Suspect bounds remain instead
+  of being cleared. No expected value was replaced, skipped or accepted as a pass.
+- [Fork #94](https://github.com/PeterVanHolland/ducklake/pull/94), included in merged
+  [upstream #1806](https://github.com/duckdb/ducklake/pull/1806), repairs this native
+  migration but is absent from signed `417a9117f5`. The genuine 1.5.6 seed separately
+  verifies JVM raw metadata/unknown flags and legacy retain-all/suppressed-bound
+  behavior; that is not a claim that the original native SLT passes or a physical
+  Parquet scan is qualified. R04 remains unchecked at broad native acceptance.
+- Final forced maintained-reader verification passed **639 maintained JUnit tests**
+  (527 catalog, 51 SLT, 61 replay), **74 shipping direct-Java tests** and **17,602
+  corpus records**, zero failed/errors/JUnit-skipped. Existing 100 file/12 record
+  corpus exclusions remain unchanged. R04 contributes four JSON/round-trip tests,
+  twelve direct-Java peer tests and three whole-file upstream adoption tests.
+  Test-count auditing caught and corrected a non-void Kotlin test before the final
+  run; all twelve R04 peer cases execute. All module checks/detekt, frozen Java/
+  record/JSON controls and Java 17 `checkAbi` passed (7,751 classes, 17 artifacts).
+  The final unchanged-source run took 11m50s; the separate strict native gate was
+  rerun and still reports 1 failed/0 skipped, with 14 original passes/10 failures.
+  Session-owned processes were reaped. All 1.1 write guards/migration defaults,
+  opt-in/session rules and dependency pins remain unchanged.
+  [Public API/nullability and consumer handoff](../docs/READ-METADATA.md) is documented;
+  neither owned plugin has been updated or certified by this increment.
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

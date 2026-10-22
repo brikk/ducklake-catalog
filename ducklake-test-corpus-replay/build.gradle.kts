@@ -109,7 +109,7 @@ tasks.withType<Test> {
 
 // Newer upstream/native defects are a separate STRICT gate, not skips or modified goldens
 // in the maintained corpus. Invoke explicitly and preserve failures against the shipped peer.
-tasks.named<Test>("test") { useJUnitPlatform { excludeTags("upstream-r02-native", "upstream-r03-native") } }
+tasks.named<Test>("test") { useJUnitPlatform { excludeTags("upstream-r02-native", "upstream-r03-native", "upstream-r04-native") } }
 tasks.register<Test>("upstreamR02NativeTest") {
     group = "verification"
     description = "Strict pristine newer-upstream R02 native gates; shipping defects fail rather than skip."
@@ -129,4 +129,16 @@ tasks.register<Test>("upstreamR03NativeTest") {
     classpath = sourceSets.test.get().runtimeClasspath
     useJUnitPlatform { includeTags("upstream-r03-native") }
     outputs.upToDateWhen { false }
+}
+tasks.register<Test>("upstreamR04NativeTest") {
+    group = "verification"
+    description = "Strict whole newer-upstream migrated bound/type regression; native failures never skip."
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("upstream-r04-native") }
+    outputs.upToDateWhen { false }
+    doFirst {
+        systemProperty("ducklake.nativeGate.classpath", classpath.asPath)
+        systemProperty("ducklake.nativeGate.reports", layout.buildDirectory.dir("reports/upstream-r04-native").get().asFile.absolutePath)
+    }
 }

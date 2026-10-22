@@ -50,7 +50,7 @@ internal object UpstreamR02NativeWorker {
         }
     }
 
-    private fun assertShippingPeer() {
+    internal fun assertShippingPeer() {
         DriverManager.getConnection("jdbc:duckdb:").use { connection -> connection.createStatement().use { statement ->
             statement.execute("LOAD ducklake")
             statement.executeQuery("PRAGMA version").use { result ->
