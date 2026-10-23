@@ -29,6 +29,9 @@ internal object Final11ReadCompatibility {
         if (ctx.dialect().family() == org.jooq.SQLDialect.POSTGRES) {
             Final11ReadMetadataQueries.observedLayout(ctx, Final11ReadRoute.POSTGRES)
         }
+        if (ctx.dialect().family() == org.jooq.SQLDialect.MYSQL) {
+            Final11ReadMetadataQueries.observedLayout(ctx, Final11ReadRoute.MYSQL)
+        }
         val schema = DUCKLAKE_SCHEMA.`as`("read_schema")
         val parent = DSL.field(DSL.name("read_schema", "parent_schema_id"), Long::class.javaObjectType)
         // Checks the actual required column, not just the version string. Bound the SQL result;
@@ -44,8 +47,8 @@ internal object Final11ReadCompatibility {
         val columns = DSL.table(DSL.sql("information_schema.columns")).`as`("read_columns")
         fun text(name: String) = DSL.field(DSL.name("read_columns", name), String::class.java)
         val names = ctx.select(DSL.substring(text("column_name"), 1, 128), DSL.substring(text("data_type"), 1, 32))
-            .from(columns).where(text("table_catalog").eq(DSL.field("current_database()", String::class.java)))
-            .and(text("table_schema").eq(DSL.field("current_schema()", String::class.java))).and(text("table_name").eq(tableName))
+            .from(columns).where(text("table_catalog").eq(Final11SqlBackend.catalog(ctx)))
+            .and(text("table_schema").eq(Final11SqlBackend.schema(ctx))).and(text("table_name").eq(tableName))
             .orderBy(DSL.field(DSL.name("read_columns", "ordinal_position"))).limit(3)
             .fetch { listOf(it.value1(), it.value2()) }
         // Lazy/nonmaterialized optional tables remain absent. Existing tables must have the
@@ -54,14 +57,15 @@ internal object Final11ReadCompatibility {
         if (normalized.isNotEmpty() && normalized != INLINE_SYSTEM_NAMES.map { listOf(it, "BIGINT") }) {
             throw DucklakeInvalidOperationException("Unsupported final-1.1 physical inline metadata layout for $tableName")
         }
-        if (normalized.isNotEmpty() && ctx.dialect().family() == org.jooq.SQLDialect.POSTGRES) {
+        if (normalized.isNotEmpty() && ctx.dialect().family() in setOf(org.jooq.SQLDialect.POSTGRES, org.jooq.SQLDialect.MYSQL)) {
+            if (ctx.dialect().family() == org.jooq.SQLDialect.MYSQL) Final11MySqlLayout.inlinePrefix(ctx, tableName)
             fun id(name: String) = DSL.field(DSL.quotedName(name), Long::class.javaObjectType)
             val row = id(INLINE_SYSTEM_NAMES[0])
             val begin = id(INLINE_SYSTEM_NAMES[1])
             val end = id(INLINE_SYSTEM_NAMES[2])
             if (ctx.fetchExists(ctx.selectOne().from(DSL.table(DSL.quotedName(tableName)))
                     .where(row.isNull.or(row.lt(0L)).or(begin.isNull).or(begin.lt(0L)).or(end.lt(begin))).limit(1))) {
-                throw DucklakeCatalogCorruptionException("Invalid PostgreSQL inline row/snapshot identity")
+                throw DucklakeCatalogCorruptionException("Invalid SQL-backend inline row/snapshot identity")
             }
         }
     }

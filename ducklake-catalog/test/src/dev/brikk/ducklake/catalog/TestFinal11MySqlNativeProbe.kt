@@ -32,8 +32,10 @@ class TestFinal11MySqlNativeProbe {
                 listOf("_ducklake_end_snapshot", "bigint", "bigint"), listOf("i", "int", "int"),
                 listOf("s", "text", "text"), listOf("b", "blob", "blob"), listOf("d", "date", "date"))
             assertThat(f.rows("SELECT i,s,hex(b),d FROM $physical").single()).containsExactly("1", "NULL", "00FF", "2020-01-01")
-            assertThatThrownBy { JdbcDucklakeCatalog(f.readerConfig()) }
-                .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("MySQL remains unqualified")
+            JdbcDucklakeCatalog(f.readerConfig().apply { enableFinal11Reads = false }).use { c ->
+                assertThatThrownBy { c.currentSnapshotId }.isInstanceOf(DucklakeInvalidOperationException::class.java)
+                    .hasMessageContaining("enableFinal11Reads")
+            }
         }
     }
 }

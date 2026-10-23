@@ -6,9 +6,11 @@ and native Quack, qualified
 against official DuckDB **2.0.0**, DuckLake `417a9117f5` and Quack `f96420ed46`
 (protocol v3). It is not full 1.1 support,
 blanket PostgreSQL/MySQL certification or permission to write/migrate a catalog.
-See [qualified backend routes and restrictions](READ-BACKENDS.md); R06 remains partial.
+See [qualified backend routes and restrictions](READ-BACKENDS.md); R07 acceptance/rollout remains separate.
 Direct PostgreSQL additionally has an explicit [narrower projection subset](READ-POSTGRES-1.1.md),
 not the full DuckDB-backed tier described below.
+MySQL has a separate [existing-catalog read-only subset](READ-MYSQL-1.1.md), not
+native creation/upgrade/write support. Its 0.4/1.0 lane remains available.
 
 ## Enable and use an owned read session
 
@@ -44,7 +46,7 @@ The DuckDB-backed tier uses `jdbc:quack:`, existing-file `jdbc:duckdb:` and
 `jdbc:duckdb:quack:`. Applications supply the selected driver; direct Java Quack
 still requires no embedded DuckDB JDBC. Local readers are database-level read-only;
 native Quack uses a metadata-only non-bootstrapping initializer. Other transports
-remain rejected except the separately documented `jdbc:postgresql:` subset.
+remain rejected except the separately documented `jdbc:postgresql:` and existing-`jdbc:mysql:` subsets.
 Read the route-specific restrictions above before enabling.
 
 ## Supported scope and deliberate fallbacks

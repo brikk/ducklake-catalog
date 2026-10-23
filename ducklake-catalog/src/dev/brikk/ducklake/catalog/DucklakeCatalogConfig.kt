@@ -25,7 +25,8 @@ package dev.brikk.ducklake.catalog
  *  - **PostgreSQL** (`jdbc:postgresql://…`) — the primary, fully tested backend. The `ducklake_*`
  *    tables must be in the connection's default `search_path` (upstream's default `public`
  *    schema); a custom `METADATA_SCHEMA` is not supported.
- *  - **MySQL** (`jdbc:mysql://…`) — the tables must be in the URL's default database. REPEATABLE
+ *  - **MySQL** (`jdbc:mysql://…`) — 0.4/1.0 legacy lane; opt-in existing final-1.1 reads only.
+ *    Never creates/migrates a 1.1 catalog or enables 1.1 writes. Tables must be in the URL's database. REPEATABLE
  *    READ means an in-transaction lineage check cannot observe a concurrent commit; correctness
  *    rests on the `ducklake_snapshot` primary key, which is detected and retried.
  *  - **DuckDB file** (`jdbc:duckdb:/path/lake.db`) — one JVM process holds the file lock, so this
@@ -51,10 +52,10 @@ class DucklakeCatalogConfig {
     var maxCatalogConnections: Int = 10
 
     /**
-     * Opt in to qualified final-1.1 reads over DuckDB-backed routes or the narrower direct-PostgreSQL subset:
+     * Opt in to qualified final-1.1 reads over DuckDB, PostgreSQL or the narrower existing-MySQL scalar tier:
      * legacy APIs require root-schema catalogs; the explicit hierarchy companion handles parent-aware names/paths. No legacy MIN/MAX
      * bounds or range pruning. All reads must run inside readSession on an owned snapshot. Does not enable any 1.1 writes
-     * or migration; existing record/wire shapes omit advisory 1.1 metadata.
+     * or migration; existing record/wire shapes omit advisory 1.1 metadata. MySQL's narrower scalar/layout contract is validated separately.
      */
     var enableFinal11Reads: Boolean = false
 }

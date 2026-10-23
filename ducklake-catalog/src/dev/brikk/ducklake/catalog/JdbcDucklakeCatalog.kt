@@ -116,6 +116,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 throw DucklakeInvalidOperationException("enableFinal11Reads requires readSession for validation and reads on one snapshot")
             }
             val ctx = session ?: pooledDsl
+            if (dialect == SQLDialect.MYSQL && validatedReadSession.get() !== ctx) {
+                DucklakeReadBackendPolicy.requireMySqlFormat(globalMetadataValue("version", ctx), final11ReadsEnabled)
+                if (!final11ReadsEnabled && session != null) validatedReadSession.set(ctx)
+            }
             if (final11ReadsEnabled && validatedReadSession.get() !== ctx) {
                 Final11ReadCompatibility.requireReadableLayout(ctx, globalMetadataValue("version", ctx))
                 // Never cache this across read sessions or autocommit calls. It must describe the
@@ -143,6 +147,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (final11ReadRoute == Final11ReadRoute.LOCAL_DUCKDB) {
             hikariConfig.addDataSourceProperty("duckdb.read_only", "true")
             hikariConfig.isReadOnly = true // Hikari must not try to flip the driver's database-level access mode.
+        }
+        if (final11ReadRoute == Final11ReadRoute.MYSQL) {
+            hikariConfig.addDataSourceProperty("connectionTimeZone", "UTC")
+            hikariConfig.addDataSourceProperty("forceConnectionTimeZoneToSession", "true")
+            hikariConfig.addDataSourceProperty("preserveInstants", "true")
         }
         val dialectInferenceUrl: String
         val metadataQuery: MetadataQuery
@@ -253,10 +262,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         dataSource.connection.use { conn ->
             conn.autoCommit = false
-            // Best effort per backend: PostgreSQL / MySQL honour both; DuckDB's JDBC driver rejects
-            // levels other than its own (its transactions are snapshot-isolated regardless) and may
-            // reject read-only, so neither is fatal. HikariCP resets whatever changed on return.
-            if (final11ReadRoute == Final11ReadRoute.POSTGRES) {
+            // Opt-in SQL-server readers require both settings. Legacy routes remain best effort;
+            // DuckDB rejects other isolation levels and owns its snapshot isolation regardless.
+            // HikariCP resets tracked connection state on return.
+            if (final11ReadRoute in setOf(Final11ReadRoute.POSTGRES, Final11ReadRoute.MYSQL)) {
                 conn.isReadOnly = true
                 conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
             } else {
@@ -266,6 +275,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val sessionDsl = forConnection(conn)
             metadata.begin(sessionDsl)
             if (final11ReadRoute == Final11ReadRoute.POSTGRES) sessionDsl.execute("SET LOCAL intervalstyle='postgres'")
+            if (final11ReadRoute == Final11ReadRoute.MYSQL) Final11MySqlLayout.requireSession(sessionDsl)
             readSessionDsl.set(sessionDsl)
             try {
                 return action.get()
@@ -2102,6 +2112,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         columnIds: List<Long>,
         decode: Boolean,
     ): List<DucklakeInlinedChangeRow> {
+        requireMySqlPayloadTypes(tableId, endSnapshot, columnIds)
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
         if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
         val sourceSchemaSnapshot = sourceSchemaSnapshot(inlined, tableId, schemaVersion, endSnapshot)
@@ -2264,7 +2275,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (final11ReadRoute == Final11ReadRoute.POSTGRES) {
             return Final11PostgresProjection(ctx, Final11InlineSchema(source), Final11InlineSchema(allTargetColumns)).plan(tableName, ids)
         }
+        if (final11ReadRoute == Final11ReadRoute.MYSQL) {
+            return Final11MySqlProjection(ctx, Final11InlineSchema(source), Final11InlineSchema(allTargetColumns)).plan(tableName, ids)
+        }
         return Final11ReadCompatibility.projections(ctx, tableName, source, allTargetColumns, ids)
+    }
+
+    private fun requireMySqlPayloadTypes(tableId: Long, snapshot: Long, ids: List<Long>) {
+        if (final11ReadRoute == Final11ReadRoute.MYSQL && conservativeFinal11Read(dsl)) {
+            Final11MySqlProjection.requireTargetTypes(Final11InlineSchema(getAllColumnsWithParentage(tableId, snapshot)), ids)
+        }
     }
 
     private fun readInlinedDataInternal(
@@ -2278,6 +2298,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (final11ReadsEnabled) throw DucklakeInvalidOperationException("Opt-in reader requires a nonempty projection; use countInlinedRows for counts")
             return emptyList()
         }
+
+        requireMySqlPayloadTypes(tableId, snapshotId, columns.map { it.columnId })
 
         val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
 
@@ -3653,6 +3675,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     private fun dynamicTableExists(ctx: DSLContext, tableName: String): Boolean {
+        if (dialect == SQLDialect.MYSQL && final11ReadsEnabled) return Final11MySqlLayout.dynamicTableExists(ctx, tableName)
         if (dialect == SQLDialect.POSTGRES) {
             // Resolve exactly as the subsequent unqualified query does, across the search_path.
             return ctx.fetchExists(ctx.selectOne().where(DSL.condition("to_regclass({0}) IS NOT NULL", DSL.`val`(tableName))))

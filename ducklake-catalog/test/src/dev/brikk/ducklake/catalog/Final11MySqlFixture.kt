@@ -25,8 +25,12 @@ internal class Final11MySqlFixture : AutoCloseable {
     private var initialized = false
 
     fun native(sql: String, version: String = "1.1", migrate: Boolean = false) {
+        nativeRows(sql, version, migrate)
+    }
+
+    fun nativeRows(sql: String, version: String = "1.1", migrate: Boolean = false): List<List<String?>> {
         Final11DuckDbBackendFixture.requirePinnedJdbc()
-        DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
+        return DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
             s.execute("INSTALL ducklake; LOAD ducklake; INSTALL mysql; LOAD mysql")
             s.executeQuery("PRAGMA version").use { r ->
                 check(r.next()); assertThat(r.getString(1)).isEqualTo("v2.0.0"); assertThat(r.getString(2)).isEqualTo("d54cbbe3df")
@@ -47,9 +51,19 @@ internal class Final11MySqlFixture : AutoCloseable {
             }
             s.execute("ATTACH '${server.getDuckDbAttachUri()}' AS lake " +
                 "(DATA_PATH '$data',METADATA_SCHEMA 'ducklake',DUCKLAKE_VERSION '$version',AUTOMATIC_MIGRATION $migrate)")
-            s.execute(sql)
+            val rows = if (s.execute(sql)) s.resultSet.use { r -> buildList {
+                while (r.next()) add((1..r.metaData.columnCount).map { r.getString(it) })
+            } } else emptyList()
             s.execute("DETACH lake")
+            rows
         } }
+    }
+
+    fun metadata(sql: String) {
+        val url = server.getJdbcUrl()
+        DriverManager.getConnection(url + (if ('?' in url) "&" else "?") + "allowMultiQueries=true", server.getUser(), server.getPassword()).use { c ->
+            c.createStatement().use { it.execute(sql) }
+        }
     }
 
     fun rows(sql: String): List<List<String?>> = DriverManager.getConnection(server.getJdbcUrl(), server.getUser(), server.getPassword()).use { c ->

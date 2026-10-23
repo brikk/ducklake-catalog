@@ -2,10 +2,11 @@
 
 Available in **0.13.0-SNAPSHOT development code** through
 `JdbcDucklakeCatalog.readHierarchy(): DucklakeHierarchyReader`. It is an additive,
-read-only companion, qualified on the three DuckDB-backed and direct PostgreSQL [routes](READ-BACKENDS.md)
+read-only companion, qualified on the three DuckDB-backed, PostgreSQL and existing-MySQL [routes](READ-BACKENDS.md)
 as [rich metadata](READ-METADATA.md). Every operation requires
 `enableFinal11Reads=true` and the owning catalog's `readSession`. Other formats and
-routes (including MySQL) fail explicitly. No write, migration or physical-file scan is enabled.
+routes fail explicitly. MySQL uses its narrower [existing-catalog read contract](READ-MYSQL-1.1.md).
+No write, migration or physical-file scan is enabled.
 
 ```kotlin
 catalog.readSession(java.util.function.Supplier {
@@ -36,7 +37,7 @@ end snapshots remain the metadata's actual end values, even when later than the
 requested historical snapshot. Historical selection is not a rewritten metadata row.
 
 The DuckDB `qualifiedNestedSchemaResolution` capability is true for these R05 APIs;
-the portable backend profile reports `hierarchyAvailable=true` on PostgreSQL too.
+the portable backend profile reports `hierarchyAvailable=true` on PostgreSQL/MySQL too.
 It does **not** unlock legacy flat APIs: their rejection of any nested-schema history
 (including retired children) remains unchanged. It also does not certify legacy
 inline/column/file-descriptor calls on nested catalogs or connector physical scans.

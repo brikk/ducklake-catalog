@@ -27,11 +27,11 @@ import org.testcontainers.utility.DockerImageName
  * of a MySQL-backed catalog are DEFERRED: DuckDB 1.5.4's `mysql` extension is unstable reading
  * DuckLake-on-MySQL (protocol desyncs / SIGSEGV in its SSL layer). See dev-docs.
  */
-class TestingDucklakeMySqlCatalogServer : AutoCloseable {
+class TestingDucklakeMySqlCatalogServer @JvmOverloads constructor(private val databaseName: String = DEFAULT_DATABASE) : AutoCloseable {
 
     private val container: MySQLContainer =
         MySQLContainer(DockerImageName.parse(IMAGE))
-            .withDatabaseName(DEFAULT_DATABASE)
+            .withDatabaseName(databaseName)
             .withUsername(USER)
             .withPassword(PASSWORD)
             .withStartupAttempts(3)
@@ -45,7 +45,7 @@ class TestingDucklakeMySqlCatalogServer : AutoCloseable {
     fun getJdbcUrl(databaseName: String): String =
         // Testcontainers MySQL URL: jdbc:mysql://host:port/database[?params]. Swap the db segment,
         // preserving any query params the container appended.
-        container.jdbcUrl.replaceFirst("/$DEFAULT_DATABASE", "/$databaseName")
+        container.jdbcUrl.replaceFirst("/${this.databaseName}", "/$databaseName")
 
     fun getUser(): String = USER
 
@@ -55,7 +55,7 @@ class TestingDucklakeMySqlCatalogServer : AutoCloseable {
 
     fun getMappedPort(): Int = container.getMappedPort(MySQLContainer.MYSQL_PORT)
 
-    fun getDuckDbAttachUri(): String = getDuckDbAttachUri(DEFAULT_DATABASE)
+    fun getDuckDbAttachUri(): String = getDuckDbAttachUri(databaseName)
 
     /** DuckDB `mysql` extension connection string for `ATTACH 'ducklake:mysql:...'`. */
     fun getDuckDbAttachUri(databaseName: String): String =

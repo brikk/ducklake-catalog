@@ -4,7 +4,7 @@ Available in **0.13.0-SNAPSHOT development code**, through
 `JdbcDucklakeCatalog.readMetadata(): DucklakeReadMetadata`. This is an additive,
 read-only companion; existing `DucklakeCatalog` methods, records, constructors and
 fragment JSON are unchanged. It requires **`enableFinal11Reads=true`**, a
-[qualified DuckDB-backed or direct PostgreSQL route](READ-BACKENDS.md) and an owned `readSession`.
+[qualified DuckDB-backed, PostgreSQL or existing-MySQL route](READ-BACKENDS.md) and an owned `readSession`.
 Other formats/routes fail explicitly, rather than
 claiming missing metadata is known. See [setup and reader limits](READING-1.1.md).
 
@@ -33,11 +33,11 @@ which historical writer produced a file, a checksum attestation or universal bac
 certification. No advertised metadata feature is inferred from `1.1-dev1`.
 The route identifies whether SQL executes remotely or locally; the JDBC driver's
 advertised version is not an artifact checksum or necessarily its Maven version.
-PostgreSQL is not described by these DuckDB-specific facts: this one method rejects
+PostgreSQL/MySQL are not described by these DuckDB-specific facts: this one method rejects
 that route instead of inventing a source ID or primitive unsigned-extension flag.
-Use `readBackendProfile()` for PostgreSQL provenance and metadata/hierarchy API
+Use `readBackendProfile()` for SQL-server provenance and metadata/hierarchy API
 availability; the other rich-metadata operations are qualified under the
-[PostgreSQL contract](READ-POSTGRES-1.1.md). MySQL remains closed. Existing capability
+[PostgreSQL](READ-POSTGRES-1.1.md) and [existing-MySQL](READ-MYSQL-1.1.md) contracts. Existing capability
 records/constructors/JSON are unchanged.
 
 The reader verifies the required native columns/types for schema parentage, data

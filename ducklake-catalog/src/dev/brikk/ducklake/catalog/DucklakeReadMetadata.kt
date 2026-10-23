@@ -17,12 +17,12 @@ import com.fasterxml.jackson.annotation.JsonInclude
 
 /**
  * Optional read-only companion to [DucklakeCatalog]. Qualified for opt-in final-1.1 metadata
- * over DuckDB-backed routes and direct PostgreSQL inside [DucklakeCatalog.readSession].
+ * over DuckDB-backed routes, PostgreSQL and existing MySQL catalogs inside [DucklakeCatalog.readSession].
  * Other routes/formats fail explicitly.
  * Metadata is not permission to prune, aggregate exactly, resolve nested paths or write.
  */
 interface DucklakeReadMetadata {
-    /** DuckDB-only provenance record; PostgreSQL callers must use JdbcDucklakeCatalog.readBackendProfile(). */
+    /** DuckDB-only provenance record; SQL-server callers must use JdbcDucklakeCatalog.readBackendProfile(). */
     fun getReadMetadataCapabilities(): DucklakeReadMetadataCapabilities
 
     /** Active schemas at a visible snapshot. Parent IDs are raw identity, not flattened names/paths. */

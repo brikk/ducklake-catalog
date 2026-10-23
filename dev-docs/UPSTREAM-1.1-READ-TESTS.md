@@ -405,6 +405,10 @@ pass (7,786 classes, 17 artifacts). The public profile label advances to
 
 ### R06 strict MySQL native acceptance — NOT GREEN
 
+Historical checkpoint: the owner later separated existing-catalog JDBC reads from
+native creation/upgrade/write/scanner acceptance. The latter remains red; expanded
+native gates and the qualified read-only scope are recorded below.
+
 `:ducklake-catalog:final11MySqlNativeTest` is a separate strict acceptance task,
 not an expected-error test or part of the maintained green test count. On locked
 DuckLake `417a9117f5` / MySQL scanner `f7fc0d4271`, its final forced run is **2 tests,
@@ -420,6 +424,69 @@ stays rejected. R06 cannot close without an approved pinned native fix/build and
 subsequent complete JVM backend qualification. See
 [exact repros](../docs/READ-MYSQL-1.1-BLOCKERS.md). Existing R02–R04 strict native
 failures remain separate, parked and not rerun or waived by this increment.
+
+## R06 owner-approved existing-MySQL JDBC read scope
+
+The owner explicitly chose reads of already-initialized 1.1 catalogs independently
+from native creation, upgrade and write support. `TestUpstreamFinal11MySqlReads`
+therefore uses only whole pristine files whose native setup/goldens pass on the
+locked MySQL lane, and requires additional direct-JDBC library reads of the same
+committed state. No failed native SQL or original expected value is rewritten.
+
+| Pristine corpus path | SHA-256 | Mandatory MySQL JDBC mirrors |
+|---|---|---:|
+| `stats/inlined_double_stats_same_transaction.test` | `398c2f9c4f5c8cbdf05f6cb8fede8eeeb01ceeee9439272586c8a9826640f4a9` | 3 |
+| `types/null_byte.test` | `7f679ed29a25d0f3e6cffe2da826b3e96b3b0cf967421a5de46fd105ce8072ec` | 2 |
+| `general/null_schema_and_table_paths.test` | `7f487746d491d60a536ea904eee008e808604dae0680f454fa12065cecc80466` | 1 |
+
+These **six additional mirrors** bring the total to **165 across 25 unique pristine
+files**, plus two separate drained-local final-state checks. The native fixture
+uses a real owned MySQL database named `main` to match the generic native manager's
+default namespace; no ATTACH options, test bodies or goldens are rewritten. The
+original no-arg MySQL test fixture remains compatible and independent direct-JDBC
+tests also qualify the ordinary `ducklake` database. All original records execute
+with mandatory mirror counts and no file/record skips.
+
+Fifteen additional MySQL read/domain/session tests cover actual scalar storage and
+range/signedness, binary/NUL/NULL preservation, FLOAT display-rounding avoidance,
+whole-second versus TEXT-backed temporal precision, file/metadata/hierarchy reads,
+nullable exactness/row groups, byte-exact cursor paging, UTC under a non-UTC JVM,
+server read-only/isolation checks, InnoDB/UUID/charset/prefix corruption and owned
+pin/refresh. Five format-policy cases retain 0.4/1.0, require explicit 1.1 opt-in,
+reject unknown formats, and preserve all 1.1 write guards. A clearly labeled owned
+row-end fixture validates deletion CDC materialization, not a native DELETE pass.
+
+New native failures uncovered during this qualification are preserved separately:
+
+- `:ducklake-catalog:final11MySqlNativeTest`: **6 tests, 6 failures, 0 skips** for
+  native migration, nested inline storage, scalar retype, HUGEINT precision,
+  microsecond timestamp precision and JSON materialization. Unsupported/lossy
+  inline types and unproven schema evolution stay rejected by the JDBC reader.
+- `:ducklake-test-corpus-replay:upstreamMySqlNativeTest`: **4 tests, 4 failures,
+  0 skips**, replaying whole unchanged `data_inlining/inlining_double.test`
+  (`319fb25dc84c7f88a819c3b1f34ffe76da938e5cfacc131c06dc021f087a32af`),
+  `default/default_values.test`
+  (`ad3060d0742f68d8da74934bac9f2c4cee3f1a860f40eeac1e68af9d491910d2`),
+  `metadata/row_group_count.test`
+  (`603a0107ddf93c03a058bed34166bff23ad26c2a6d796d551950baeaee7bf357`),
+  and `general/ducklake_read_only.test`
+  (`25db00ba1287a3b53a1d86013b092e3795c150fd520b488fa266f4bc1e8e0683`).
+  Native integer scanner headers, boolean-expression output and mutation/flush
+  lifecycle do not match original goldens. They are never green mirror counts.
+
+The native scanner can fail while correctly typed direct-JDBC reads succeed; the
+qualified route does not invoke that scanner in the reading JVM. These gates now
+belong to explicitly deferred native operations/types, not the proven existing-
+catalog read subset. This is a recorded scope decision, not a claimed native fix.
+
+Final forced maintained verification passes **797 JUnit tests + 86 driver-only
+direct-Java tests**, zero failures/errors/JUnit skips, and **17,602 corpus records**
+with unchanged 100 file/12 record exclusions. Lint, frozen ABI/wire and Java 17
+checks pass (7,795 classes, 17 artifacts). Both native MySQL tasks are rerun on the
+final code and retain their **6 + 4 failures, 0 errors, 0 skips**. MySQL Connector/J
+is added to corpus test runtime at its existing pinned version, not upgraded.
+R06 closes only for the owner-approved read scope; R07, all writes and shared
+R02–R04 native failures remain independent. [Contract](../docs/READ-MYSQL-1.1.md).
 
 ## Newer upstream regressions — strict native failures, not shipping passes
 

@@ -41,14 +41,16 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   semantics and retained-file ownership. Legacy APIs must not flatten hierarchy.
   Explicit hierarchy companion implemented and verified below. This does not unlock
   legacy nested payload/descriptor APIs or physical scans.
-- [ ] **R06 — Backend coverage.** Extend/qualify final-1.1 reads on PostgreSQL, MySQL,
-  local DuckDB and native Quack as well as direct Java Quack. Test native physical
-  layouts/type representations, owned-session consistency, fresh and migrated lakes,
-  and explicit rejection of malformed/unknown layouts on each claimed route.
-  Three DuckDB-backed routes and the guarded direct PostgreSQL evolution/metadata/
-  hierarchy tier are qualified. MySQL is now blocked by reproducible native 1.0→1.1
-  migration and fresh nested-storage failures on the maintained artifacts; its guard
-  stays closed. See the final R06 evidence below. This is not a shipping pass.
+- [x] **R06 — Scoped backend read coverage.** Qualify guarded final-1.1 reads on
+  PostgreSQL, local DuckDB, native Quack, direct Java Quack and the narrower existing-
+  MySQL read-only subset. Test native physical representations, owned-session
+  consistency, fresh/migrated inputs where claimed, and malformed/unknown-layout
+  rejection. **Owner scope decision, October 23:** MySQL reads of already-initialized
+  1.1 catalogs are independent from native creation/upgrade/write/scanner support.
+  The latter remains explicitly deferred below, not required to fabricate a full
+  native pass before using the proven JDBC read subset. No default-on reads, 1.1
+  writes, automatic migration or R07 rollout is implied. Final forced verification
+  of this revised read scope is recorded below.
 - [ ] **R07 — Read acceptance and rollout.** Run maintained/frozen ABI/wire controls,
   matching pristine full corpus, strict native gates and real native↔JVM fixtures:
   file/inline mixes, delete vectors, snapshot-tagged rows/deletes, history/CDC,
@@ -56,6 +58,16 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   propagation and bounded planning. Update public scope and consumer handoff; only
   enable claimed cases after their gates pass. Connector agents qualify their own
   Parquet scans, CDC and coordinator/worker behavior.
+
+## Deferred native MySQL work — outside the approved R06 read-only scope
+
+- [ ] **M01 — Native MySQL creation/upgrade/mutation/scanner acceptance.** Preserve
+  `:ducklake-catalog:final11MySqlNativeTest` and
+  `:ducklake-test-corpus-replay:upstreamMySqlNativeTest`: 6 and 4 native failures,
+  respectively, zero skips. Fixes/build/pin decisions need separate approval before
+  reopening native migration, schema mutation, scanner SQL or lossy/unmaterializable
+  inline types. Existing direct-JDBC reads do not certify these operations. See
+  [reproducers](../docs/READ-MYSQL-1.1-BLOCKERS.md); no native failure is waived.
 
 ## Write support — do not enable during read work
 
@@ -111,8 +123,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   reader increment is verified, with native interval persistence still failing**.
   The guarded R04 metadata increment is verified; its separate native gate remains
   failing. R05's explicit bounded hierarchy/path tier is verified; R06–R07 remain
-  queued, not implicitly certified. R06's guarded PostgreSQL port is qualified;
-  native MySQL acceptance and its JVM port remain blocked before R07 rollout.
+  queued, not implicitly certified. R06 now separates the qualified existing-MySQL
+  JDBC read subset from deferred native MySQL creation/upgrade/write/scanner work.
+  R07 rollout remains independent.
   The owner will revisit R02 when the fixes are
   available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
@@ -580,6 +593,9 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
 
 ### R06 — guarded PostgreSQL evolution qualified; native MySQL acceptance blocked
 
+Historical checkpoint: the owner-approved read-only decision below supersedes the
+blanket native-MySQL prerequisite, without waiving any native failure.
+
 - Continues beyond the numeric checkpoint through the remaining PostgreSQL guarded
   read tier: stable-ID STRUCT add/drop/rename/reorder/replacement, LIST/MAP role
   identity, nested scalar defaults and source-domain-checked numeric/unzoned temporal
@@ -633,6 +649,68 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   can be qualified. No automatic upgrade, plugin rollout, 1.1 library writes or
   migration-default change is made. Existing R02–R04 failures remain parked and
   separate. [Exact repro/decision boundary](../docs/READ-MYSQL-1.1-BLOCKERS.md).
+
+### R06 — existing MySQL 1.1 direct-JDBC reads, independent of native upgrades/writes
+
+- Implements the owner's explicit read-only scope choice after distinguishing
+  native mutation/migration/scanner defects from JDBC read feasibility. MySQL keeps
+  legacy 0.4/1.0 and gains opt-in reads of already-initialized final-1.1 metadata.
+  The proposed 1.0-only read ceiling was not adopted. Without opt-in, MySQL now
+  refuses 1.1/unknown formats instead of accidentally leaking legacy metadata reads.
+  Read open never creates, migrates, repairs, retags or downgrades a catalog.
+- Requires server-enforced read-only REPEATABLE READ, UTC and utf8mb4, with actual
+  server-variable checks. All native metadata/used inline tables must be InnoDB;
+  physical signedness, character sets, UUIDs and TINYINT boolean domains are checked.
+  SQL pages/paths stay bounded. MySQL byte ordering and ASCII-only name folding
+  preserve Unicode/case/space path distinctions and complete queue cursors.
+- Qualifies unchanged scalar native storage: signed/unsigned integers through uint128
+  (except signed int128), finite FLOAT/DOUBLE, exact DECIMAL, VARCHAR/BLOB/UUID/NULL,
+  DATE, second timestamps and lossless TEXT clocks/intervals/nanosecond zoned values.
+  FLOAT widens on the server before MySQL text-protocol display can round its bits.
+  Raw/decoded values preserve SQL NULL, literal NULL, embedded NUL and opaque bytes.
+- Rejects unproven schema evolution/default projection and native lossy/unmaterializable
+  inline forms (HUGEINT/JSON/composites/fractional DATETIME forms), even on NULL or
+  missing-table projections. No PostgreSQL capability is guessed onto MySQL.
+  Identity/count-only operations remain narrower than value materialization.
+- Rich metadata preserves nullable independent exactness/row groups and actual raw
+  bounds; legacy pruning retains all candidates. Hierarchy/retained ownership/path
+  namespaces and complete scheduled references are qualified. Native DATETIME(0)
+  schedule values are exposed as actually stored UTC seconds, not invented writer
+  microseconds. Owned-snapshot publication/refresh and non-UTC-JVM tests pass.
+- Native insert/history fixtures and clearly labeled owned row-end metadata verify
+  raw/decoded CDC identity. The latter is not a claimed native DELETE pass or format
+  retag. Existing no-arg test-fixture construction remains binary/source compatible;
+  optional `main` databases let pristine native SQL use the generic backend's default
+  namespace, while direct-JDBC tests also qualify the ordinary `ducklake` database.
+- Three whole pristine shipped files require **six additional MySQL JDBC mirrors**:
+  DOUBLE payloads (3), embedded NUL text (2) and nullable ownership paths (1).
+  Original SQL/goldens/digests remain unchanged. Total mirrors: **165 across 25
+  pristine source files**, plus the two separate drained-local final-state checks.
+- Native fixture acceptance expands to **6 failures, 0 skips** (migration, composite
+  storage, mutation, HUGEINT precision, timestamp precision, JSON). Four original
+  whole native files separately fail on integer scanner types, boolean expression
+  formatting and mutation/flush lifecycle. These **4 failures, 0 skips** remain
+  strict gates, never rewritten goldens or green read-mirror counts. They now gate
+  deferred native operations/types, not proven existing-catalog direct-JDBC reads.
+- Final forced maintained verification passes **797 JUnit tests** (648 catalog,
+  51 SLT, 98 replay), **86 separate driver-only direct-Java tests** and **17,602 corpus
+  records**, zero failures/errors/JUnit skips; exclusions stay 100 files/12 records.
+  All fifteen MySQL read/domain/session cases, five format-policy cases and three
+  pristine read fixtures execute. Lint, frozen ABI/record/JSON and Java 17 checks pass
+  (7,795 classes across 17 artifacts). The final run took 19m03s. Deferred native
+  tasks were rerun separately: **6 + 4 failures, 0 errors, 0 skips**, not part of the
+  green count and not waived. Owned workers/containers were reaped. Logs:
+  `/tmp/opencode/catalog-r06-mysql-existing-read-full-final.log` and
+  `/tmp/opencode/catalog-r06-mysql-deferred-native-read-scope-final.log`.
+- **R06 is complete for the explicit owner-approved read scope.** The original
+  blanket native MySQL creation/migration/scanner prerequisite is superseded only
+  by the recorded existing-catalog read-only choice; M01 retains that native work
+  and its failures. R02–R04 and R07 are not implicitly checked or certified.
+- All 1.1 writes and automatic-migration defaults remain disabled on every engine;
+  artifact/layout/corpus versions are unchanged. The same pinned MySQL Connector/J
+  is added only to corpus test runtime. No connector changes, scan/cleanup lease,
+  default-on read release or R07 rollout is performed. Shared R02–R04 failures remain
+  separately parked. [Exact read contract](../docs/READ-MYSQL-1.1.md).
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

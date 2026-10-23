@@ -1,19 +1,27 @@
 # First final-1.1 read tier — October 20
 
+**R06 read-scope decision, October 23:** existing MySQL 1.1 catalogs now have a
+qualified direct-JDBC read-only subset, independently from native upgrades/writes.
+Lossless scalar forms, files, raw metadata and bounded hierarchy are covered;
+unqualified types/evolution fail explicitly. Native scanner/writer/migration gates
+remain red and deferred, not waived. [Read contract](../docs/READ-MYSQL-1.1.md).
+
 **R06 PostgreSQL follow-up:** direct JDBC now qualifies guarded stable-ID
 STRUCT/LIST/MAP evolution, scalar defaults, native numeric/unzoned temporal
 promotions, strict source-domain/value validation and nullable provenance.
-Rich metadata/hierarchy data operations are qualified too. MySQL is closed on
-[two reproducible native acceptance failures](../docs/READ-MYSQL-1.1-BLOCKERS.md). See the
-[PostgreSQL contract](../docs/READ-POSTGRES-1.1.md); R06 remains open.
+Rich metadata/hierarchy data operations are qualified too. At that checkpoint,
+MySQL's native failures blocked broad backend acceptance; the later read-only
+scope decision above qualifies existing-catalog JDBC reads without claiming a
+native fix. See the [PostgreSQL contract](../docs/READ-POSTGRES-1.1.md).
 Narrowing, implicit zones, unsupported canonical values/defaults and composite MAP
-keys remain guarded. R06 cannot close until native MySQL acceptance and its JVM
-port pass; existing R02–R04 native defects remain distinct.
+keys remain guarded. Deferred native MySQL operations and existing R02–R04 native
+defects remain distinct from the completed R06 read scope.
 
 **R06 partial follow-up:** the guarded tier now covers read-only local DuckDB and
 native Quack in addition to direct Java Quack. Native read initialization attaches
 only metadata, never DuckLake bootstrap/migration. PostgreSQL was opened by the later
-increments above; MySQL stays closed. R06 is not complete. See [route contracts](../docs/READ-BACKENDS.md).
+increments above, including the later existing-MySQL JDBC read subset. See the
+current [route contracts](../docs/READ-BACKENDS.md).
 
 **R05 follow-up:** an explicit hierarchy companion now qualifies bounded stable-ID
 schema/table lookup, literal components, historical names, root-relative schema

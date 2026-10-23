@@ -2,7 +2,8 @@
 
 **0.13.0-SNAPSHOT development tier, not full R06 closure.** Direct PostgreSQL JDBC
 supports an explicit root-schema payload subset plus rich metadata/hierarchy with `enableFinal11Reads=true`.
-MySQL remains rejected. No 1.1 write or automatic migration is enabled.
+MySQL has a separate [existing-catalog read-only subset](READ-MYSQL-1.1.md).
+No 1.1 write or automatic migration is enabled.
 
 ```kotlin
 catalog.readSession(java.util.function.Supplier {
@@ -162,7 +163,7 @@ representations are not blanket-certified.
 ## Truthful provenance without breaking the old capability record
 
 `JdbcDucklakeCatalog.readBackendProfile()` is an additive portable observation API
-available on all four currently qualified routes. Its nullable source ID,
+available on all five currently qualified routes. Its nullable source ID,
 unsigned-extension setting and extension revisions can be **not applicable or
 unavailable**, never fabricated DuckDB facts. PostgreSQL reports the actual server
 `version()` and driver metadata with `accessRoute=postgres-jdbc`; DuckDB-only source/
@@ -183,6 +184,6 @@ upgraded. Native probes and JDBC reader assertions are separate; genuine native
 
 See [backend status](READ-BACKENDS.md), [support/evidence](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md)
 and [pristine upstream adoption](../dev-docs/UPSTREAM-1.1-READ-TESTS.md). Remaining R06
-is now blocked on [native MySQL acceptance](READ-MYSQL-1.1-BLOCKERS.md), followed
+now separates qualified existing MySQL reads from [deferred native MySQL work](READ-MYSQL-1.1-BLOCKERS.md), followed
 by R07 acceptance. Existing R02–R04 native failures remain parked and distinct;
 this PostgreSQL port neither fixes nor waives those shared native gates.

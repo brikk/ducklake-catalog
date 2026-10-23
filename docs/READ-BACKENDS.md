@@ -1,9 +1,10 @@
 # Final-1.1 read backend qualification
 
-**R06 is partially implemented in 0.13.0-SNAPSHOT.** The guarded read tier now
-covers three DuckDB-backed routes and a [narrow direct PostgreSQL subset](READ-POSTGRES-1.1.md).
-PostgreSQL's guarded stable-ID evolution tier is qualified; native MySQL acceptance
-is [blocked](READ-MYSQL-1.1-BLOCKERS.md), so R06 is not complete.
+**R06's owner-approved read scope is qualified in 0.13.0-SNAPSHOT.** The guarded
+tier covers three DuckDB-backed routes, [PostgreSQL evolution](READ-POSTGRES-1.1.md)
+and a narrower [existing-MySQL read-only subset](READ-MYSQL-1.1.md). Native MySQL
+creation/mutation/migration/scanner failures remain [deferred](READ-MYSQL-1.1-BLOCKERS.md),
+not fixed or waived. R07 acceptance/rollout remains separate.
 The maintained 0.4/1.0 lane and all 1.1 write/migration guards are unchanged.
 Qualification here uses Linux and the maintained locked artifacts, not a claim
 covering every platform or driver build.
@@ -14,7 +15,7 @@ covering every platform or driver build.
 | `jdbc:duckdb:/existing/metadata.db` | Existing local DuckDB file, **database-level READ_ONLY** | File must exist; no memory/protocol URL or catalog creation; coordinate native writers by closing readers |
 | `jdbc:duckdb:quack://host:port?metadata_catalog=name` | Native DuckDB/Quack client, **metadata-only READ_ONLY attachment** | Library never invokes DuckLake bootstrap/version selection/migration on reader open |
 | `jdbc:postgresql://…` | **Guarded stable-ID payload evolution; rich metadata/hierarchy** | STRUCT/LIST/MAP evolution, scalar defaults, native-allowed numeric and unzoned temporal promotions; explicit canonical-value/type boundaries; provenance uses `readBackendProfile()` |
-| `jdbc:mysql://…` | **Native acceptance blocked for final 1.1** | Opt-in construction fails before connecting; strict native migration and nested-storage gates fail on maintained artifacts |
+| `jdbc:mysql://…` | **Existing final-1.1 read-only subset** | Lossless native scalar forms, files, rich metadata/hierarchy; server-validated UTC/read-only REPEATABLE READ/InnoDB; no schema evolution, creation, upgrade or 1.1 writes |
 
 All qualified routes require `enableFinal11Reads=true` and an owned
 `readSession`. Existing records/constructors/fragment JSON remain unchanged. The
@@ -55,7 +56,7 @@ No independent RPC BEGIN or implicit retry/COMMIT behavior is introduced.
 ## Provenance is observed, not inferred
 
 The additive `readBackendProfile()` reports nullable portable observations on all
-four routes. PostgreSQL uses actual server/driver facts and explicit NULL for
+five routes. PostgreSQL/MySQL use actual server/driver facts and explicit NULL for
 DuckDB-only source/extension/unsigned fields. Its availability flags identify the
 limited projection tier plus available metadata/hierarchy data operations; see the PostgreSQL contract above. The existing
 DuckDB-only capability record below keeps its constructors and shape unchanged.
@@ -75,7 +76,7 @@ independently verify its published Maven Central SHA-256
 Quack still advertises driver `0.8.0`; its no-DuckDB-JDBC qualification stays separate.
 No dependency, corpus, extension or preview pin was upgraded.
 
-## Tested scope and remaining R06 work
+## Tested scope and deferred native work
 
 The shared three-route contract covers real native fresh/migrated catalogs, scalar
 initial defaults, nested STRUCT/LIST/MAP evolution, temporal text/nanoseconds/BCE,
@@ -91,10 +92,11 @@ local read-only final-state assertions, with the native file owner fully closed.
 Those local checks are not simultaneous RW/RO mirrors or alleged JVM Parquet scans.
 Original SQL/goldens/digests and maintained corpus exclusions are preserved.
 
-**Still required before R06 can be checked:** native MySQL migration/nested-storage
-fixes and an approved, pinned build, followed by its storage/projection/provenance
-port and full fresh/migrated/session/negative qualification. The PostgreSQL
-tier is qualified only under its explicit contract and shared R02–R04 boundaries. A URL
+**Owner-approved scope change:** MySQL existing-catalog reads are qualified
+independently from native creation, upgrades and writes. The latter need native
+fixes and an approved build before they can be reopened, not before the proven
+JDBC read subset can be used. The PostgreSQL/MySQL tiers retain their explicit
+contracts and shared R02–R04 canonical boundaries. A URL
 guard edit or a guessed DuckDB/extension/unsigned flag is not qualification. Any
 necessary model change follows the documented version/consumer coordination policy,
 not a compatibility veto or silent break. Neither SQL backend is newly certified by

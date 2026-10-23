@@ -116,7 +116,7 @@ tasks.named<Test>("test") {
 }
 tasks.register<Test>("final11MySqlNativeTest") {
     group = "verification"
-    description = "Strict MySQL final-1.1 native migration/nested acceptance; currently fails on the maintained build."
+    description = "Deferred MySQL final-1.1 native write/migration/type acceptance; distinct from qualified existing-catalog reads."
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath
     useJUnitPlatform()

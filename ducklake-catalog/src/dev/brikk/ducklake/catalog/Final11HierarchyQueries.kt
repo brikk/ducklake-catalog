@@ -132,7 +132,7 @@ internal class Final11HierarchyQueries(private val ctx: DSLContext, private val 
         val selectedPath = path.`as`("encoded_path")
         val relative = flag("q", "path_is_relative")
         spend(1)
-        if (ctx.fetchExists(ctx.selectOne().from(t).where(id.isNull.or(id.lt(0L)).or(rawPath.isNull).or(rawPath.eq(""))
+        if (ctx.fetchExists(ctx.selectOne().from(t).where(id.isNull.or(id.lt(0L)).or(rawPath.isNull).or(DSL.length(rawPath).eq(0))
                 .or(relative.isNull).or(DSL.length(rawPath).gt(Final11SchemaHierarchy.MAX_TEXT))).limit(1))) {
             corrupt("invalid scheduled path-reference identity/path/flag")
         }
@@ -244,12 +244,14 @@ internal class Final11HierarchyQueries(private val ctx: DSLContext, private val 
     private fun active(alias: String, snapshot: Long) = number(alias, "begin_snapshot").le(snapshot)
         .and(number(alias, "end_snapshot").isNull.or(number(alias, "end_snapshot").gt(snapshot)))
     private fun sameName(alias: String, column: String, name: String): Condition {
-        val folded = DSL.function("translate", SQLDataType.VARCHAR, DSL.field(DSL.name(alias, column)),
+        var folded = DSL.field(DSL.name(alias, column), String::class.java)
+        if (ctx.dialect().family() == SQLDialect.MYSQL) {
+            for (letter in 'A'..'Z') folded = DSL.replace(folded, DSL.`val`(letter.toString()), DSL.`val`(letter.lowercaseChar().toString()))
+        } else folded = DSL.function("translate", SQLDataType.VARCHAR, folded,
             DSL.`val`("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), DSL.`val`("abcdefghijklmnopqrstuvwxyz"))
         return encoded(folded).eq(encoded(DSL.`val`(key(name))))
     }
-    private fun encoded(value: Field<String>): Field<ByteArray> = DSL.field(
-        if (ctx.dialect().family() == SQLDialect.POSTGRES) "convert_to({0}, 'UTF8')" else "encode({0})", SQLDataType.VARBINARY, value)
+    private fun encoded(value: Field<String>): Field<ByteArray> = Final11SqlBackend.bytes(ctx, value)
     private fun spend(amount: Int) { work += amount; if (work > MAX_WORK) invalid("hierarchy lookup/traversal budget exceeded") }
 
     companion object { private const val MAX_WORK = 8192 }

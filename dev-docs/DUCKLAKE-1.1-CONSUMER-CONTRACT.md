@@ -216,6 +216,37 @@ or fabricated type/capability cannot replace those native gates. R06 needs an
 approved pinned native MySQL fix/build and subsequent complete backend qualification.
 See [reproducers and decision boundary](../docs/READ-MYSQL-1.1-BLOCKERS.md).
 
+### R06 owner-approved MySQL existing-catalog read scope
+
+The owner explicitly chose to qualify direct-JDBC reads of already-initialized
+MySQL 1.1 catalogs separately from native upgrades/writes. The initial proposed
+1.0-only read ceiling was not adopted. Legacy 0.4/1.0 remains supported; 1.1 now
+requires explicit opt-in and an owned, server-validated read-only REPEATABLE READ
+session. All 1.1 writes, creation and automatic migration remain disabled.
+
+The MySQL tier qualifies unchanged lossless scalar inline layouts, file metadata,
+raw rich metadata, bounded hierarchy/ownership and exact scheduled-reference
+cursors. TINYINT booleans/UUID TEXT/utf8mb4/InnoDB are validated, UTC is enforced and
+observed on the server, and FLOAT is transported through server-side DOUBLE before
+text-protocol display can lose bits. Missing/evolved schemas and lossy/unproven
+inline types reject, never silently become NULL or approximate values. Insert CDC
+uses native identities; a clearly labeled owned row-end fixture tests deletion
+materialization without claiming a passing native DELETE writer.
+
+`readBackendProfile()` adds `mysql-jdbc` / `mysql-existing-scalar-reads` observations
+and actual server/driver facts, with NULL DuckDB-only provenance. Metadata/hierarchy
+availability is not native scanner, producer, optimizer or worker-write negotiation.
+The old capability record still rejects SQL-server routes; record/constructor/JSON
+field shapes remain unchanged. Existing test-fixture no-arg construction is retained.
+
+Strict native MySQL fixture gates (6 failures) and pristine native gates (4 failures)
+remain separate, visible and deferred with zero skips. Their failures do not imply
+that correctly typed direct-JDBC reads are impossible, nor does read qualification
+waive them. They gate future native creation/migration/mutation/scanner support and
+the excluded inline types. See [read contract](../docs/READ-MYSQL-1.1.md) and
+[unchanged native failures](../docs/READ-MYSQL-1.1-BLOCKERS.md). Neither connector
+implementation nor coordinated rollout is performed here; R07 and writes stay open.
+
 ## Required semantics (metadata and hierarchy exposed; optimization still gated)
 
 | Metadata | Representation | Consumer obligation |

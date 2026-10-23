@@ -34,6 +34,7 @@ internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private 
         Final11ReadRoute.NATIVE_QUACK -> "jdbc:duckdb:quack://${server!!.getHost()}:${server.getMappedPort()}?metadata_catalog=r06_meta"
         Final11ReadRoute.JAVA_QUACK -> "jdbc:quack://${server!!.getHost()}:${server.getMappedPort()}"
         Final11ReadRoute.POSTGRES -> error("Use Final11PostgresFixture for PostgreSQL")
+        Final11ReadRoute.MYSQL -> error("Use Final11MySqlFixture for MySQL")
     }
     private fun q(value: String) = "'${value.replace("'", "''")}'"
 

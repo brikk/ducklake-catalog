@@ -1,0 +1,32 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package dev.brikk.ducklake.catalog
+
+import org.jooq.DSLContext
+import org.jooq.Field
+import org.jooq.SQLDialect
+import org.jooq.impl.DSL
+import org.jooq.impl.SQLDataType
+
+internal object Final11SqlBackend {
+    fun catalog(ctx: DSLContext): Field<String> = if (ctx.dialect().family() == SQLDialect.MYSQL) DSL.inline("def")
+        else DSL.field("current_database()", String::class.java)
+    fun schema(ctx: DSLContext): Field<String> = DSL.field(
+        if (ctx.dialect().family() == SQLDialect.MYSQL) "binary database()" else "current_schema()", String::class.java)
+    fun bytes(ctx: DSLContext, value: Field<String>): Field<ByteArray> = DSL.field(when (ctx.dialect().family()) {
+        SQLDialect.MYSQL -> "cast({0} as binary)"
+        SQLDialect.POSTGRES -> "convert_to({0}, 'UTF8')"
+        else -> "encode({0})"
+    }, SQLDataType.VARBINARY, value)
+}

@@ -35,7 +35,7 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
     fun hierarchy(): Final11HierarchyQueries = Final11HierarchyQueries(ctx, ::requireSnapshot)
 
     fun capabilities(): DucklakeReadMetadataCapabilities {
-        if (!route.duckDb) invalid("DuckDB-only capabilities cannot represent PostgreSQL provenance; use readBackendProfile")
+        if (!route.duckDb) invalid("DuckDB-only capabilities cannot represent this backend's provenance; use readBackendProfile")
         val version = ctx.fetch("SELECT library_version,source_id FROM pragma_version()").single()
         val extensions = ctx.fetch("SELECT extension_name,extension_version FROM duckdb_extensions() " +
             "WHERE loaded AND extension_name IN ('ducklake','quack')").associate { it.get(0, String::class.java) to it.get(1, String::class.java) }
@@ -162,22 +162,36 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
         fun observedLayout(ctx: DSLContext, route: Final11ReadRoute): List<DucklakeMetadataColumn> {
             val columns = DSL.table(DSL.sql("information_schema.columns")).`as`("c")
             fun field(name: String) = DSL.field(DSL.name("c", name), String::class.java)
+            val tableNames = if (route == Final11ReadRoute.MYSQL) {
+                DSL.field("binary {0}", String::class.java, field("table_name"))
+            } else field("table_name")
             val rows = ctx.select(DSL.substring(field("table_name"), 1, 129), DSL.substring(field("column_name"), 1, 129),
                 DSL.substring(field("data_type"), 1, 129)).from(columns)
-                .where(field("table_catalog").eq(DSL.field("current_database()", String::class.java)))
-                .and(field("table_schema").eq(DSL.field("current_schema()", String::class.java)))
-                .and(field("table_name").`in`(REQUIRED.keys)).limit(257)
+                .where(field("table_catalog").eq(Final11SqlBackend.catalog(ctx)))
+                .and(field("table_schema").eq(Final11SqlBackend.schema(ctx)))
+                .and(tableNames.`in`(REQUIRED.keys)).limit(257)
                 .fetch { DucklakeMetadataColumn(it.value1(), it.value2(), it.value3()) }
             if (rows.size > 256) invalidLayout("physical layout exceeds the column budget")
             if (rows.any { listOf(it.tableName, it.columnName, it.dataType).any { text -> text.length > 128 } }) {
                 invalidLayout("physical layout name/type exceeds the text budget")
             }
             REQUIRED.forEach { (table, fields) -> fields.forEach { (name, type) ->
-                if (rows.count { it.tableName == table && it.columnName == name && metadataType(it.dataType, route) == type } != 1)
+                if (rows.count { it.tableName == table && it.columnName == name && observedType(it, route) == type } != 1)
                     invalidLayout("missing or mismatched physical column $table.$name ($type)")
             } }
-            if (!route.duckDb) validatePostgresDimensions(ctx, columns)
+            if (route == Final11ReadRoute.POSTGRES) validatePostgresDimensions(ctx, columns)
+            if (route == Final11ReadRoute.MYSQL) Final11MySqlLayout.validate(ctx, REQUIRED)
             return rows.sortedWith(compareBy({ it.tableName }, { it.columnName }))
+        }
+
+        private fun observedType(column: DucklakeMetadataColumn, route: Final11ReadRoute): String {
+            if (route == Final11ReadRoute.MYSQL) return when {
+                column.columnName.endsWith("_uuid") && column.dataType == "text" -> "UUID"
+                column.dataType == "tinyint" -> "BOOLEAN"
+                column.dataType == "datetime" && column.columnName == "schedule_start" -> "TIMESTAMP WITH TIME ZONE"
+                else -> metadataType(column.dataType, route)
+            }
+            return metadataType(column.dataType, route)
         }
 
         private fun validatePostgresDimensions(ctx: DSLContext, columns: Table<*>) {
@@ -221,6 +235,8 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
                 "begin_snapshot" to "BIGINT", "end_snapshot" to "BIGINT", "table_name" to "VARCHAR", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN"),
             "ducklake_files_scheduled_for_deletion" to mapOf("data_file_id" to "BIGINT", "path" to "VARCHAR", "path_is_relative" to "BOOLEAN",
                 "schedule_start" to "TIMESTAMP WITH TIME ZONE"),
+            "ducklake_column" to mapOf("table_id" to "BIGINT", "column_id" to "BIGINT", "parent_column" to "BIGINT", "nulls_allowed" to "BOOLEAN",
+                "column_name" to "VARCHAR", "column_type" to "VARCHAR", "initial_default" to "VARCHAR", "default_value_type" to "VARCHAR"),
         )
     }
 }
