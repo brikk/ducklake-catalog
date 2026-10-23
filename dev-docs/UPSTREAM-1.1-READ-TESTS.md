@@ -360,6 +360,67 @@ direct-Java tests**, zero failed/errors/JUnit-skipped, and **17,602 corpus recor
 with unchanged 100 file/12 record exclusions. Lint, frozen ABI/wire and Java 17 checks
 pass. Existing strict R02–R04 native gates remain parked, not rerun or waived.
 
+## R06 PostgreSQL stable-ID evolution — guarded tier port
+
+`TestUpstreamFinal11PostgresEvolution` replays ten entire pristine files at the
+unchanged maintained revision. Original SQL/goldens/error cases remain intact;
+scratch values come only from direct PostgreSQL library reads and each mirror
+checks `postgres-jdbc` provenance and empty Parquet candidates.
+
+| Pristine corpus path | SHA-256 | Additional PG payload mirrors |
+|---|---|---:|
+| `alter/struct_evolution.test` | `6c9e5075d17af16efbef4db21dd26d3a4caf575611ec2b3a00aadb487053f327` | 7 |
+| `alter/struct_evolution_nested.test` | `7db784b1b7486ab79045d064b5165202ea214f88d7e4c72cfc786a944ca91faf` | 5 |
+| `alter/struct_in_list_evolution.test` | `83e2bb90f21799f146c90b6fd69d01db6699607f837351fceec7a43b860f593b` | 8 |
+| `alter/struct_in_map_evolution.test` | `07b6d711696c337921634961738db5afaadb7bb65a5fb7d43cc85a361c8c636b` | 5 |
+| `default/struct_field_default.test` | `f34029bb8a6d7b6cb795ff9f682028040a7307374d15b4b7b0a8a3e4d98eaecd` | 1 |
+| `alter/rename_struct_field_default.test` | `aae190bed94e2eaba07c61ced8b87242f273c4dcd0ee577c379b536c734e3a90` | 3 |
+| `alter/struct_evolution_reorder.test` | `3a742b719b404443b270e2d3b47f6b7b307d75fa9ac3358af1eed8846e71f7c2` | 3 |
+| `alter/promote_type.test` | `038cdb398891a93b054e48c4f6588bcf72a44efef2d417c749fb06e422a6ab09` | 1 |
+| `data_inlining/data_inlining_null_type.test` | `e55cfb413f0a3111b74f266598e76e2c2aefd5f19ab111c94d0f8cc9438945f5` | 4 |
+| `default/literal_default_rendering.test` | `f804d019c04643e7f9804218906e492e63e1fab5773fdf9174ac2cfcdafc03d2` | 5 |
+
+These **42 new mandatory mirrors** bring the total to **159 across the same 23
+unique pristine files**, plus the two separate drained-local final-state checks.
+Reorder/NULL fixtures retain their bounded pre-flush mirrors while original native
+post-flush goldens still run. Uncommitted/historical SQL is not falsely described
+as independent committed payload mirrors. The literal-default fixture retains its
+original New York/Tokyo query zones only in scratch SQL; timezone-dependent `dl.dt`
+promotion still runs natively but remains excluded from JVM capability claims.
+
+Independent native/JDBC tests cover raw target-text native casts, replaced same-named
+grandchildren, dropped-source corruption, NULL/empty containers, scalar MAP key
+domains, real 1.0→1.1 migration and concurrent publication/pinning. Pure tests bound
+output default expansion and raw text; preserve literal CAST-looking strings and
+binary/NaN/signed-zero/interval key identity; retain movement/zone/composite-key
+guards. A directed bit-level native matrix covers wide integer/decimal midpoints
+and extremes. Its implementation follows the maintained core, not older reference
+code: [DuckDB d54cbbe3df casts](https://github.com/duckdb/duckdb/blob/d54cbbe3df/src/common/operator/cast_operators.cpp).
+
+Final forced maintained verification passed **774 JUnit tests + 86 separate
+direct-Java tests**, zero failures/errors/JUnit skips, and **17,602 corpus records**
+with unchanged 100 file/12 record exclusions. Lint, frozen ABI/wire and Java 17 checks
+pass (7,786 classes, 17 artifacts). The public profile label advances to
+`postgres-stable-id-evolution` without changing records/constructors/JSON fields.
+
+### R06 strict MySQL native acceptance — NOT GREEN
+
+`:ducklake-catalog:final11MySqlNativeTest` is a separate strict acceptance task,
+not an expected-error test or part of the maintained green test count. On locked
+DuckLake `417a9117f5` / MySQL scanner `f7fc0d4271`, its final forced run is **2 tests,
+2 failures, 0 errors, 0 skips**: genuine 1.0→1.1 migration prepares an ambiguous
+default-restoration self-join UPDATE, and fresh native inline STRUCT commit fails
+because MySQL composite storage is unsupported. A separate passing scalar-layout
+probe does not qualify this backend or hide either failure.
+
+These are minimal owned native fixtures rather than fabricated pristine upstream
+MySQL goldens. No version retag, library-side SQL repair, substituted physical table
+or Parquet-only escape is used to claim native inline qualification. MySQL opt-in
+stays rejected. R06 cannot close without an approved pinned native fix/build and
+subsequent complete JVM backend qualification. See
+[exact repros](../docs/READ-MYSQL-1.1-BLOCKERS.md). Existing R02–R04 strict native
+failures remain separate, parked and not rerun or waived by this increment.
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are adopted as

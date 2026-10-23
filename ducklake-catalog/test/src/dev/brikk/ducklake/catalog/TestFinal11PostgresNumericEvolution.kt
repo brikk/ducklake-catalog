@@ -44,7 +44,7 @@ class TestFinal11PostgresNumericEvolution {
             f.native("DELETE FROM lake.t WHERE id=0")
             read(f) { c ->
                 val snapshot = c.currentSnapshotId
-                assertThat(c.readBackendProfile().inlineProjection).isEqualTo("postgres-same-shape-exact-numeric-widening")
+                assertThat(c.readBackendProfile().inlineProjection).isEqualTo("postgres-stable-id-evolution")
                 val expected = listOf(listOf(1, BigDecimal("0.0100")), listOf(2, null), listOf(3, BigDecimal("123456789.1234")))
                 assertThat(rows(c, "t", snapshot).sortedBy { it[0] as Int }).containsExactlyElementsOf(expected)
                 assertThat(rows(c, "t", snapshot, decoded = false).sortedBy { it[0] as Int }).containsExactlyElementsOf(expected)
@@ -160,7 +160,7 @@ class TestFinal11PostgresNumericEvolution {
     }
 
     @Test
-    fun nativeBooleanDecimalAndDecimalNarrowingErrorsArePreservedWhileApproximatePromotionsStayClosed() {
+    fun nativeBooleanDecimalAndDecimalNarrowingErrorsArePreservedWithNumericPromotions() {
         Final11PostgresFixture().use { f ->
             f.native("CREATE TABLE lake.b(v BOOLEAN); INSERT INTO lake.b VALUES(TRUE); " +
                 "CREATE TABLE lake.d(v DECIMAL(9,2)); INSERT INTO lake.d VALUES(1.23); " +
@@ -170,8 +170,7 @@ class TestFinal11PostgresNumericEvolution {
             assertThatThrownBy { f.native("ALTER TABLE lake.d ALTER v TYPE DECIMAL(9,1)") }
                 .isInstanceOf(java.sql.SQLException::class.java).hasMessageContaining("only widening")
             read(f) { c ->
-                assertThatThrownBy { rows(c, "t", c.currentSnapshotId) }
-                    .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("int32 to float32 is not yet qualified")
+                assertThat(rows(c, "t", c.currentSnapshotId)).containsExactly(listOf(16777216.0f))
             }
         }
     }

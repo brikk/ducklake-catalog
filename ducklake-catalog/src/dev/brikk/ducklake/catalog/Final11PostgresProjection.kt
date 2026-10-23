@@ -16,10 +16,8 @@ package dev.brikk.ducklake.catalog
 import org.jooq.DSLContext
 import org.jooq.Field
 import org.jooq.impl.DSL
-import java.math.BigInteger
-import java.math.BigDecimal
 
-/** Bounded PostgreSQL subset: unchanged nested shape, scalar initial defaults and exact root numeric widening. */
+/** Validate native physical storage, then evolve decoded values by stable field identity. */
 internal class Final11PostgresProjection(
     private val ctx: DSLContext, private val source: Final11InlineSchema, private val target: Final11InlineSchema,
 ) {
@@ -30,53 +28,29 @@ internal class Final11PostgresProjection(
         supportedType(destination.type)
         val origin = source.roots[id]
         if (origin == null && id in source.byId) invalid("field identity moved between parents")
-        val initial = if (origin == null) Final11InlineDefaults.value(ctx, destination) else null
-        val defaultValue = if (origin == null) Final11PostgresValues.decode(initial, destination.type) else null
-        if (origin != null) {
-            supportedType(origin.type)
-            requireShape(origin, destination)
-        }
+        if (origin != null) supportedType(origin.type)
+        val plan = Final11PostgresEvolution(ctx, source).plan(origin, destination)
         val storage = origin?.let { physical(ctx, table, it) }
         val field = if (origin == null) DSL.inline(null as Any?) else selectValue(origin, storage!!)
-        val values = Values(origin, destination, initial, defaultValue)
+        val values = Values(origin, destination, plan)
         return Final11InlineProjection.Projection(field, destination.type, Final11InlineTypes.requiresText(destination.type), values::apply)
     }
 
     private class Values(
         private val origin: Final11InlineSchema.Node?, private val destination: Final11InlineSchema.Node,
-        private val initial: String?, private val defaultValue: Any?,
+        private val plan: Final11PostgresEvolution.Plan,
     ) {
         fun apply(raw: Any?, decode: Boolean): Any? {
-            val value = if (origin == null) (if (defaultValue is ByteArray) defaultValue.copyOf() else defaultValue) else {
-                val old = Final11PostgresValues.decode(raw, origin.type)
-                if (origin.type.type == destination.type.type || old == null) old else convertNumeric(old, destination.type)
-            }
+            val old = origin?.let { Final11PostgresValues.decode(raw, it.type) }
+            val value = plan.apply(old)
             return when {
                 decode -> value
-                origin != null && origin.type.type == destination.type.type -> raw
-                Final11InlineTypes.requiresText(destination.type) -> initial
+                value == null -> null
+                plan.unchanged -> raw
+                destination.type.type in TEXT || Final11InlineTypes.requiresText(destination.type) -> Final11PostgresText().encode(value, destination.type)
                 else -> storageValue(value, destination.type)
             }
         }
-    }
-
-    private fun requireShape(origin: Final11InlineSchema.Node, destination: Final11InlineSchema.Node) {
-        val old = origin.type.type
-        val next = destination.type.type
-        Final11InlineTypes.requireConversion(old, next)
-        val unchanged = old == next || old == "null"
-        if (!unchanged && !exactNumeric(old, next)) invalid("scalar conversion $old to $next is not yet qualified")
-        if (origin.children.size != destination.children.size) invalid("nested schema evolution is not yet qualified")
-        origin.children.zip(destination.children).forEach { (a, b) ->
-            if (!sameNestedIdentity(a, b)) {
-                invalid("nested schema evolution is not yet qualified")
-            }
-        }
-    }
-
-    private fun sameNestedIdentity(a: Final11InlineSchema.Node, b: Final11InlineSchema.Node): Boolean {
-        if (a.column.columnId != b.column.columnId || a.column.columnName != b.column.columnName || a.type != b.type) return false
-        return a.children.size == b.children.size && a.children.zip(b.children).all { (left, right) -> sameNestedIdentity(left, right) }
     }
 
     private fun selectValue(origin: Final11InlineSchema.Node, storage: String): Field<*> {
@@ -118,7 +92,9 @@ internal class Final11PostgresProjection(
         Final11InlineTypes.validate(type)
         if (Final11InlineTypes.identifierKey(type.name).startsWith("_ducklake_")) invalid("reserved metadata payload name")
         fun visit(node: InlinedTypeNode) {
-            if (node.type == "map" && !mapKey(node.children[0].type)) invalid("MAP key type is not yet qualified on PostgreSQL")
+            if (node.type == "map" && node.children[0].type in setOf("struct", "list", "map")) {
+                invalid("composite MAP keys have no qualified Java equality contract")
+            }
             node.children.forEach(::visit)
         }
         visit(type)
@@ -127,7 +103,6 @@ internal class Final11PostgresProjection(
     companion object {
         private val TEXT = setOf("struct", "list", "map", "date", "time_ns", "timestamp", "timestamp_us", "timestamp_s", "timestamp_ms",
             "timestamp_ns", "timestamptz", "timestamptz_ns", "uint64", "int128", "uint128")
-        private val INTEGRAL = setOf("boolean", "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128")
         private fun storageType(type: String): String = when {
             type in TEXT -> "character varying"
             type in setOf("varchar", "blob", "json") -> "bytea"
@@ -141,25 +116,6 @@ internal class Final11PostgresProjection(
             type == "time" -> "time without time zone"
             type == "timetz" -> "time with time zone"
             else -> type
-        }
-        private fun integral(type: String) = type in INTEGRAL
-        private fun mapKey(type: String) = integral(type) || type in setOf("varchar", "uuid") || type.startsWith("decimal")
-        private fun exactNumeric(from: String, to: String): Boolean = when {
-            integral(from) && integral(to) -> true
-            to.startsWith("decimal") -> (integral(from) && from != "boolean") || from.startsWith("decimal")
-            else -> from == "float32" && to == "float64"
-        }
-        private fun convertNumeric(value: Any, target: InlinedTypeNode): Any? {
-            val numeric = when {
-                target.type == "float64" -> (value as Float).toDouble()
-                target.type.startsWith("decimal") -> when (value) {
-                    is BigDecimal -> value
-                    else -> BigDecimal(value.toString())
-                }
-                value is Boolean -> if (value) BigInteger.ONE else BigInteger.ZERO
-                else -> BigInteger(value.toString())
-            }
-            return Final11PostgresValues.decode(numeric, target)
         }
         private fun storageValue(value: Any?, type: InlinedTypeNode): Any? = when {
             value == null -> null

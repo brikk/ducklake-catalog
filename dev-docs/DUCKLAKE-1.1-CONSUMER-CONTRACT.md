@@ -188,6 +188,34 @@ or JSON fields change. This opt-in development-tier label is not writer/worker
 capability negotiation; both owned connector agents must adopt and qualify the
 scope explicitly. No plugin implementation or rollout is claimed.
 
+### R06 PostgreSQL stable-ID evolution and MySQL native blocker
+
+The guarded PostgreSQL payload tier now includes nested stable-ID evolution through
+STRUCT/LIST/MAP, scalar initial defaults, native-allowed numeric and unzoned temporal
+conversions, with source validation before projection and bounded output expansion.
+Same-named replacement IDs do not inherit old data. NULL parents remain NULL.
+Raw changed containers and temporals are canonical, bounded target-storage text;
+unchanged roots keep their native shape. Raw/decoded history and CDC keep original
+row/snapshot identity. Quoted CAST-looking strings are literal, never evaluated.
+
+Scalar MAP keys include binary/floating/temporal/interval values with native
+duplicate semantics. Composite keys remain rejected because Java collection
+equality is not the native contract. Shared unsupported values/defaults, implicit
+zones, narrowing and parented SQL-schema legacy guards stay closed. No source
+domain or output budget can be bypassed by requesting raw results.
+
+The descriptive profile label is now `postgres-stable-id-evolution`; existing
+records, constructors and JSON fields are unchanged. This is not writer/worker
+capability negotiation. Connector agents must explicitly adopt/qualify raw/decoded
+semantics and physical scans; no plugin implementation or rollout is claimed.
+
+MySQL remains rejected: the maintained native build fails genuine 1.0→1.1 migration
+and fresh inline STRUCT storage. The strict native task has **2 failures, 0 skips**,
+separate from maintained green verification. A library-side version retag, SQL repair
+or fabricated type/capability cannot replace those native gates. R06 needs an
+approved pinned native MySQL fix/build and subsequent complete backend qualification.
+See [reproducers and decision boundary](../docs/READ-MYSQL-1.1-BLOCKERS.md).
+
 ## Required semantics (metadata and hierarchy exposed; optimization still gated)
 
 | Metadata | Representation | Consumer obligation |

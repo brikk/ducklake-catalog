@@ -151,15 +151,15 @@ class TestFinal11PostgresReads {
     }
 
     @Test
-    fun unqualifiedNestedEvolutionIsRejectedRatherThanPassedToDuckdbSqlOrInventedAsNull() {
+    fun qualifiedNestedRenameUsesStableIdsRatherThanInventingNulls() {
         Final11PostgresFixture().use { f ->
             f.native("CREATE TABLE lake.t(s STRUCT(a INTEGER)); INSERT INTO lake.t VALUES({'a':1}); ALTER TABLE lake.t RENAME s.a TO renamed")
             val (tableId, schema) = f.inline("t")
             f.reader().use { c -> c.readSession(Supplier {
                 val snapshot = c.currentSnapshotId
                 assertThat(c.countInlinedRows(tableId, schema, snapshot)).isEqualTo(1)
-                assertThatThrownBy { c.readInlinedDataDecoded(tableId, schema, snapshot, c.getTableColumns(tableId, snapshot)) }
-                    .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("nested schema evolution")
+                assertThat(c.readInlinedDataDecoded(tableId, schema, snapshot, c.getTableColumns(tableId, snapshot)))
+                    .containsExactly(listOf(mapOf("renamed" to 1)))
             }) }
         }
     }

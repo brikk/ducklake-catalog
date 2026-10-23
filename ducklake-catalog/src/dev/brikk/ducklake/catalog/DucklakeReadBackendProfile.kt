@@ -57,6 +57,6 @@ internal class Final11BackendProfileQueries(private val ctx: DSLContext, private
         val snapshot = ctx.fetch("SELECT max(snapshot_id) FROM ducklake_snapshot").single().get(0, Long::class.javaObjectType)
             ?: throw DucklakeCatalogCorruptionException("Missing backend-profile snapshot")
         return DucklakeReadBackendProfile("1.1", snapshot, "postgresql", route.label, version, null, driver.first, driver.second,
-            null, null, null, "postgres-same-shape-exact-numeric-widening", true, true, false)
+            null, null, null, "postgres-stable-id-evolution", true, true, false)
     }
 }

@@ -45,9 +45,10 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   local DuckDB and native Quack as well as direct Java Quack. Test native physical
   layouts/type representations, owned-session consistency, fresh and migrated lakes,
   and explicit rejection of malformed/unknown layouts on each claimed route.
-  Partial increments qualify three DuckDB-backed routes and a narrower direct
-  PostgreSQL payload subset plus rich metadata/hierarchy. Broader PostgreSQL payload evolution and MySQL
-  remain open; this is implementation work, not an artifact wait or a shipping pass.
+  Three DuckDB-backed routes and the guarded direct PostgreSQL evolution/metadata/
+  hierarchy tier are qualified. MySQL is now blocked by reproducible native 1.0→1.1
+  migration and fresh nested-storage failures on the maintained artifacts; its guard
+  stays closed. See the final R06 evidence below. This is not a shipping pass.
 - [ ] **R07 — Read acceptance and rollout.** Run maintained/frozen ABI/wire controls,
   matching pristine full corpus, strict native gates and real native↔JVM fixtures:
   file/inline mixes, delete vectors, snapshot-tagged rows/deletes, history/CDC,
@@ -110,8 +111,8 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   reader increment is verified, with native interval persistence still failing**.
   The guarded R04 metadata increment is verified; its separate native gate remains
   failing. R05's explicit bounded hierarchy/path tier is verified; R06–R07 remain
-  queued, not implicitly certified. R06's DuckDB-family expansion is active; full
-   PostgreSQL payload evolution and MySQL qualification remain outstanding before R07 rollout.
+  queued, not implicitly certified. R06's guarded PostgreSQL port is qualified;
+  native MySQL acceptance and its JVM port remain blocked before R07 rollout.
   The owner will revisit R02 when the fixes are
   available in an installable, qualified DuckLake build; no automatic upgrade is implied.
 - [Upstream test adoption](UPSTREAM-1.1-READ-TESTS.md) records shipped full-file JVM
@@ -576,6 +577,62 @@ python3 dev-docs/probes/prepare_11_read_fixtures.py
   Writes, automatic-migration defaults, dependency/corpus/layout pins and legacy
   nested payload guards are unchanged. Parked native R02–R04 failures were not
   rerun or waived. No plugin implementation or rollout was performed.
+
+### R06 — guarded PostgreSQL evolution qualified; native MySQL acceptance blocked
+
+- Continues beyond the numeric checkpoint through the remaining PostgreSQL guarded
+  read tier: stable-ID STRUCT add/drop/rename/reorder/replacement, LIST/MAP role
+  identity, nested scalar defaults and source-domain-checked numeric/unzoned temporal
+  promotions. NULL parents/elements and empty containers survive. Same-named replaced
+  grandchildren take their new initial defaults; moved IDs and non-literal or
+  non-NULL whole-container defaults stay rejected. Legacy parented SQL-schema
+  payload/descriptor guards remain independent and unchanged.
+- Full source decoding precedes projection, including dropped leaves. Expanded
+  outputs have a 65,536-node budget and evolved raw text an additional 1 MiB bound.
+  Raw changed containers/temporals return canonical native-compatible target text,
+  independently tested through native casts, not source text mislabeled as evolved
+  values. Quoted CAST-looking strings remain literal data; only unquoted native
+  storage wrappers are unwrapped and none are executed as SQL.
+- Scalar MAP keys now include binary, floating, temporal and interval domains.
+  Native equality checks retain binary content, NaN/signed-zero and normalized
+  interval duplicate detection; source/evolved duplicates fail instead of collapse.
+  Composite MAP keys remain an explicit Java-equality representation boundary.
+- Approximate numeric casts follow locked core `d54cbbe3df`, not older reference
+  code: 128-bit integer double intermediates and correctly rounded nonzero-scale
+  decimal casts. A bit-level live native matrix covers midpoint/extreme cases plus
+  independent fixed expected values. Finite-overflow-to-infinity and target temporal
+  range overflow are explicit unsupported conversions. Implicit zones/narrowing and
+  native-rejected Boolean-to-DECIMAL/FLOAT/DOUBLE remain closed.
+- Actual native PostgreSQL 1.0→1.1 nested fixtures and concurrent publication verify
+  owned repeatable-read pinning/refresh. Raw/decoded history/CDC preserve original
+  row/begin/end identities. The descriptive profile label is now
+  `postgres-stable-id-evolution`; public records/constructors/JSON fields are intact.
+- Adds ten whole pristine shipped files requiring **42 additional PostgreSQL
+  payload mirrors** (33 nested/integer, 4 NULL, 5 literal/temporal). All original
+  native SQL, errors, scratch query zones and goldens execute unchanged; no alleged
+  post-flush JVM scans or uncommitted mirrors. Total transport mirrors: **159 across
+  the same 23 unique source files**, plus the two separate drained-local checks.
+- Native MySQL exploration records real fresh scalar BIGINT/INTEGER/TEXT/BLOB/DATE
+  storage and the already-installed signed scanner `f7fc0d4271`, without upgrading
+  existing artifacts. The reader guard stays closed. A separately reproducible
+  strict task, `:ducklake-catalog:final11MySqlNativeTest`, fails **2 tests, 0 skips**:
+  genuine 1.0→1.1 migration prepares an ambiguous default-restoration UPDATE, and
+  fresh native inline STRUCT commit is unsupported. No retagging, hand-authored
+  storage substitute or expected-error assertion turns those into passes.
+- Final forced maintained verification passes **774 JUnit tests** (628 catalog,
+  51 SLT, 95 replay), **86 separate driver-only Java Quack tests** and **17,602 corpus
+  records**, zero failures/errors/JUnit skips. Existing exclusions remain 100 files/
+  12 records. Lint, frozen Java/record/JSON and Java 17 checks pass (7,786 classes,
+  17 artifacts). The final run took 16m19s. The separate final MySQL native task is
+  explicitly **2 failures, 0 errors, 0 skips**. Logs:
+  `/tmp/opencode/catalog-r06-evolution-full-final.log` and
+  `/tmp/opencode/catalog-r06-mysql-strict-final.log`.
+- **R06 remains unchecked because of native MySQL acceptance**, not another voluntary
+  checkpoint stop. Its migration/nested contract must be fixed in an approved,
+  separately pinned native build before the MySQL reader/metadata/hierarchy port
+  can be qualified. No automatic upgrade, plugin rollout, 1.1 library writes or
+  migration-default change is made. Existing R02–R04 failures remain parked and
+  separate. [Exact repro/decision boundary](../docs/READ-MYSQL-1.1-BLOCKERS.md).
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

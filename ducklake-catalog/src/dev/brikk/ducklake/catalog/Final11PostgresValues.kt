@@ -28,6 +28,7 @@ import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.time.ZoneOffset
+import java.nio.ByteBuffer
 
 /** PostgreSQL's widened/text storage does not enforce the original DuckDB leaf domains. */
 internal object Final11PostgresValues {
@@ -60,14 +61,27 @@ internal object Final11PostgresValues {
                     node.children.associateTo(linkedMapOf()) { it.name to value(fields[it.name], it) }
                 }
                 "list" -> (input as List<*>).map { value(it, node.children.single()) }
-                "map" -> linkedMapOf<Any, Any?>().also { out -> (input as Map<*, *>).forEach { (key, item) ->
-                    val normalized = value(key, node.children[0]) ?: throw IllegalArgumentException("NULL MAP key")
-                    require(!out.containsKey(normalized)) { "duplicate normalized MAP key" }
-                    out[normalized] = value(item, node.children[1])
-                } }
+                "map" -> linkedMapOf<Any, Any?>().also { out ->
+                    val identities = hashSetOf<Any>()
+                    (input as Map<*, *>).forEach { (key, item) ->
+                        val normalized = value(key, node.children[0]) ?: throw IllegalArgumentException("NULL MAP key")
+                        require(identities.add(keyIdentity(normalized))) { "duplicate normalized MAP key" }
+                        out[normalized] = value(item, node.children[1])
+                    }
+                }
                 else -> scalar(input, node.type)
             }
         }
+    }
+
+    /** Native scalar equality: binary content, NaN/signed-zero and normalized INTERVAL comparisons. */
+    fun keyIdentity(key: Any): Any = when (key) {
+        is ByteArray -> ByteBuffer.wrap(key).asReadOnlyBuffer()
+        is Float -> if (key == 0.0f) 0.0f else key
+        is Double -> if (key == 0.0) 0.0 else key
+        is DucklakeInterval -> BigInteger.valueOf(key.months).multiply(BigInteger.valueOf(30))
+            .add(BigInteger.valueOf(key.days)).multiply(BigInteger.valueOf(86_400_000_000L)).add(BigInteger.valueOf(key.micros))
+        else -> key
     }
 
     private fun scalar(value: Any, type: String): Any {

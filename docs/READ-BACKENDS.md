@@ -2,7 +2,8 @@
 
 **R06 is partially implemented in 0.13.0-SNAPSHOT.** The guarded read tier now
 covers three DuckDB-backed routes and a [narrow direct PostgreSQL subset](READ-POSTGRES-1.1.md).
-Broader PostgreSQL features and MySQL remain unqualified; R06 is not complete.
+PostgreSQL's guarded stable-ID evolution tier is qualified; native MySQL acceptance
+is [blocked](READ-MYSQL-1.1-BLOCKERS.md), so R06 is not complete.
 The maintained 0.4/1.0 lane and all 1.1 write/migration guards are unchanged.
 Qualification here uses Linux and the maintained locked artifacts, not a claim
 covering every platform or driver build.
@@ -12,8 +13,8 @@ covering every platform or driver build.
 | `jdbc:quack://host:port` | Direct Java Quack, metadata SQL on the remote DuckDB | Java driver 0.8.0; no DuckDB JDBC required in the reading JVM |
 | `jdbc:duckdb:/existing/metadata.db` | Existing local DuckDB file, **database-level READ_ONLY** | File must exist; no memory/protocol URL or catalog creation; coordinate native writers by closing readers |
 | `jdbc:duckdb:quack://host:port?metadata_catalog=name` | Native DuckDB/Quack client, **metadata-only READ_ONLY attachment** | Library never invokes DuckLake bootstrap/version selection/migration on reader open |
-| `jdbc:postgresql://…` | **Limited direct-JDBC payloads; rich metadata/hierarchy** | Same nested shape, scalar defaults and exact root numeric widening (integer/decimal/FLOAT-to-DOUBLE); broader payload evolution still rejected; provenance uses `readBackendProfile()` |
-| `jdbc:mysql://…` | **Not qualified for final 1.1** | Opt-in construction fails before connecting; physical-storage/projection/provenance work remains |
+| `jdbc:postgresql://…` | **Guarded stable-ID payload evolution; rich metadata/hierarchy** | STRUCT/LIST/MAP evolution, scalar defaults, native-allowed numeric and unzoned temporal promotions; explicit canonical-value/type boundaries; provenance uses `readBackendProfile()` |
+| `jdbc:mysql://…` | **Native acceptance blocked for final 1.1** | Opt-in construction fails before connecting; strict native migration and nested-storage gates fail on maintained artifacts |
 
 All qualified routes require `enableFinal11Reads=true` and an owned
 `readSession`. Existing records/constructors/fragment JSON remain unchanged. The
@@ -90,10 +91,10 @@ local read-only final-state assertions, with the native file owner fully closed.
 Those local checks are not simultaneous RW/RO mirrors or alleged JVM Parquet scans.
 Original SQL/goldens/digests and maintained corpus exclusions are preserved.
 
-**Still required before R06 can be checked:** broader PostgreSQL schema/type
-evolution, MySQL storage/projection/provenance and
-full fresh/migrated/session/negative tests for every further claimed scope. The
-current PostgreSQL subset is qualified only under its explicit contract. A URL
+**Still required before R06 can be checked:** native MySQL migration/nested-storage
+fixes and an approved, pinned build, followed by its storage/projection/provenance
+port and full fresh/migrated/session/negative qualification. The PostgreSQL
+tier is qualified only under its explicit contract and shared R02–R04 boundaries. A URL
 guard edit or a guessed DuckDB/extension/unsigned flag is not qualification. Any
 necessary model change follows the documented version/consumer coordination policy,
 not a compatibility veto or silent break. Neither SQL backend is newly certified by

@@ -27,18 +27,20 @@ No session-zone-dependent promotion or arbitrary default SQL is evaluated.
 
 ## Qualified projections
 
-- Stored values whose nested schema shape and **every nested field ID** are
-  unchanged. STRUCT text is decoded by names, never physical positions; LIST/MAP,
-  NULL parents/elements, empty containers, nested dates/BLOB/JSON and literal NULL
-  strings remain distinct. MAP keys are currently Boolean, integer, VARCHAR, UUID
-  or DECIMAL; other key families are explicitly unqualified.
-- Top-level column add/drop/reorder/rename by stable IDs, qualified scalar initial
-  defaults and exact root numeric widening under the existing native
-  conversion allowlist: Boolean/integer widening, integer-to-DECIMAL, DECIMAL
-  precision/scale widening without losing integral capacity, and FLOAT-to-DOUBLE.
-  Boolean-to-DECIMAL remains rejected by the native build and reader. A stored NULL
-  is not replaced by a default. Same-named
-  replacement columns do not inherit old values.
+- Top-level and nested STRUCT add/drop/rename/reorder/replacement by stable IDs,
+  including STRUCTs inside LIST/MAP. Source text is decoded by names, never physical
+  positions. Replaced same-named grandchildren use their own initial defaults, not
+  old values; moved parent/element IDs fail. NULL parents/elements stay NULL and
+  empty containers stay empty. Scalar initial defaults never replace stored NULL.
+- Native-allowed numeric widening, exact DECIMAL scale/precision extension and
+  approximate integer/decimal-to-FLOAT/DOUBLE conversions under the guarded native
+  allowlist, at roots and nested leaves. DATE-to-unzoned-TIMESTAMP and increasing
+  unzoned timestamp precision are qualified without a session-zone dependency.
+  Boolean-to-DECIMAL/FLOAT/DOUBLE remains native-rejected and reader-rejected.
+- Scalar MAP keys, including BLOB, floating, temporal and INTERVAL values. Duplicate
+  detection uses native scalar equality for binary content, signed zero/NaNs and
+  normalized INTERVAL comparisons. BLOB keys retain ByteArray values; callers need
+  content-aware byte lookup/comparison rather than Java array identity.
 - Historical snapshots and raw/decoded CDC using their intended target columns and
   original row/begin/end identity. Requested columns are re-resolved from catalog
   metadata, not caller-supplied names/types/defaults.
@@ -48,21 +50,22 @@ No session-zone-dependent promotion or arbitrary default SQL is evaluated.
   `fileOrder=0` adapter remains only a reserved/unused legacy placeholder—native
   DuckLake writes SQL NULL there; it is not a qualified physical ordering fact.
 
-**Still rejected:** nested field add/drop/rename/reorder/type/ID replacement,
-other scalar promotions (including integer/decimal-to-float, narrowing, date/timestamp changes),
+**Still rejected:** narrowing, arbitrary text casts, implicit timezone-dependent
+promotions, container-kind changes, moved LIST/MAP role IDs, composite MAP keys,
 whole-container non-NULL initial defaults, VARIANT/other unqualified types, temporal
 infinities and TIME 24:00. Floating NaN/infinities and signed zero remain supported;
 their exact FLOAT-to-DOUBLE conversion does not certify temporal infinities.
 Raw reads cannot bypass value guards. Even a missing
 column with a NULL initial default does not certify an unsupported type.
 
-Any nested-schema history remains rejected by ordinary payload/descriptor APIs.
+Any parented SQL-schema history remains rejected by ordinary payload/descriptor APIs
+(this is separate from supported nested STRUCT column evolution).
 The explicit `readMetadata()` data operations and `readHierarchy()` companion now
 support PostgreSQL without relaxing those legacy guards. The old
 `getReadMetadataCapabilities()` record is **DuckDB-only** and still fails explicitly
 on PostgreSQL; use `readBackendProfile()` for nullable provenance/availability.
 
-### Exact root numeric evolution
+### Source validation, conversions and raw evolved values
 
 Source values are decoded and domain-checked before widening. DECIMAL conversion
 uses exact scale extension, not rounding or approximate binary intermediates; raw
@@ -72,11 +75,29 @@ the stored binary float to `Double`, not its short decimal display: stored FLOAT
 interpreted under the target schema instead, matching native default semantics.
 Stored NULL never becomes a default. Raw reads and CDC use the same validation and
 preserve original row/begin/end snapshot identity. Native 1.0→1.1 fixtures and pinned
-publication tests qualify this subset; nested numeric changes are still rejected.
+publication tests qualify nested evolution too. Dropped source fields are still
+validated before projection, so discarding them cannot conceal corrupt storage.
+
+Approximate numeric conversions follow the maintained core's cast order, including
+wide-integer double intermediates and correctly rounded nonzero-scale decimal
+conversion. Bit-level native comparisons exercise precision midpoints and extremes;
+finite overflow to floating infinity is explicitly unsupported, not silently
+accepted. Legitimate source values outside a target timestamp domain fail as
+unsupported conversions, not fabricated NULLs or source corruption.
+
+Unchanged raw roots retain their physical storage shape. Changed STRUCT/LIST/MAP
+and temporal roots return bounded, canonical native-compatible target text, not
+unchanged source text or decoded Java maps. Independent native casts verify that
+text. Quoted strings resembling `CAST(...)` remain literal data; only unquoted
+native storage wrappers are decoded, never executed. Expanded values are limited
+to 65,536 nodes; raw evolved text additionally has a 1 MiB character bound.
+Non-NULL whole-container defaults and composite MAP keys remain explicit canonical
+representation boundaries, not guessed support. Native MAP equality can differ
+from Java collection equality, so composite keys are not silently collapsed.
 
 The backend profile's descriptive `inlineProjection` label is now
-`postgres-same-shape-exact-numeric-widening` (previously
-`postgres-same-shape-integer-widening`). Record components/constructors/JSON fields
+`postgres-stable-id-evolution` (previously the same-shape numeric tier).
+Record components/constructors/JSON fields
 are unchanged. This is an expanded opt-in read-tier observation, not writer or
 mixed-worker capability negotiation; consumers must adopt the documented subset.
 
@@ -162,5 +183,6 @@ upgraded. Native probes and JDBC reader assertions are separate; genuine native
 
 See [backend status](READ-BACKENDS.md), [support/evidence](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md)
 and [pristine upstream adoption](../dev-docs/UPSTREAM-1.1-READ-TESTS.md). Remaining R06
-work includes broader PostgreSQL payload evolution and MySQL, followed
-by R07 acceptance. Existing R02–R04 native failures remain parked and distinct.
+is now blocked on [native MySQL acceptance](READ-MYSQL-1.1-BLOCKERS.md), followed
+by R07 acceptance. Existing R02–R04 native failures remain parked and distinct;
+this PostgreSQL port neither fixes nor waives those shared native gates.

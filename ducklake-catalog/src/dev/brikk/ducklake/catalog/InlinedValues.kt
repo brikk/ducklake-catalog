@@ -383,7 +383,7 @@ object InlinedValues {
                 "list" -> parseList(type)
                 "struct" -> parseStruct(type)
                 "map" -> parseMap(type)
-                else -> decodeNonNull(unwrapCastLiteral(readScalarToken()), type, strict)
+                else -> readLeaf(type)
             }
         }
 
@@ -396,6 +396,13 @@ object InlinedValues {
         private fun unwrapCastLiteral(token: String): String {
             val m = CAST_LITERAL.matchEntire(token) ?: return token
             return m.groupValues[1].replace("''", "'")
+        }
+
+        private fun readLeaf(type: InlinedTypeNode, key: Boolean = false): Any {
+            skipWs()
+            val quoted = peek() == '\''
+            val token = readScalarToken(stopAtEquals = key)
+            return decodeNonNull(if (quoted) token else unwrapCastLiteral(token), type, strict)
         }
 
         private fun parseList(type: InlinedTypeNode): List<Any?> {
@@ -460,7 +467,7 @@ object InlinedValues {
                 val nullKey = peekBareNull() || text.startsWith("NULL=", pos)
                 if (strict && nullKey) throw IllegalArgumentException("NULL MAP key")
                 val key = if (type.children[0].type in setOf("struct", "list", "map")) parseValue(type.children[0])
-                else decodeNonNull(readScalarToken(stopAtEquals = true), type.children[0], strict)
+                else readLeaf(type.children[0], key = true)
                 if (strict && out.containsKey(key)) throw IllegalArgumentException("duplicate MAP key")
                 skipWs()
                 expect('=')

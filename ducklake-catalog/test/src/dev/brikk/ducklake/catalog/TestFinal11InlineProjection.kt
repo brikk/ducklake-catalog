@@ -17,6 +17,8 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.jooq.impl.DSL
 import org.jooq.SQLDialect
+import org.jooq.tools.jdbc.MockConnection
+import org.jooq.tools.jdbc.MockResult
 import org.junit.jupiter.api.Test
 
 class TestFinal11InlineProjection {
@@ -37,14 +39,21 @@ class TestFinal11InlineProjection {
     fun postgresNeverReusesAReplacedGrandchildWhoseNameAndTypeMatch() {
         val before = listOf(column(1, "s", "struct"), column(2, "nested", "struct", 1), column(3, "v", "int32", 2))
         val after = listOf(column(1, "s", "struct"), column(2, "nested", "struct", 1), column(4, "v", "int32", 2, "42"))
-        assertThatThrownBy { Final11PostgresProjection(DSL.using(SQLDialect.POSTGRES), Final11InlineSchema(before),
-            Final11InlineSchema(after)).plan("t", listOf(1)) }
-            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("nested schema evolution")
+        val ctx = DSL.using(MockConnection {
+            val field = DSL.field("default_value_type", String::class.java)
+            val result = DSL.using(SQLDialect.POSTGRES).newResult(field)
+            result.add(DSL.using(SQLDialect.POSTGRES).newRecord(field).value1("literal"))
+            arrayOf(MockResult(1, result))
+        }, SQLDialect.POSTGRES)
+        val source = Final11InlineSchema(before)
+        val target = Final11InlineSchema(after)
+        val plan = Final11PostgresEvolution(ctx, source).plan(source.roots[1], target.roots.getValue(1))
+        assertThat(plan.apply(mapOf("nested" to mapOf("v" to 7)))).isEqualTo(mapOf("nested" to mapOf("v" to 42)))
     }
 
     @Test
-    fun postgresExactNumericScopeRejectsRoundingNarrowingAndNestedConversionsBeforePayloadSql() {
-        for ((from, to) in listOf("boolean" to "decimal(5,4)", "int32" to "float64", "decimal(9,2)" to "float64",
+    fun postgresNumericScopeRejectsNarrowingBeforePayloadSql() {
+        for ((from, to) in listOf("boolean" to "decimal(5,4)",
             "float64" to "float32", "decimal(9,2)" to "decimal(9,3)", "decimal(9,2)" to "decimal(10,1)",
             "int64" to "decimal(20,2)", "uint64" to "decimal(21,2)")) {
             assertThatThrownBy { Final11PostgresProjection(DSL.using(SQLDialect.POSTGRES),
@@ -53,9 +62,10 @@ class TestFinal11InlineProjection {
         }
         val before = listOf(column(1, "s", "struct"), column(2, "v", "float32", 1))
         val after = listOf(column(1, "s", "struct"), column(2, "v", "float64", 1))
-        assertThatThrownBy { Final11PostgresProjection(DSL.using(SQLDialect.POSTGRES), Final11InlineSchema(before),
-            Final11InlineSchema(after)).plan("t", listOf(1)) }
-            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("nested schema evolution")
+        val source = Final11InlineSchema(before)
+        val target = Final11InlineSchema(after)
+        val plan = Final11PostgresEvolution(DSL.using(SQLDialect.POSTGRES), source).plan(source.roots[1], target.roots.getValue(1))
+        assertThat(plan.apply(mapOf("v" to 0.1f))).isEqualTo(mapOf("v" to 0.10000000149011612))
     }
 
     @Test
