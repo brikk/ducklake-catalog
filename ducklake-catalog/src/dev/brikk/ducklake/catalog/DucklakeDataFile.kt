@@ -73,7 +73,9 @@ data class DucklakeDataFile(
      * rows. The correct rule: when the delete file has the column, keep only positions with
      * `_ducklake_internal_snapshot_id <= S`; when it doesn't (2-column file), apply all positions.
      * `begin_snapshot <= S` (already guaranteed by [DucklakeCatalog.getDataFiles]) is the only
-     * catalog-level gate.
+     * catalog-level gate. These column rules describe Parquet. Puffin may be a bare single
+     * vector or a container of cumulative vectors tagged with `ducklake-snapshot-id`; select
+     * the applicable blob for S. NULL partial_max never proves that a Puffin file is single-snapshot.
      */
     val deleteFilePartialMax: Long? = null,
 ) {

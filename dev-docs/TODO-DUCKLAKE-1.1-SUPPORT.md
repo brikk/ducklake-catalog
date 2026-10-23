@@ -58,6 +58,9 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   propagation and bounded planning. Update public scope and consumer handoff; only
   enable claimed cases after their gates pass. Connector agents qualify their own
   Parquet scans, CDC and coordinator/worker behavior.
+  In-repository library acceptance/hardening and the handoff are verified below;
+  R07 remains open for external consumer/rollout evidence and broader native release
+  approval. Strict native failures are recorded, not skipped or waived.
 
 ## Deferred native MySQL work — outside the approved R06 read-only scope
 
@@ -711,6 +714,52 @@ blanket native-MySQL prerequisite, without waiving any native failure.
   is added only to corpus test runtime. No connector changes, scan/cleanup lease,
   default-on read release or R07 rollout is performed. Shared R02–R04 failures remain
   separately parked. [Exact read contract](../docs/READ-MYSQL-1.1.md).
+
+### R07 — guarded library acceptance complete; external rollout approval pending
+
+- Adds **42 passing native/JDBC acceptance cases**: six common cases across all
+  five routes (mixed file/inline plans, Puffin vector descriptors, geometry file
+  metadata, caller abort/rollback, query failure propagation and bounded companion
+  planning), plus three native lineage cases across local DuckDB, both Quack routes
+  and PostgreSQL. MySQL's native mutation/flush cases remain deferred M01, not
+  silently skipped. Native physical inspection is an independent test oracle,
+  never advertised as a JVM/connector Parquet or geometry scan.
+- Real tagged Parquet deletes retain multiple deletion snapshots despite NULL
+  partial_max; later-window candidates retain current=previous paths. Native merge
+  output spans distinct source snapshots/file-ID ranges separated by a real inline
+  gap, retaining embedded absolute IDs/source tags and nullable rowIdStart at
+  current/historical metadata views. Snapshot filtering remains consumer work.
+- Real Puffin acceptance distinguishes a single bare deletion-vector-v1 blob
+  (bounded length/magic/CRC check) from PFA1 containers with cumulative, snapshot-
+  tagged blobs. Same current/previous paths do not blindly self-cancel container
+  changes. Format recognition is not proof of a downstream decoder.
+- Hardens opt-in final-1.1 `getLiveRowCount`: historical file-backed counts require
+  a scan; unknown active delete counts cannot become zero; negative net counts
+  fail as corruption instead of clamp to zero. Historical merged files can include
+  later rows and delete files later deletions, so totals can overcount OR undercount.
+  Latest known-count and inline-only historical paths remain. Public record/Java/
+  JSON shapes and old 0.4/1.0 behavior are unchanged; the 0.13.0 opt-in narrowing is
+  documented for consumers.
+- Final forced maintained verification passes **839 JUnit tests** (690 catalog,
+  51 SLT, 98 replay), **86 separate driver-only direct-Java tests** and **17,602 corpus
+  records**, zero failures/errors/JUnit skips. Existing exclusions stay 100 files/
+  12 records, and the 165 mirrors/25 pristine inputs plus two drained-local checks
+  remain intact. Lint, frozen ABI/record/JSON and Java 17 checks pass (7,795 classes,
+  17 artifacts). The completed run took 21m25s; an earlier externally stopped
+  Gradle run is not counted. The rerun isolated its daemon registry without
+  changing toolchain/artifacts.
+- Strict native tasks were rerun on the final code: **R02 3 failures, R03 1 failure,
+  R04 1 failure**, plus deferred MySQL **6 + 4 failures**, all zero errors/skips.
+  Existing original SQL/goldens/crash isolation are preserved, not waived or
+  treated as present fixes based on source merges. No dependency/corpus/layout
+  repin, default-on reads, 1.1 writes, automatic migration or deployment is enabled.
+- **R07 remains unchecked as a whole.** Its library work and handoff are done;
+  downstream scan/CDC/worker/cancellation/lease evidence and any production/broader
+  native approval have not been supplied. Neither owned plugin was changed or
+  certified. This is an explicit external gate, not a voluntary incremental stop.
+  [Decision, exact commands, matrix and consumer checklist](FINAL-1.1-R07-READ-ACCEPTANCE.md).
+  Logs: `/tmp/opencode/catalog-r07-full-acceptance-final.log` and
+  `/tmp/opencode/catalog-r07-strict-native-final.log`.
 
 See [consumer compatibility contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md),
 [acceptance gates](DUCKLAKE-1.1-ACCEPTANCE.md) and [agent guide](AGENT-GUIDE.md).

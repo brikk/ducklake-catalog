@@ -1,5 +1,11 @@
 # First final-1.1 read tier — October 20
 
+**R07 acceptance audit, October 23:** 42 new five-/four-route native/JDBC scenarios
+and the final forced maintained suite pass, including count-safety hardening.
+Strict native tasks retain their explicit failures; production/default-on and
+connector rollout are not approved. R07's library work/handoff is complete, while
+its external rollout checkbox stays open. [Decision/report](FINAL-1.1-R07-READ-ACCEPTANCE.md).
+
 **R06 read-scope decision, October 23:** existing MySQL 1.1 catalogs now have a
 qualified direct-JDBC read-only subset, independently from native upgrades/writes.
 Lossless scalar forms, files, raw metadata and bounded hierarchy are covered;

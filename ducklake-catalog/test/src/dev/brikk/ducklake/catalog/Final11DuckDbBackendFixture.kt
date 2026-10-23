@@ -39,7 +39,11 @@ internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private 
     private fun q(value: String) = "'${value.replace("'", "''")}'"
 
     fun native(sql: String) {
-        DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
+        nativeRows(sql)
+    }
+
+    fun nativeRows(sql: String): List<List<String?>> {
+        return DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
             // DuckDB's JDBC metadata reports "1.0"; qualify the published artifact independently.
             requirePinnedJdbc()
             s.execute("INSTALL ducklake; LOAD ducklake")
@@ -65,9 +69,12 @@ internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private 
             val version = if (!initialized && migrate) "1.0" else "1.1"
             s.execute("ATTACH ${q("ducklake:$target")} AS lake(DATA_PATH ${q(data.toString())},METADATA_CATALOG 'meta'," +
                 "DUCKLAKE_VERSION '$version',AUTOMATIC_MIGRATION ${if (initialized && migrate) "TRUE" else "FALSE"})")
-            s.execute(sql)
+            val rows = if (s.execute(sql)) s.resultSet.use { r -> buildList {
+                while (r.next()) add((1..r.metaData.columnCount).map { r.getString(it) })
+            } } else emptyList()
             s.execute("DETACH lake")
             initialized = true
+            rows
         } }
     }
 

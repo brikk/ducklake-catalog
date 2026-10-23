@@ -128,9 +128,10 @@ interface DucklakeCatalog : AutoCloseable {
 
     /**
      * True only if the table has an active DELETE file at [snapshotId] in a format the reader cannot
-     * snapshot-filter (anything other than PARQUET, whose `_ducklake_internal_snapshot_id` column is
-     * filtered per position, or PUFFIN deletion vectors, which upstream always writes whole at their
-     * `begin_snapshot` — no per-position snapshot exists, so nothing to filter). Such a file may hold
+     * snapshot-filter (anything other than PARQUET or PUFFIN). Parquet tags are filtered per position;
+     * Puffin may be a bare single vector OR a container of snapshot-tagged cumulative vectors, which
+     * requires selecting the applicable blob by `ducklake-snapshot-id`. Format recognition alone
+     * does not certify a connector's implementation. Such a file may hold
      * deletions recorded after [snapshotId] that the reader would wrongly apply. This is NOT gated on
      * `partial_max` — upstream leaves it NULL on multi-snapshot delete files written by
      * `flush_inlined_data`, so its absence proves nothing (see
@@ -277,10 +278,11 @@ interface DucklakeCatalog : AutoCloseable {
      * `GetNetDataFileRowCount` + `GetNetInlinedRowCount` do: Σ `record_count` of the active data
      * files − Σ `delete_count` of their active delete files − inlined file deletions on them + live
      * inlined rows. Exact at the latest snapshot; this is what an engine should report as the table's
-     * row count (not [DucklakeTableStats.recordCount]). For TIME TRAVEL through a snapshot-tagged
-     * (consolidated) delete file it is a lower bound: `delete_count` is the file's total, part of
-     * which may postdate [snapshotId] — the same metadata-only limitation upstream has; a scan gives
-     * the exact number.
+     * row count (not [DucklakeTableStats.recordCount]) when its counts are known. Historical physical
+     * files may include later rows or deletes, so metadata totals can overcount OR undercount;
+     * they are not a guaranteed bound. The opt-in final-1.1 reader explicitly rejects historical
+     * file-backed counts and unknown delete counts: a snapshot-aware scan is required. Legacy
+     * format behavior is unchanged; inline-only historical counts can still be computed directly.
      */
     fun getLiveRowCount(tableId: Long, snapshotId: Long): Long
 

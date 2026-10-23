@@ -488,6 +488,26 @@ is added to corpus test runtime at its existing pinned version, not upgraded.
 R06 closes only for the owner-approved read scope; R07, all writes and shared
 R02–R04 native failures remain independent. [Contract](../docs/READ-MYSQL-1.1.md).
 
+## R07 guarded acceptance audit
+
+No corpus input/golden, revision, digest or exclusion changes. Final forced
+maintained verification passes **839 JUnit tests + 86 separate driver-only tests**,
+zero failures/errors/JUnit skips, and **17,602 corpus records** with unchanged 100
+file/12 record exclusions. The 165 mandatory transport mirrors across 25 pristine
+files and two separate drained-local checks remain intact.
+
+Forty-two newly authored native/JDBC acceptance cases add mixed-storage, real bare/
+container Puffin, Parquet snapshot-tagged deletes, embedded merge lineage, geometry
+file metadata, SQL/caller failure recovery and bounded companion-planning coverage.
+They are test-owned scenarios, not described as pristine upstream mirrors. Physical
+Parquet/Puffin inspection is an independent native/byte oracle, not a connector scan.
+
+R07 also reruns all strict native gates on the final unchanged artifacts: **R02 3,
+R03 1, R04 1, native MySQL fixtures 6 and pristine native MySQL files 4 failures**;
+all have zero errors/skips. Known failures retain original expectations and isolated
+crash workers. JVM passing assertions or source merges do not convert them into
+native passes. [Full decision and consumer rollout gates](FINAL-1.1-R07-READ-ACCEPTANCE.md).
+
 ## Newer upstream regressions — strict native failures, not shipping passes
 
 These are **new after the shipped extension**. The first three are adopted as

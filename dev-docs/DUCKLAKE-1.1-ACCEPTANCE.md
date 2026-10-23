@@ -1,12 +1,13 @@
 # Migration, rollback and RC acceptance runbook
 
-**Limited read tier, not full support.** [Opt-in final-1.1 reads](../docs/READING-1.1.md)
-are qualified on the official 2.0 direct-Java peer. The [shipping upgrade](UPGRADE-DUCKDB-2.0.0.md)
-qualifies JDBC/local/native-Quack/Java-Quack 1.0 access and native migration rehearsals.
-The additive [rich metadata companion](../docs/READ-METADATA.md) exposes raw R04
-metadata, not qualified hierarchy/pruning/aggregate interpretation. The newer R04
-migration native gate still fails; other 1.1 backends and all 1.1 writes remain gated below.
-The preview results further down are historical; dates do not replace artifact verification.
+**Current R07 decision:** [guarded library acceptance passes](FINAL-1.1-R07-READ-ACCEPTANCE.md)
+on the five declared read routes, including existing-MySQL read-only scope. Full
+native parity, production/default-on release and downstream rollout are not approved.
+R02/R03/R04 native tasks still fail 3/1/1 cases; deferred native MySQL tasks fail
+6/4 cases, all with zero skips. No failure is waived. All 1.1 writes and automatic
+migration remain disabled. The preview rehearsals below are historical, not current
+shipping or connector certification. Exact commands, counts, new safety boundaries
+and the per-consumer handoff are in the R07 report linked above.
 
 ## Before touching a real catalog
 
@@ -48,6 +49,10 @@ The preview results further down are historical; dates do not replace artifact v
 The JVM migration tests change/rename **synthetic metadata** to exercise guards and
 layout reads. They are not an actual 1.1 migration. Native probes use separate old
 and candidate processes and disposable copies; they are not JVM qualification.
+
+The later R01–R07 fixtures additionally perform real native 1.0→1.1 migration on
+the routes where that is claimed; they do not replace it with retagging. MySQL
+existing-catalog reads deliberately do not claim a passing upgrade or native writer.
 
 ## Run the native rehearsal
 
@@ -99,6 +104,11 @@ DuckDB JDBC and the conservative final-1.1 read tier. This closes the tested art
 gates, not richer 1.1 metadata, other 1.1 backends, connector or general failure-recovery gates.
 
 ## Go/no-go at T−3/T−4
+
+The current outcome is **pass for the guarded library tier, no production rollout
+approval**. Keep R07's broad rollout checkbox open until consumer evidence and any
+broader native release requirements pass. Do not reinterpret the checklist below
+as permission to upgrade artifacts, deploy sibling plugins or enable 1.1 writes.
 
 - Refresh final schema/layout fixtures and source-vs-binary provenance; inspect
   upstream changes since the captured bundle/main, not just a version string.

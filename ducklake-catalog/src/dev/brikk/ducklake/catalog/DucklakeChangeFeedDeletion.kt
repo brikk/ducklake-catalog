@@ -53,6 +53,12 @@ package dev.brikk.ducklake.catalog
  * those, [previousDelete*] is the current file itself, so a 2-column file yields `current − previous
  * = ∅` (nothing in-window) without any special-casing, while a 3-column file is windowed per row.
  *
+ * **Puffin is format-specific.** A bare deletion-vector-v1 blob is a single cumulative vector at
+ * the metadata begin snapshot; a Puffin container may carry several cumulative vectors with
+ * `ducklake-snapshot-id` properties. Select/difference those vectors for the requested window.
+ * Do not apply Parquet's two-column self-cancellation rule to an entire multi-snapshot container:
+ * [previousDeletePath] may equal [currentDeletePath] while its blobs still contain in-window deletes.
+ *
  * Resolve a deleted position's row ID from the data file's embedded row-ID field when present;
  * otherwise use `rowIdStart + pos`. [rowIdStart] may be NULL for embedded lineage, exactly as in
  * [DucklakeDataFile.rowIdStart]. Delete-file positions are physical positions, not absolute row IDs.

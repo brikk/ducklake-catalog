@@ -829,9 +829,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // with partial_max NULL (flush_inlined_data), so a NULL/low partial_max does not mean
             // "no deletions newer than S". PARQUET files are snapshot-filtered on read via
             // _ducklake_internal_snapshot_id; PUFFIN deletion vectors carry no per-position
-            // snapshot (upstream ducklake_delete.cpp: "Deletion vectors don't support per-position
-            // snapshot tracking") and are always written whole at their begin_snapshot, so they
-            // need no filter. Anything else is an unknown format that engines already reject —
+            // snapshot, but Puffin containers can hold snapshot-tagged cumulative blobs; readers
+            // must select by the blob's ducklake-snapshot-id. Recognizing a format does not certify
+            // a connector decoder. Anything else is an unknown format that engines already reject —
             // this stays only as a defensive double-gate.
             .and(delf.FORMAT.isNotNull)
             .and(DSL.lower(delf.FORMAT).ne("parquet"))
@@ -1626,6 +1626,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
 
     override fun getLiveRowCount(tableId: Long, snapshotId: Long): Long {
+        val strict = conservativeFinal11Read(dsl)
+        if (strict) requireFinal11CountMetadata(tableId, snapshotId)
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
         // Upstream GetNetDataFileRowCountSql: sum(record_count) of active data files, minus
@@ -1653,8 +1655,35 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val liveInlined: Long = getInlinedDataInfos(tableId, snapshotId)
             .filter { it.hasLiveRows }
             .sumOf { countInlinedRows(tableId, it.schemaVersion, snapshotId) }
-        return (grossParquet - deletedByFiles - inlinedFileDeletes + liveInlined).coerceAtLeast(0L)
+        val count = grossParquet - deletedByFiles - inlinedFileDeletes + liveInlined
+        if (strict && count < 0) throw DucklakeCatalogCorruptionException("Negative final-1.1 net row count; cannot fabricate zero")
+        return count.coerceAtLeast(0L)
     }
+
+    private fun requireFinal11CountMetadata(tableId: Long, snapshot: Long) {
+        val ctx = dsl
+        val head = currentSnapshotId
+        if (snapshot < 0 || snapshot > head) unsupportedFinal11RowCount("Row-count snapshot is outside this owned read view")
+        val file = DUCKLAKE_DATA_FILE.`as`("count_file")
+        val active = file.TABLE_ID.eq(tableId).and(activeAt(file, snapshot))
+        if (snapshot != head && ctx.fetchExists(ctx.selectOne().from(file).where(active).limit(1))) {
+            unsupportedFinal11RowCount("Final-1.1 historical file row counts require a scan of snapshot-tagged rows/deletes")
+        }
+        if (ctx.fetchExists(ctx.selectOne().from(file).where(active)
+                .and(file.RECORD_COUNT.isNull.or(file.RECORD_COUNT.lt(0L))).limit(1))) {
+            throw DucklakeCatalogCorruptionException("Missing/negative required final-1.1 data-file record count")
+        }
+        val delete = DUCKLAKE_DELETE_FILE.`as`("count_delete")
+        val unknown = ctx.selectOne().from(delete).join(file).on(delete.DATA_FILE_ID.eq(file.DATA_FILE_ID))
+            .where(active).and(delete.TABLE_ID.eq(tableId)).and(activeAt(delete, snapshot)).and(delete.DELETE_COUNT.isNull).limit(1)
+        if (ctx.fetchExists(unknown)) unsupportedFinal11RowCount("Unknown final-1.1 delete count requires a scan; cannot assume zero")
+        if (ctx.fetchExists(ctx.selectOne().from(delete).join(file).on(delete.DATA_FILE_ID.eq(file.DATA_FILE_ID))
+                .where(active).and(delete.TABLE_ID.eq(tableId)).and(activeAt(delete, snapshot)).and(delete.DELETE_COUNT.lt(0L)).limit(1))) {
+            throw DucklakeCatalogCorruptionException("Negative final-1.1 delete count")
+        }
+    }
+
+    private fun unsupportedFinal11RowCount(message: String): Nothing = throw DucklakeInvalidOperationException(message)
 
     /**
      * `ducklake_table_column_stats`: full replace with aggregates freshly recomputed from the

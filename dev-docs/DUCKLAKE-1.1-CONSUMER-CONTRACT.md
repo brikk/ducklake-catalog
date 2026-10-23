@@ -249,6 +249,30 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ## Required semantics (metadata and hierarchy exposed; optimization still gated)
 
+### R07 acceptance hardening and handoff
+
+The [R07 report](FINAL-1.1-R07-READ-ACCEPTANCE.md) completes the in-repository
+guarded-library matrix, not downstream rollout. Public record components, Java
+constructors and fragment JSON remain unchanged. The opt-in 0.13.0-SNAPSHOT count
+contract intentionally narrows: historical file-backed `getLiveRowCount` and unknown
+active delete counts reject rather than guess an exact value; negative net counts
+are corruption rather than zero. Physical files may include later rows or deletes,
+so historical totals are not guaranteed lower bounds. Legacy 0.4/1.0 behavior stays
+unchanged. Consumers must scan or omit the estimate, not promote gross counts.
+
+Merge lineage and tagged Parquet deletes are verified through native physical
+oracles. A single Puffin vector may be a bare length/magic/CRC blob, while a Puffin
+container may hold several cumulative blobs labeled `ducklake-snapshot-id`.
+Identical current/previous paths cannot blindly self-cancel such a container's
+in-window changes. Recognizing the format is not proof of a working connector
+decoder. Geometry metadata is not geometry payload/scan qualification.
+
+Both owned agents still need scan/CDC/cancellation/lease/worker evidence and a
+coordinated rollout decision; none is inferred from library tests. Default-on
+reads, artifact upgrades, 1.1 writes, migration and physical cleanup are not enabled.
+Strict R02/R03/R04 and deferred M01 failures remain visible; full native acceptance
+is not marked green. R07 as a whole remains open at this external approval boundary.
+
 | Metadata | Representation | Consumer obligation |
 |---|---|---|
 | Schema parentage | Schema ID + nullable parent ID, plus explicit layout capability | In a parent-aware layout, NULL denotes root; absent layout capability means **unknown**, not root or ID 0. Resolve qualification by IDs, reject missing parents/cycles and bound depth. Physical paths retain independent relative/absolute semantics. |

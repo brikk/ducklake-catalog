@@ -105,3 +105,10 @@ the existing maintained 1.0 tests. R07 rollout also remains separate.
 The separate R02–R04 native defects remain parked; this transport work neither fixes
 nor waives them. No plugin implementation, 1.1 writer, migration or physical cleanup
 is enabled. See [execution evidence](../dev-docs/TODO-DUCKLAKE-1.1-SUPPORT.md).
+
+R07's [guarded library acceptance](../dev-docs/FINAL-1.1-R07-READ-ACCEPTANCE.md) adds
+42 cross-route native/JDBC cases and the full maintained verification. Historical
+file-backed counts/unknown delete counts now refuse exact materialization; Puffin
+containers and tagged data/deletes retain snapshot-filtering obligations. Native
+strict failures and unverified downstream rollout remain explicit no-go boundaries,
+not default-on or broader support authorization.

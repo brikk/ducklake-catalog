@@ -82,6 +82,14 @@ these APIs for exact MIN/MAX or range exclusion without a separately qualified
 algorithm. Existing legacy MIN/MAX suppression and retain-all 1.1 range pruning
 remain unchanged. Unknown counts/flags are never zero/false/exact.
 
+`getLiveRowCount` on the opt-in final-1.1 tier now refuses historical file-backed
+counts and unknown active delete counts. Physical merge output may contain later
+rows and consolidated deletes may contain later deletions, so historical metadata
+totals can overcount **or** undercount; they are not a guaranteed lower bound. Use
+a snapshot-aware scan. Negative net counts fail rather than clamp to zero. This
+development-tier safety narrowing does not change old record/JSON shapes or legacy
+format behavior. See [R07 acceptance](../dev-docs/FINAL-1.1-R07-READ-ACCEPTANCE.md).
+
 Every new companion record uses explicit JSON NULLs for its nullable fields. The
 nested legacy `DucklakeSchema`/`DucklakeFileColumnStats` records keep their existing
 omit-NULL JSON shapes. No new fields are added to existing writer fragments.

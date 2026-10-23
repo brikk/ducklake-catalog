@@ -54,8 +54,11 @@ Read the route-specific restrictions above before enabling.
 - Real final **`1.1`** inline names, scalar/nested STRUCT/LIST/MAP values, NULLs,
   row IDs, begin/end snapshots, historical versions and CDC candidates.
 - File/delete descriptors, partitions, schema/column metadata, snapshot listings,
-  timestamp lookup and existing count APIs. Counts retain their existing gross/
-  advisory semantics; they are not a new exact `COUNT(*)` optimization contract.
+  timestamp lookup and existing count APIs. Gross/advisory statistics are not a
+  new exact `COUNT(*)` optimization contract. The opt-in 1.1 live-count API rejects
+  historical file-backed counts and unknown active delete counts: a snapshot-aware
+  scan is required, not a zero default or assumed bound. Negative net counts fail
+  as corruption. Legacy 0.4/1.0 behavior is unchanged.
 - Existing public records, Java constructors and fragment JSON remain unchanged.
   Advisory 1.1 row-group counts are omitted, not fabricated as zero.
   The optional [rich metadata companion](READ-METADATA.md) exposes parent IDs,
@@ -121,6 +124,27 @@ VARCHAR value strictly cast to a whitelisted target type, not SQL source. Malfor
 values, invalid casts and overflow fail instead of becoming NULL. Native
 query failures and missing physical system columns propagate instead of becoming
 empty reads. Raw-value reads do not bypass these safety checks.
+
+## R07 acceptance and rollout boundary
+
+The [R07 acceptance report](../dev-docs/FINAL-1.1-R07-READ-ACCEPTANCE.md) records the
+passing five-route library matrix and unchanged full corpus/ABI/wire/JVM controls,
+alongside the still-failing strict native gates. This is not a blanket native or
+connector release. File/inline row-ID allocation is not SQL insertion order;
+embedded absolute IDs take precedence and nullable starts stay NULL. Historical
+merge output can include later rows, so data snapshot tags still need filtering.
+
+Parquet delete files with embedded snapshots need per-position filtering even
+when `partial_max` is NULL. Puffin may be a bare deletion-vector-v1 blob or a
+container of snapshot-tagged cumulative blobs; consumers must select/window the
+applicable vectors, not blindly self-cancel an identical current/previous path.
+Geometry file metadata is qualified, not a library inline or connector decoder.
+
+Use bounded companion pages and caller total budgets where complete enumeration
+is needed; legacy list-returning APIs are not advertised as streaming. A read
+session is not a physical-file lease or cleanup permission. Both connector agents
+must qualify their own scans/CDC/worker rollout; read defaults, 1.1 writes and
+automatic migration remain unchanged.
 
 ## Temporal value contract and consumer handoff
 
