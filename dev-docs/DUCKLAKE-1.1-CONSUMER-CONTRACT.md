@@ -251,6 +251,13 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ### R07 acceptance hardening and handoff
 
+**Additive planning-metadata companion:** `readPlanningMetadata()` provides SQL-
+limited keyset pages for root-schema/table/column metadata, partition fields/values,
+immutable name rows and inline registry versions. Partial pages are not complete
+hierarchies or payload capabilities; absent physical inline tables retain explicit
+registry positions. Caller totals and same-view traversal remain mandatory.
+[Scope, budgets and remaining payload/CDC gaps](../docs/READ-PLANNING-METADATA-1.1.md).
+
 **Additive SQL-paged file entry points:** active data/delete associations and added
 DATA candidates now have explicit SQL-limited keyset methods on `JdbcDucklakeCatalog`.
 Composite delete identity, NULL row starts, overlap windows and bounded path transfer

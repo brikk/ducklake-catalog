@@ -469,6 +469,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /** Parent-aware names and storage references; legacy flat APIs keep their hierarchy rejection. */
     fun readHierarchy(): DucklakeHierarchyReader = Final11HierarchyReader { richMetadata().hierarchy() }
 
+    /** Root-schema planning pages; validates the current owned view on every call, never caches a pooled context. */
+    fun readPlanningMetadata(): DucklakePlanningMetadata = Final11PlanningMetadata(
+        {
+            val ctx = dsl
+            if (!conservativeFinal11Read(ctx)) invalidRichMetadata("Planning metadata pages require an owned opt-in final-1.1 session")
+            ctx
+        },
+        { dynamicTableExists(dsl, "ducklake_inlined_data_tables") },
+        ::hasInlinedRows,
+    )
+
     override fun listSchemas(snapshotId: Long): List<DucklakeSchema> {
         val sch = DUCKLAKE_SCHEMA.`as`("sch")
         return dsl.selectFrom(sch)
