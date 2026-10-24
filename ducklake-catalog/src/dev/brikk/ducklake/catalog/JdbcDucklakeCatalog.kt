@@ -526,19 +526,48 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         return getSnapshotIdForSchemaVersion(tableId, schemaVersion, snapshotId)
     }
 
+    /**
+     * Decoded initial default for a field genuinely absent from a physical file, addressed by its
+     * stable ID in the target snapshot. Never replaces a present field's stored NULL. This is
+     * literal metadata, not executable SQL or proof that a field is physically absent. Qualified
+     * only in an owned opt-in final-1.1 session on DuckDB/Quack/PostgreSQL; MySQL evolution and
+     * non-NULL whole-container defaults remain unqualified. SQL NULL returns null, literal NULL
+     * VARCHAR remains "NULL", and BLOB returns bytes. No caller-supplied defaults/types are trusted.
+     */
+    fun getMissingFileColumnDefaultDecoded(tableId: Long, columnId: Long, snapshotId: Long): Any? {
+        val ctx = dsl
+        if (!conservativeFinal11Read(ctx)) invalidRichMetadata("File initial defaults require enableFinal11Reads and final 1.1")
+        if (final11ReadRoute == Final11ReadRoute.MYSQL) invalidRichMetadata("File initial-default evolution is not qualified on MySQL")
+        if (getSnapshot(snapshotId) == null || getTableById(tableId, snapshotId) == null) {
+            invalidRichMetadata("File initial-default target table/snapshot is not visible in this read session")
+        }
+        val target = Final11InlineSchema(fetchTableColumns(tableId, snapshotId))
+        val field = target.byId[columnId] ?: invalidRichMetadata("Unknown file initial-default field $columnId at target snapshot")
+        return Final11PostgresEvolution(ctx, Final11InlineSchema(emptyList())).plan(null, field).apply(null)
+    }
+
     private fun fetchTableColumns(tableId: Long, snapshotId: Long): List<DucklakeColumn> {
         val col = DUCKLAKE_COLUMN.`as`("col")
         val ctx = dsl
         val bounded = conservativeFinal11Read(ctx)
-        val query = ctx.selectFrom(col)
+        val fields = col.fields().map { field ->
+            if (bounded && field.dataType.isString) {
+                DSL.substring(field.coerce(String::class.java), 1, Final11ReadMetadataQueries.MAX_TEXT + 1).`as`(field.name)
+            } else field
+        }
+        val query = ctx.select(fields).from(col)
             .where(col.TABLE_ID.eq(tableId))
             .and(activeAt(col, snapshotId))
             .orderBy(col.COLUMN_ORDER, col.COLUMN_ID)
-        val rows = if (bounded) query.limit(Final11InlineTypes.MAX_NODES + 1).fetch {
-            requireFinal11ColumnIdentity(it)
-            toDucklakeColumn(it)
+        val rows = if (bounded) query.limit(Final11InlineTypes.MAX_NODES + 1).fetch { row ->
+            if (row.intoArray().any { it is String && it.length > Final11ReadMetadataQueries.MAX_TEXT }) {
+                invalidRichMetadata("Final-1.1 column text exceeds the qualification budget")
+            }
+            val record = row.into(col)
+            requireFinal11ColumnIdentity(record)
+            toDucklakeColumn(record)
         }
-            else query.fetch { toDucklakeColumn(it) }
+            else query.fetch { toDucklakeColumn(it.into(col)) }
         // Validate before legacy type-string reconstruction can recurse through corrupt metadata.
         if (bounded) Final11InlineSchema(rows)
         return rows

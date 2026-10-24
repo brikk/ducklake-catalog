@@ -251,6 +251,15 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ### R07 acceptance hardening and handoff
 
+**October 24 consumer-requested additive API:**
+`JdbcDucklakeCatalog.getMissingFileColumnDefaultDecoded(tableId, columnId, snapshotId)`
+resolves fresh stable-ID target metadata and validates/decodes an initial literal
+default for a physically absent file field. Four-route qualification excludes MySQL
+evolution; stored NULLs and parent NULLs must never be overwritten. Whole-container
+non-NULL defaults remain unqualified. Final-1.1 column string transfers are now
+SQL-bounded and reject oversize values. This is not an artifact/deployment approval
+or connector scan qualification. [Exact contract](../docs/FILE-INITIAL-DEFAULTS-1.1.md).
+
 The [R07 report](FINAL-1.1-R07-READ-ACCEPTANCE.md) completes the in-repository
 guarded-library matrix, not downstream rollout. Public record components, Java
 constructors and fragment JSON remain unchanged. The opt-in 0.13.0-SNAPSHOT count

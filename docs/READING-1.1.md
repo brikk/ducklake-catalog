@@ -127,6 +127,12 @@ empty reads. Raw-value reads do not bypass these safety checks.
 
 ## R07 acceptance and rollout boundary
 
+For missing physical file fields, the additive
+[decoded initial-default API](FILE-INITIAL-DEFAULTS-1.1.md) exposes the same literal
+history/type validation used by inline evolution. Callers must independently prove
+physical absence and preserve stored/parent NULLs; the library does not scan files.
+MySQL missing-field evolution is still rejected.
+
 The [R07 acceptance report](../dev-docs/FINAL-1.1-R07-READ-ACCEPTANCE.md) records the
 passing five-route library matrix and unchanged full corpus/ABI/wire/JVM controls,
 alongside the still-failing strict native gates. This is not a blanket native or
