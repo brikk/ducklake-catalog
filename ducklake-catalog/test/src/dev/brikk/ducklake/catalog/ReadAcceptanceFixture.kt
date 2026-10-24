@@ -20,6 +20,7 @@ internal interface ReadAcceptanceFixture : AutoCloseable {
     val data: Path
     fun native(sql: String): List<List<String?>>
     fun metadata(sql: String)
+    fun metadataRows(sql: String): List<List<String?>>
     fun reader(): JdbcDucklakeCatalog
 
     class Duck(route: Final11ReadRoute) : ReadAcceptanceFixture {
@@ -27,6 +28,11 @@ internal interface ReadAcceptanceFixture : AutoCloseable {
         override val data get() = fixture.data
         override fun native(sql: String) = fixture.nativeRows(sql)
         override fun metadata(sql: String) = fixture.metadata(sql)
+        override fun metadataRows(sql: String): List<List<String?>> = fixture.metadataConnection().use { c ->
+            c.createStatement().use { s -> s.executeQuery(sql).use { r -> buildList {
+                while (r.next()) add((1..r.metaData.columnCount).map { r.getString(it) })
+            } } }
+        }
         override fun reader() = fixture.reader()
         override fun close() = fixture.close()
     }
@@ -35,6 +41,7 @@ internal interface ReadAcceptanceFixture : AutoCloseable {
         override val data get() = fixture.data
         override fun native(sql: String) = fixture.nativeRows(sql)
         override fun metadata(sql: String) = fixture.metadata(sql)
+        override fun metadataRows(sql: String) = fixture.rows(sql)
         override fun reader() = fixture.reader()
         override fun close() = fixture.close()
     }
@@ -43,6 +50,7 @@ internal interface ReadAcceptanceFixture : AutoCloseable {
         override val data get() = fixture.data
         override fun native(sql: String) = fixture.nativeRows(sql)
         override fun metadata(sql: String) = fixture.metadata(sql)
+        override fun metadataRows(sql: String) = fixture.rows(sql)
         override fun reader() = JdbcDucklakeCatalog(fixture.readerConfig())
         override fun close() = fixture.close()
     }

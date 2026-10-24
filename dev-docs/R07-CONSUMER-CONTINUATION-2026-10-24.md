@@ -2,6 +2,23 @@
 
 ## Current decision
 
+**Latest follow-up:** Trino `e4743d5a7dd60bc05d3b4f9e84594662fb3a384e` adopts decoded
+missing-file defaults with actual four-route two-worker SQL (118 candidate/264
+released tests +lint/81 records). Doris `7535fcf6db5f1407f5706d85108380a06c697906`
+and `a6aa725d0de6f39836ee33625a1a2e309d992390` adopt controlled capture/defaults
+(13 live passes, candidate262 Java25/236 Java17, default253/227, existing one skip).
+Both fresh-session assignments below have finished. Their next paging/control
+assignments should use fresh GPT6.1Sol sessions and newly checksum-qualified bytes.
+
+Trino's non-NULL unknown-history repro exposed a real contract mismatch, not
+established SQL execution or a wrong value. The shared library validator now rejects
+unknown kinds independently of initial-literal presence while preserving native
+VARCHAR `NULL`'s known expression-kind encoding. Full latest library checks pass
+**903 maintained+86 direct-Java tests/17,602 records**, zero failures/errors/JUnit
+skips, lint/ABI/wire/Java17. [Fix, red repro, exact semantics and log](../docs/FILE-INITIAL-DEFAULTS-1.1.md).
+The earlier898-test/candidate78c2a12 checkpoint below is retained as history; the
+old bundles were not replaced. No latest-byte connector adoption is inferred.
+
 **Useful guarded read-only SQL tiers now exist in both plugins; broad R07 and
 production rollout remain NO-GO.** The October23 refusal/SPI-only reports are
 historical checkpoints, not the latest implementation state. The owner authorized

@@ -251,6 +251,14 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ### R07 acceptance hardening and handoff
 
+**Consumer-reported history-kind correction:** unknown initial-default history kinds
+now reject even when the initial value is non-NULL, for file/inline/CDC defaults.
+Known INSERT-expression metadata with a materialized initial literal remains safe:
+native uses it for VARCHAR `NULL`. Absent initial values with expression history
+still reject, and no expression text is executed. Original candidate bundles are
+not overwritten; the narrowed development-tier refusal needs new-byte consumer
+qualification. [Regression and precise trust contract](../docs/FILE-INITIAL-DEFAULTS-1.1.md).
+
 **Additive planning-metadata companion:** `readPlanningMetadata()` provides SQL-
 limited keyset pages for root-schema/table/column metadata, partition fields/values,
 immutable name rows and inline registry versions. Partial pages are not complete

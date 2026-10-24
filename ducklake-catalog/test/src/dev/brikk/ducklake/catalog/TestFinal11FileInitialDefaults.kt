@@ -92,6 +92,49 @@ internal class TestFinal11FileInitialDefaults {
         }
 
         @Test
+        fun nonNullUnknownHistoryRejectsWhileNativeLiteralNullExpressionStaysQualified() {
+            fixture().use { f ->
+                f.native("CALL lake.set_option('data_inlining_row_limit',1); CREATE TABLE lake.t(i INTEGER); " +
+                    "INSERT INTO lake.t VALUES(1),(2); INSERT INTO lake.t VALUES(3); " +
+                    "ALTER TABLE lake.t ADD COLUMN n INTEGER DEFAULT 42; ALTER TABLE lake.t ADD COLUMN s VARCHAR DEFAULT 'NULL'")
+                assertThat(f.metadataRows("SELECT initial_default,default_value_type FROM ducklake_column " +
+                    "WHERE column_name='s' ORDER BY begin_snapshot LIMIT 1")).containsExactly(listOf("NULL", "expression"))
+                val id = f.reader().use { c -> c.readSession(Supplier {
+                    val snapshot = c.currentSnapshotId
+                    val table = c.getTable("main", "t", snapshot)!!
+                    val columns = c.getTableColumns(table.tableId, snapshot)
+                    assertThat(c.getMissingFileColumnDefaultDecoded(table.tableId, columns.single { it.columnName == "s" }.columnId, snapshot))
+                        .isEqualTo("NULL")
+                    table.tableId
+                }) }
+                f.metadata("UPDATE ducklake_column SET default_value_type='unknown' WHERE table_id=$id AND column_name='n'")
+                f.reader().use { c -> c.readSession(Supplier {
+                    val snapshot = c.currentSnapshotId
+                    val columns = c.getTableColumns(id, snapshot)
+                    val old = c.getInlinedDataInfos(id, snapshot).first { it.hasLiveRows }
+                    val ids = columns.map { it.columnId }
+                    val n = columns.single { it.columnName == "n" }.columnId
+                    for (read in listOf<() -> Any?>(
+                        { c.getMissingFileColumnDefaultDecoded(id, n, snapshot) },
+                        { c.readInlinedData(id, old.schemaVersion, snapshot, columns) },
+                        { c.readInlinedDataDecoded(id, old.schemaVersion, snapshot, columns) },
+                        { c.getInlinedChangesBetweenDecoded(id, old.schemaVersion, 0, snapshot, ids) },
+                    )) assertThatThrownBy { read() }.isInstanceOf(DucklakeInvalidOperationException::class.java)
+                        .hasMessageContaining("unknown initial-default history kind")
+                    assertThat(c.getSnapshot(snapshot)).isNotNull()
+                }) }
+                f.metadata("UPDATE ducklake_column SET default_value_type='literal' WHERE table_id=$id AND column_name='n'")
+                f.reader().use { c -> c.readSession(Supplier {
+                    val snapshot = c.currentSnapshotId
+                    val columns = c.getTableColumns(id, snapshot)
+                    val old = c.getInlinedDataInfos(id, snapshot).first { it.hasLiveRows }
+                    assertThat(c.readInlinedDataDecoded(id, old.schemaVersion, snapshot, columns)).containsExactly(listOf(3, 42, "NULL"))
+                    assertThat(c.getMissingFileColumnDefaultDecoded(id, columns.single { it.columnName == "n" }.columnId, snapshot)).isEqualTo(42)
+                }) }
+            }
+        }
+
+        @Test
         fun malformedExpressionContainerAndOversizedDefaultsRejectAndReleaseTheSession() {
             fixture().use { f ->
                 f.native("CREATE TABLE lake.t(i INTEGER); INSERT INTO lake.t VALUES(1); ALTER TABLE lake.t ADD COLUMN n INTEGER DEFAULT 42; " +

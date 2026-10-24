@@ -31,8 +31,9 @@ internal object Final11InlineDefaults {
             .orderBy(col.BEGIN_SNAPSHOT).limit(1).fetchOne()
             ?: throw DucklakeCatalogCorruptionException("Missing final-1.1 initial-default history for column ${destination.column.columnId}")
         val kind = first.value1()?.lowercase(Locale.ROOT)
+        if (kind !in setOf(null, "", "literal", "expression")) invalid("unknown initial-default history kind")
+        // Native stores the literal VARCHAR "NULL" as an INSERT expression but keeps its initial value.
         if (value == null && kind == "expression") invalid("non-literal initial-default history cannot be projected safely")
-        if (value == null && kind !in setOf(null, "", "literal")) invalid("unknown initial-default history kind")
         return value
     }
 

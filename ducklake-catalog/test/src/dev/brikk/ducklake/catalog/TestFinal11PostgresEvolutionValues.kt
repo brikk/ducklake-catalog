@@ -27,12 +27,29 @@ import java.sql.DriverManager
 class TestFinal11PostgresEvolutionValues {
     private fun column(id: Long, name: String, type: String, parent: Long? = null, default: String? = null) =
         DucklakeColumn(id, 0, null, 1, id, name, type, true, parent, default)
-    private fun context(kind: String = "literal") = DSL.using(MockConnection {
+    private fun context(kind: String? = "literal") = DSL.using(MockConnection {
         val field = DSL.field("default_value_type", String::class.java)
         val result = DSL.using(SQLDialect.POSTGRES).newResult(field)
         result.add(DSL.using(SQLDialect.POSTGRES).newRecord(field).value1(kind))
         arrayOf(MockResult(1, result))
     }, SQLDialect.POSTGRES)
+
+    @Test
+    fun unknownDefaultKindsRejectRegardlessOfLiteralPresenceWithoutRejectingNativeLiteralNull() {
+        fun node(value: String?, type: String = "int32") = Final11InlineSchema.Node(column(1, "added", type, default = value), emptyList())
+        for (kind in listOf("unknown", "future", "literal ", "literal" + "x".repeat(40))) {
+            for (value in listOf(null, "42")) {
+                assertThatThrownBy { Final11InlineDefaults.value(context(kind), node(value)) }
+                    .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("unknown initial-default history kind")
+            }
+        }
+        for (kind in listOf(null, "", "literal", "LITERAL")) {
+            assertThat(Final11InlineDefaults.value(context(kind), node("42"))).isEqualTo("42")
+        }
+        assertThat(Final11InlineDefaults.value(context("expression"), node("NULL", "varchar"))).isEqualTo("NULL")
+        assertThatThrownBy { Final11InlineDefaults.value(context("expression"), node(null)) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("non-literal")
+    }
 
     @Test
     fun textCodecPreservesQuotedNullBlobJsonUnicodeAndNonSqlFieldNames() {
