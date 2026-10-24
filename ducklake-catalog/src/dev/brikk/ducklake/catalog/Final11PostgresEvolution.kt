@@ -20,13 +20,23 @@ import java.time.LocalDate
 
 /** Compile stable-ID plans once; validate the whole source before applying any projection/default. */
 internal class Final11PostgresEvolution(private val ctx: DSLContext, private val source: Final11InlineSchema) {
-    class Plan(val unchanged: Boolean, private val evaluate: (Any?, Budget) -> Any?) {
+    class Plan(val unchanged: Boolean, private val defaultCopyBytes: Int = 0, private val evaluate: (Any?, Budget) -> Any?) {
         fun apply(value: Any?): Any? = nested(value, Budget())
-        fun nested(value: Any?, budget: Budget): Any? { budget.spend(); return evaluate(value, budget) }
+        fun applyPage(value: Any?, maximumDefaultBytes: Int): Any? = nested(value, Budget(maximumDefaultBytes.toLong()))
+        fun nested(value: Any?, budget: Budget): Any? {
+            budget.spend()
+            budget.allocate(defaultCopyBytes)
+            return evaluate(value, budget)
+        }
     }
-    class Budget {
+    class Budget(private val maximumDefaultBytes: Long? = null) {
         private var nodes = 0
+        private var allocatedBytes = 0L
         fun spend() { if (++nodes > 65536) invalid("evolved inline value node budget exceeded") }
+        fun allocate(bytes: Int) {
+            allocatedBytes += bytes
+            if (maximumDefaultBytes != null && allocatedBytes > maximumDefaultBytes) invalid("evolved inline default copy byte budget exceeded")
+        }
     }
 
     fun plan(origin: Final11InlineSchema.Node?, target: Final11InlineSchema.Node): Plan {
@@ -34,7 +44,7 @@ internal class Final11PostgresEvolution(private val ctx: DSLContext, private val
             if (target.column.columnId in source.byId) invalid("field identity moved between parents")
             val initial = Final11InlineDefaults.value(ctx, target)
             val value = Final11PostgresValues.decode(initial, target.type)
-            return Plan(false) { _, _ -> if (value is ByteArray) value.copyOf() else value }
+            return Plan(false, if (value is ByteArray) value.size else 0) { _, _ -> if (value is ByteArray) value.copyOf() else value }
         }
         val from = origin.type.type
         val to = target.type.type

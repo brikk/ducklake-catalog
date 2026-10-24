@@ -26,6 +26,15 @@ class TestFinal11InlineProjection {
         DucklakeColumn(id, 0, null, 1, id, name, type, true, parent, default)
 
     @Test
+    fun payloadPagesDoNotQualifyCompositeMapKeysEvenForANullCell() {
+        val type = InlinedTypeNode("map", "m", listOf(InlinedTypeNode("struct", "key", listOf(InlinedTypeNode("int32", "a"))),
+            InlinedTypeNode("int32", "value")))
+        val projection = Final11InlineProjection.Projection(DSL.inline(null as Any?), type, false)
+        assertThatThrownBy { Final11InlinePage(listOf(projection), Final11InlineSchema(emptyList()), listOf(1), Final11ReadRoute.LOCAL_DUCKDB, 1) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("composite MAP keys")
+    }
+
+    @Test
     fun missingNullDefaultsDoNotCertifyUnqualifiedPayloadTypesOnEitherProjectionEngine() {
         val target = listOf(column(1, "v", "variant"))
         assertThatThrownBy { Final11ReadCompatibility.projections(DSL.using(SQLDialect.DUCKDB), "t", emptyList(), target, listOf(1)) }

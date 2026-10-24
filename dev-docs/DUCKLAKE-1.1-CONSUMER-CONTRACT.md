@@ -251,6 +251,13 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ### R07 acceptance hardening and handoff
 
+**Additive decoded inline payload pages:** ordinary and inclusive CDC candidate
+methods now apply SQL LIMIT/keyset and per-cell representation bounds before JDBC
+transfer, preserve original row/begin/end identities and fresh stable-ID target
+projections, and bound decoded/default-copy expansion. Live counts are not used to
+cap deleted/transient CDC history. No assembled change feed, global-query budget,
+engine transport or lease is implied. [Exact semantics/budgets](../docs/READ-INLINE-PAGES-1.1.md).
+
 **Consumer-reported history-kind correction:** unknown initial-default history kinds
 now reject even when the initial value is non-NULL, for file/inline/CDC defaults.
 Known INSERT-expression metadata with a materialized initial literal remains safe:

@@ -21,6 +21,14 @@ import org.jooq.impl.DSL
 internal object Final11ReadCompatibility {
     private val INLINE_SYSTEM_NAMES = listOf("_ducklake_row_id", "_ducklake_begin_snapshot", "_ducklake_end_snapshot")
 
+    fun visibleSchemaVersion(ctx: DSLContext, snapshot: Long): Long {
+        val s = dev.brikk.ducklake.catalog.schema.PublicDbTables.DUCKLAKE_SNAPSHOT
+        val version = ctx.select(s.SCHEMA_VERSION).from(s).where(s.SNAPSHOT_ID.eq(snapshot)).limit(2)
+            .fetchOne()?.value1()
+        if (version == null || version < 0) throw DucklakeCatalogCorruptionException("Missing/negative visible inline schema version")
+        return version
+    }
+
     fun requireReadableLayout(ctx: DSLContext, version: String?) {
         if (version in setOf("0.4", "1.0")) return
         if (version != "1.1") {

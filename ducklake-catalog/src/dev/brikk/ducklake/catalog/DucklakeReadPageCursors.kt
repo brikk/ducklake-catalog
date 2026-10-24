@@ -26,3 +26,7 @@ data class DucklakeAddedFileCursor(val beginSnapshot: Long, val dataFileId: Long
 
 @JvmRecord
 data class DucklakeAddedFilePageEntry(val cursor: DucklakeAddedFileCursor, val dataFile: DucklakeDataFile)
+
+/** Seek identity of one physical inline row version, independent of its insertion/deletion event window. */
+@JvmRecord
+data class DucklakeInlineCursor(val rowId: Long, val beginSnapshot: Long)

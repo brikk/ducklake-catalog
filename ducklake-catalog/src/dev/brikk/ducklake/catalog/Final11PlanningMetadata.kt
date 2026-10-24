@@ -123,11 +123,11 @@ internal class Final11PlanningMetadata(
 
     override fun getInlineVersionsPage(tableId: Long, snapshotId: Long, afterSchemaVersion: Long?, limit: Int): List<DucklakeInlinedDataInfo> {
         val ctx = context(snapshotId, tableId, afterSchemaVersion, limit)
+        val visibleVersion = Final11ReadCompatibility.visibleSchemaVersion(ctx, snapshotId)
         if (!inlineRegistryExists()) return emptyList()
         val i = DUCKLAKE_INLINED_DATA_TABLES.`as`("i")
-        val s = DUCKLAKE_SNAPSHOT.`as`("s")
         val rows = ctx.select(fields(i, limit)).from(i).where(i.TABLE_ID.eq(tableId))
-            .and(i.SCHEMA_VERSION.le(DSL.select(s.SCHEMA_VERSION).from(s).where(s.SNAPSHOT_ID.eq(snapshotId))))
+            .and(i.SCHEMA_VERSION.le(visibleVersion))
             .and(afterSchemaVersion?.let { i.SCHEMA_VERSION.gt(it) } ?: DSL.trueCondition())
             .orderBy(i.SCHEMA_VERSION).limit(limit + 1).fetch()
         return page(rows, limit, textLimit(i, limit)) { id(it, i.SCHEMA_VERSION) }.map { r ->

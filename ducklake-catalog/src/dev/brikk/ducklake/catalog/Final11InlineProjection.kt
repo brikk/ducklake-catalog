@@ -25,6 +25,7 @@ internal class Final11InlineProjection(
     data class Projection(
         val field: Field<*>, val type: InlinedTypeNode, val losslessText: Boolean,
         val transform: ((Any?, Boolean) -> Any?)? = null,
+        val pageTransform: ((Any?, Int) -> Any?)? = null,
     )
     private var variable = 0
 

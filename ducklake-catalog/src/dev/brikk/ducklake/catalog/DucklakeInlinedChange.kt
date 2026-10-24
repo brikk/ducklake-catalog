@@ -23,6 +23,8 @@ package dev.brikk.ducklake.catalog
  * accordingly. [rowId] is DuckLake's global row id (the inlined table's `row_id`), the same space
  * the file-based feed uses. [values] are projected to the change feed's requested columns as of the
  * end snapshot (null-filled where the column didn't exist in this row's schema version).
+ * The decoded ordinary-page API also uses this identity-carrying record for rows active at S;
+ * its actual endSnapshot can be later than S. It is not then a claim of an in-window CDC event.
  */
 @JvmRecord
 data class DucklakeInlinedChangeRow(

@@ -94,6 +94,19 @@ class TestFinal11PostgresEvolutionValues {
     }
 
     @Test
+    fun pagedEvolutionChecksDefaultCopyBytesBeforeAllocatingRepeatedBlobDefaults() {
+        val source = Final11InlineSchema(listOf(column(1, "xs", "list"), column(2, "element", "struct", 1), column(3, "keep", "int32", 2)))
+        val target = Final11InlineSchema(source.byId.values.map { it.column } + listOf(column(4, "b", "blob", 2, "\\x00N")))
+        val plan = Final11PostgresEvolution(context(), source).plan(source.roots[1], target.roots.getValue(1))
+        val input = List(3) { mapOf("keep" to 1) }
+        assertThatThrownBy { plan.applyPage(input, 4) }.isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("copy byte budget")
+        val result = plan.applyPage(input, 6) as List<*>
+        assertThat(result).hasSize(3)
+        ((result[0] as Map<*, *>)["b"] as ByteArray)[0] = 99
+        assertThat((result[1] as Map<*, *>)["b"] as ByteArray).containsExactly(0, 0x4e)
+    }
+
+    @Test
     fun movedIdsAndExpressionDefaultsAreRejectedEvenForNullParents() {
         val source = Final11InlineSchema(listOf(column(1, "s", "struct"), column(2, "v", "int32", 1)))
         val moved = Final11InlineSchema(listOf(column(2, "v", "int32")))

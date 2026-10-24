@@ -33,13 +33,15 @@ internal class Final11PostgresProjection(
         val storage = origin?.let { physical(ctx, table, it) }
         val field = if (origin == null) DSL.inline(null as Any?) else selectValue(origin, storage!!)
         val values = Values(origin, destination, plan)
-        return Final11InlineProjection.Projection(field, destination.type, Final11InlineTypes.requiresText(destination.type), values::apply)
+        return Final11InlineProjection.Projection(field, destination.type, Final11InlineTypes.requiresText(destination.type), values::apply, values::page)
     }
 
     private class Values(
         private val origin: Final11InlineSchema.Node?, private val destination: Final11InlineSchema.Node,
         private val plan: Final11PostgresEvolution.Plan,
     ) {
+        fun page(raw: Any?, maximumDefaultBytes: Int): Any? = plan.applyPage(origin?.let { Final11PostgresValues.decode(raw, it.type) }, maximumDefaultBytes)
+
         fun apply(raw: Any?, decode: Boolean): Any? {
             val old = origin?.let { Final11PostgresValues.decode(raw, it.type) }
             val value = plan.apply(old)
@@ -103,6 +105,13 @@ internal class Final11PostgresProjection(
     companion object {
         private val TEXT = setOf("struct", "list", "map", "date", "time_ns", "timestamp", "timestamp_us", "timestamp_s", "timestamp_ms",
             "timestamp_ns", "timestamptz", "timestamptz_ns", "uint64", "int128", "uint128")
+
+        /** Bound the physical representation without changing the evolution transform's bytea/text contract. */
+        fun boundedPageField(field: Field<*>, origin: Final11InlineSchema.Node?, maximum: Int): Field<*> {
+            if (origin == null) return field // Missing fields are decoded by the already-validated literal plan.
+            val variable = storageType(origin.type.type) in setOf("character varying", "bytea") || Final11InlineTypes.requiresText(origin.type)
+            return if (variable) DSL.field("substring({0} from 1 for {1})", field, DSL.inline(maximum + 1)) else field
+        }
         private fun storageType(type: String): String = when {
             type in TEXT -> "character varying"
             type in setOf("varchar", "blob", "json") -> "bytea"

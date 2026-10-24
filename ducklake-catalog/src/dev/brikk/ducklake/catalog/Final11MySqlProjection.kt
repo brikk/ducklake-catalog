@@ -69,6 +69,12 @@ internal class Final11MySqlProjection(private val ctx: DSLContext, private val s
     }
 
     companion object {
+        fun boundedPageField(field: Field<*>, origin: Final11InlineSchema.Node?, maximum: Int): Field<*> {
+            val type = origin?.type?.type ?: invalid("missing-column/schema evolution has no qualified native MySQL path")
+            val variable = storage(type) in setOf("text", "blob") || type in setOf("date", "timestamp_s")
+            return if (variable) DSL.field("substring({0},1,{1})", field, DSL.inline(maximum + 1)) else field
+        }
+
         private fun nonfinite(value: Any?): Boolean = when (value) {
             is Float -> !value.isFinite()
             is Double -> !value.isFinite()

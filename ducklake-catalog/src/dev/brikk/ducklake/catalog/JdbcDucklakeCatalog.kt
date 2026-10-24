@@ -2263,6 +2263,47 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ): List<DucklakeInlinedChangeRow> =
         inlinedChangesBetweenInternal(tableId, schemaVersion, startSnapshot, endSnapshot, columnIds, decode = true)
 
+    /** SQL-paged decoded CDC row versions, including rows both inserted/deleted in the window. */
+    fun getInlinedChangesBetweenDecodedPage(
+        tableId: Long, schemaVersion: Long, startSnapshot: Long, endSnapshot: Long, columnIds: List<Long>,
+        after: DucklakeInlineCursor?, limit: Int,
+    ): List<DucklakeInlinedChangeRow> {
+        require(startSnapshot in 0..endSnapshot) { "Invalid inline CDC snapshot window" }
+        return decodedInlinePage(tableId, schemaVersion, endSnapshot, startSnapshot, columnIds, after, limit)
+    }
+
+    /** SQL-paged live rows with actual identity/metadata; empty projection is a bounded identity-only read. */
+    fun readInlinedDataDecodedPage(
+        tableId: Long, schemaVersion: Long, snapshotId: Long, columnIds: List<Long>, after: DucklakeInlineCursor?, limit: Int,
+    ): List<DucklakeInlinedChangeRow> = decodedInlinePage(tableId, schemaVersion, snapshotId, null, columnIds, after, limit)
+
+    private fun decodedInlinePage(
+        tableId: Long, schemaVersion: Long, snapshot: Long, start: Long?, ids: List<Long>, after: DucklakeInlineCursor?, limit: Int,
+    ): List<DucklakeInlinedChangeRow> {
+        requireReadPage(tableId, snapshot, limit)
+        require(schemaVersion >= 0 && ids.size <= Final11InlineTypes.MAX_NODES && ids.all { it >= 0 } && ids.distinct().size == ids.size) {
+            "Invalid inline schema/projection IDs"
+        }
+        require(after == null || (after.rowId >= 0 && after.beginSnapshot >= 0)) { "Negative inline page cursor" }
+        if (schemaVersion > Final11ReadCompatibility.visibleSchemaVersion(dsl, snapshot)) {
+            invalidRichMetadata("Inline schema version is not visible at the target snapshot")
+        }
+        requireMySqlPayloadTypes(tableId, snapshot, ids)
+        val inlined = inlinedDataTable(dsl, tableId, schemaVersion)
+        if (!dynamicTableExists(dsl, inlined.name)) return emptyList()
+        val sourceSnapshot = sourceSchemaSnapshot(inlined, tableId, schemaVersion, snapshot) ?: return emptyList()
+        val source = getAllColumnsWithParentage(tableId, sourceSnapshot)
+        val projected = final11InlineProjections(inlined.name, tableId, snapshot, source, ids)
+        val page = Final11InlinePage(ids.map { projected.getValue(it) }, Final11InlineSchema(source), ids, requireNotNull(final11ReadRoute), limit)
+        val seek = after?.let { inlined.rowId.gt(it.rowId).or(inlined.rowId.eq(it.rowId).and(inlined.beginSnapshot.gt(it.beginSnapshot))) }
+            ?: DSL.trueCondition()
+        val window = if (start == null) inlined.activeAt(snapshot) else inlined.beginSnapshot.between(start, snapshot)
+            .or(inlined.endSnapshot.between(start, snapshot))
+        val rows = dsl.select(listOf(inlined.rowId, inlined.beginSnapshot, inlined.endSnapshot) + page.fields)
+            .from(inlined.table).where(window).and(seek).orderBy(inlined.rowId, inlined.beginSnapshot).limit(limit + 1).fetch()
+        return page.decode(rows)
+    }
+
     private fun inlinedChangesBetweenInternal(
         tableId: Long,
         schemaVersion: Long,

@@ -119,6 +119,8 @@ internal class TestFinal11FileInitialDefaults {
                         { c.readInlinedData(id, old.schemaVersion, snapshot, columns) },
                         { c.readInlinedDataDecoded(id, old.schemaVersion, snapshot, columns) },
                         { c.getInlinedChangesBetweenDecoded(id, old.schemaVersion, 0, snapshot, ids) },
+                        { c.readInlinedDataDecodedPage(id, old.schemaVersion, snapshot, ids, null, 1) },
+                        { c.getInlinedChangesBetweenDecodedPage(id, old.schemaVersion, 0, snapshot, ids, null, 1) },
                     )) assertThatThrownBy { read() }.isInstanceOf(DucklakeInvalidOperationException::class.java)
                         .hasMessageContaining("unknown initial-default history kind")
                     assertThat(c.getSnapshot(snapshot)).isNotNull()
