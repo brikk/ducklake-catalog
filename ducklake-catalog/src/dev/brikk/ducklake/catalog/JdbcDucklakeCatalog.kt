@@ -609,7 +609,36 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    override fun getDataFiles(tableId: Long, snapshotId: Long): List<DucklakeDataFile> {
+    override fun getDataFiles(tableId: Long, snapshotId: Long): List<DucklakeDataFile> =
+        fetchDataFilePageEntries(tableId, snapshotId, null, null).map { it.dataFile }
+
+    /** SQL-limited active associations. Drain in one owned view; empty page means end, not a file lease. */
+    fun getDataFilesPage(tableId: Long, snapshotId: Long, after: DucklakeDataFileCursor?, limit: Int): List<DucklakeDataFilePageEntry> {
+        requireReadPage(tableId, snapshotId, limit)
+        require(after == null || (after.dataFileId >= 0 && (after.deleteFileId == null || after.deleteFileId >= 0))) { "Invalid active-file cursor" }
+        return fetchDataFilePageEntries(tableId, snapshotId, after, limit)
+    }
+
+    private fun fetchDataFilePageEntries(
+        tableId: Long, snapshotId: Long, after: DucklakeDataFileCursor?, limit: Int?,
+    ): List<DucklakeDataFilePageEntry> {
+        val fields = DataFilePageFields(limit)
+        val file = fields.file
+        val delfile = fields.delfile
+        val deleteOrder = DSL.coalesce(delfile.DELETE_FILE_ID, DSL.inline(-1L))
+        val afterCondition = if (after == null) DSL.trueCondition() else file.DATA_FILE_ID.gt(after.dataFileId)
+            .or(file.DATA_FILE_ID.eq(after.dataFileId).and(deleteOrder.gt(after.deleteFileId ?: -1L)))
+        val query = dsl.select(fields.projection).from(file).leftJoin(delfile)
+            .on(file.DATA_FILE_ID.eq(delfile.DATA_FILE_ID)).and(activeAt(delfile, snapshotId))
+            .where(file.TABLE_ID.eq(tableId)).and(activeAt(file, snapshotId)).and(afterCondition)
+            .orderBy(file.DATA_FILE_ID, deleteOrder)
+        return metadata.fetch(dsl, if (limit == null) query else query.limit(limit)) { r ->
+            if (limit != null) requirePageText(r)
+            fields.entry(r)
+        }
+    }
+
+    private inner class DataFilePageFields(limit: Int?) {
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         val delfile = DUCKLAKE_DELETE_FILE.`as`("delfile")
         // PATH / PATH_IS_RELATIVE / FOOTER_SIZE exist on BOTH sides of the LEFT
@@ -622,17 +651,15 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // coerced Fields and name collisions become unambiguous wrong-result
         // bugs. Alias the duplicates so each projected Field has a unique
         // name; the mapper accesses through these aliased Field locals.
-        val dataFilePath = file.PATH.`as`("data_file_path")
+        val dataFilePath = pageText(file.PATH, limit).`as`("data_file_path")
         val dataFilePathIsRelative = file.PATH_IS_RELATIVE.`as`("data_file_path_is_relative")
         val dataFileFooterSize = file.FOOTER_SIZE.`as`("data_file_footer_size")
-        val deleteFilePath = delfile.PATH.`as`("delete_file_path")
+        val deleteFilePath = pageText(delfile.PATH, limit).`as`("delete_file_path")
         val deleteFilePathIsRelative = delfile.PATH_IS_RELATIVE.`as`("delete_file_path_is_relative")
         val deleteFileFooterSize = delfile.FOOTER_SIZE.`as`("delete_file_footer_size")
         val deleteFilePartialMax = delfile.PARTIAL_MAX.`as`("delete_file_partial_max")
         // Multi-table JOIN — routed through `metadata` for Quack compatibility.
-        return metadata.fetch(
-            dsl,
-            dsl.select(
+        val projection = listOf(
                 file.DATA_FILE_ID,
                 file.TABLE_ID,
                 file.BEGIN_SNAPSHOT,
@@ -640,7 +667,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 file.FILE_ORDER,
                 dataFilePath,
                 dataFilePathIsRelative,
-                file.FILE_FORMAT,
+                pageText(file.FILE_FORMAT, limit).`as`(file.FILE_FORMAT.name),
                 file.RECORD_COUNT,
                 file.FILE_SIZE_BYTES,
                 dataFileFooterSize,
@@ -651,24 +678,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 deleteFilePath,
                 deleteFilePathIsRelative,
                 deleteFileFooterSize,
-                delfile.FORMAT,
+                pageText(delfile.FORMAT, limit).`as`(delfile.FORMAT.name),
                 deleteFilePartialMax,
                 delfile.DELETE_FILE_ID,
             )
-                .from(file)
-                .leftJoin(delfile)
-                .on(file.DATA_FILE_ID.eq(delfile.DATA_FILE_ID))
-                .and(activeAt(delfile, snapshotId))
-                .where(file.TABLE_ID.eq(tableId))
-                .and(activeAt(file, snapshotId))
-                .orderBy(file.DATA_FILE_ID),
-        ) { r ->
+
+        fun entry(r: org.jooq.Record): DucklakeDataFilePageEntry {
             requireReadDescriptor(listOf(r.get(file.DATA_FILE_ID), r.get(file.TABLE_ID), r.get(file.BEGIN_SNAPSHOT),
                 r.get(dataFilePath), r.get(dataFilePathIsRelative), r.get(file.FILE_FORMAT), r.get(file.RECORD_COUNT),
                 r.get(file.FILE_SIZE_BYTES), r.get(dataFileFooterSize)))
-            if (r.get(delfile.DELETE_FILE_ID) != null) requireReadDescriptor(listOf(r.get(deleteFilePath), r.get(deleteFilePathIsRelative),
-                r.get(deleteFileFooterSize), r.get(delfile.FORMAT)))
-            DucklakeDataFile(
+            if (r.get(delfile.DELETE_FILE_ID) != null) requireReadDescriptor(listOf(
+                r.get(delfile.DELETE_FILE_ID), r.get(deleteFilePath), r.get(deleteFilePathIsRelative), r.get(deleteFileFooterSize), r.get(delfile.FORMAT),
+            ))
+            val descriptor = DucklakeDataFile(
                 orZero(r.get(file.DATA_FILE_ID)),
                 orZero(r.get(file.TABLE_ID)),
                 orZero(r.get(file.BEGIN_SNAPSHOT)),
@@ -690,7 +712,46 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 r.get(file.PARTIAL_MAX),
                 r.get(deleteFilePartialMax),
             )
+            return DucklakeDataFilePageEntry(DucklakeDataFileCursor(descriptor.dataFileId, r.get(delfile.DELETE_FILE_ID)), descriptor)
         }
+    }
+
+    private fun requireReadPage(tableId: Long, snapshotId: Long, limit: Int) {
+        require(limit in 1..1024 && tableId >= 0) { "Read page requires limit in 1..1024 and nonnegative table ID" }
+        if (!conservativeFinal11Read(dsl)) invalidRichMetadata("SQL-paged reads require an owned opt-in final-1.1 session")
+        if (getSnapshot(snapshotId) == null) invalidRichMetadata("Read-page snapshot is not visible in this owned view")
+    }
+
+    private fun pageText(field: Field<String>, limit: Int?): Field<String> =
+        if (limit == null) field else DSL.substring(field, 1, Final11ReadMetadataQueries.MAX_TEXT + 1)
+
+    private fun requirePageText(row: org.jooq.Record) {
+        if (row.intoArray().any { it is String && it.length > Final11ReadMetadataQueries.MAX_TEXT }) {
+            invalidRichMetadata("Read-page text exceeds the qualification budget")
+        }
+    }
+
+    /** SQL-limited CDC insertion candidates; embedded DATA tags still require row filtering. */
+    fun getDataFilesAddedBetweenPage(
+        tableId: Long, startSnapshot: Long, endSnapshot: Long, after: DucklakeAddedFileCursor?, limit: Int,
+    ): List<DucklakeAddedFilePageEntry> {
+        requireReadPage(tableId, endSnapshot, limit)
+        require(startSnapshot in 0..endSnapshot) { "Invalid added-file snapshot window" }
+        require(after == null || (after.beginSnapshot >= 0 && after.dataFileId >= 0)) { "Invalid added-file cursor" }
+        val file = DUCKLAKE_DATA_FILE.`as`("file")
+        val afterCondition = if (after == null) DSL.trueCondition() else file.BEGIN_SNAPSHOT.gt(after.beginSnapshot)
+            .or(file.BEGIN_SNAPSHOT.eq(after.beginSnapshot).and(file.DATA_FILE_ID.gt(after.dataFileId)))
+        val fields = file.fields().map { field ->
+            if (field.dataType.isString) pageText(field.coerce(String::class.java), limit).`as`(field.name) else field
+        }
+        return dsl.select(fields).from(file).where(file.TABLE_ID.eq(tableId))
+            .and(file.BEGIN_SNAPSHOT.le(endSnapshot))
+            .and(file.BEGIN_SNAPSHOT.ge(startSnapshot).or(file.PARTIAL_MAX.ge(startSnapshot)))
+            .and(afterCondition).orderBy(file.BEGIN_SNAPSHOT, file.DATA_FILE_ID).limit(limit).fetch { row ->
+                requirePageText(row)
+                val descriptor = toDataFileNoDelete(row.into(file))
+                DucklakeAddedFilePageEntry(DucklakeAddedFileCursor(descriptor.beginSnapshot, descriptor.dataFileId), descriptor)
+            }
     }
 
     override fun getDataFilesAddedBetween(tableId: Long, startSnapshot: Long, endSnapshot: Long): List<DucklakeDataFile> {

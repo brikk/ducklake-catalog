@@ -251,6 +251,12 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ### R07 acceptance hardening and handoff
 
+**Additive SQL-paged file entry points:** active data/delete associations and added
+DATA candidates now have explicit SQL-limited keyset methods on `JdbcDucklakeCatalog`.
+Composite delete identity, NULL row starts, overlap windows and bounded path transfer
+are preserved. Existing materialized list APIs are not rebranded as bounded, and
+other metadata/inline/CDC page requests remain open. [Exact page contract and scope](../docs/READ-FILE-PAGES-1.1.md).
+
 **Additive controlled session API:**
 `JdbcDucklakeCatalog.readSession(DucklakeReadSessionControl(timeoutSeconds), Supplier)`
 publishes the actual executing JDBC statement for cancellation and sets its remaining

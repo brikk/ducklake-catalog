@@ -115,6 +115,11 @@ internal class TestFinal11NativeReadLineage {
                     val historic = c.getDataFiles(table.tableId, first).single()
                     assertThat(historic.dataFileId).isEqualTo(file.dataFileId)
                     assertThat(historic.rowIdStart).isNull() // Same physical merge output; embedded row/snapshot tags control history.
+                    assertThat(c.getDataFilesPage(table.tableId, first, null, 1).single().dataFile).isEqualTo(historic)
+                    val added = c.getDataFilesAddedBetweenPage(table.tableId, second, second, null, 1).single().dataFile
+                    assertThat(added.dataFileId).isEqualTo(file.dataFileId)
+                    assertThat(added.beginSnapshot).isEqualTo(first)
+                    assertThat(added.rowIdStart).isNull()
                     assertThat(c.getLiveRowCount(table.tableId, current)).isEqualTo(7)
                     assertThatThrownBy { c.getLiveRowCount(table.tableId, first) }
                         .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("require a scan")
