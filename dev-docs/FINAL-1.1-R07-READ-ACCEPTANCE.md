@@ -1,5 +1,13 @@
 # R07 read acceptance and rollout handoff — October 23, 2026
 
+**October24 continuation:** the original library/consumer-handoff checkpoint below
+is historical. Both plugins now have positive guarded read-only SQL evidence;
+Trino's timezone fix is verified, and consumer-requested catalog default/control/
+file-page/planning-metadata APIs have been implemented and fully checked. Fresh
+GPT6.1Sol sessions are adopting them. Broad R07/production remains NO-GO; payload/
+deletion paging, engine/lease/route/deployment requirements and native failures are
+not waived. [Latest exact commits, evidence and open work](R07-CONSUMER-CONTINUATION-2026-10-24.md).
+
 ## Decision
 
 **Guarded library acceptance: PASS. Production/default-on/broad-native rollout:

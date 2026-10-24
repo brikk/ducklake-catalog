@@ -1,5 +1,15 @@
 # DuckLake 1.1 support TODO
 
+**October24 R07 continuation:** Trino now has positive five-route two-worker SQL
+with the legacy timezone pruning fix; Doris has a guarded PostgreSQL/S3 file tier.
+Catalog3fd75dc/0058e8d/6146a3e/78c2a12 add decoded missing-file defaults, actual JDBC
+statement cancellation/timeouts and SQL-paged file/planning metadata. Full latest
+library checks pass898 maintained+86 direct-Java tests/17,602 records. Fresh
+GPT6.1Sol connector sessions are adopting the new APIs. R07 is still OPEN: decoded
+inline payload/CDC and deletion-candidate paging, complete consumer adoption and
+engine/lease/route/deployment gates remain. Native failures are unchanged/unwaived.
+[Current continuation and precise owner handoffs](R07-CONSUMER-CONTINUATION-2026-10-24.md).
+
 Canonical implementation queue, starting from maintained DuckDB 2.0.0 / JDBC
 2.0.0.0 and signed DuckLake `417a9117f5`, Quack `f96420ed46`. **Read work is active;
 write work is deferred.** The [existing reader](../docs/READING-1.1.md) remains
