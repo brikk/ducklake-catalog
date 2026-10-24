@@ -17,6 +17,7 @@ import org.assertj.core.api.Assertions.assertThat
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
+import java.sql.Connection
 
 /** Native setup and direct SQL observation, always outside the library reader's owned transaction. */
 internal class Final11PostgresFixture(private val migrate: Boolean = false) : AutoCloseable {
@@ -63,10 +64,12 @@ internal class Final11PostgresFixture(private val migrate: Boolean = false) : Au
     }
 
     fun metadata(sql: String) {
-        DriverManager.getConnection(server.getJdbcUrl(), server.getUser(), server.getPassword()).use { c ->
+        metadataConnection().use { c ->
             c.createStatement().use { it.execute(sql) }
         }
     }
+
+    fun metadataConnection(): Connection = DriverManager.getConnection(server.getJdbcUrl(), server.getUser(), server.getPassword())
 
     fun rows(sql: String): List<List<String?>> = DriverManager.getConnection(server.getJdbcUrl(), server.getUser(), server.getPassword()).use { c ->
         c.createStatement().use { s -> s.executeQuery(sql).use { r -> buildList {
@@ -74,12 +77,12 @@ internal class Final11PostgresFixture(private val migrate: Boolean = false) : Au
         } } }
     }
 
-    fun reader(enableFinal11Reads: Boolean = true): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
+    fun reader(enableFinal11Reads: Boolean = true, maxConnections: Int = 2): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
         catalogDatabaseUrl = server.getJdbcUrl()
         catalogDatabaseUser = server.getUser()
         catalogDatabasePassword = server.getPassword()
         dataPath = data.toString()
-        maxCatalogConnections = 2
+        maxCatalogConnections = maxConnections
         this.enableFinal11Reads = enableFinal11Reads
     })
 

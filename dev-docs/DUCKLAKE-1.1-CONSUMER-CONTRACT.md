@@ -251,6 +251,14 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ### R07 acceptance hardening and handoff
 
+**Additive controlled session API:**
+`JdbcDucklakeCatalog.readSession(DucklakeReadSessionControl(timeoutSeconds), Supplier)`
+publishes the actual executing JDBC statement for cancellation and sets its remaining
+query timeout. Old Supplier-only callers and wire/record shapes remain unchanged.
+Real blocked PostgreSQL metadata cancel/timeout/recovery is targeted-tested; other
+drivers, setup/prepare/network interruption and physical leases are not certified.
+[Exact API and qualification limits](../docs/READ-SESSION-CONTROL.md).
+
 **October 24 consumer-requested additive API:**
 `JdbcDucklakeCatalog.getMissingFileColumnDefaultDecoded(tableId, columnId, snapshotId)`
 resolves fresh stable-ID target metadata and validates/decodes an initial literal

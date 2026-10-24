@@ -107,6 +107,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /** Set on a thread for the duration of [readSession]: every read on that thread uses it. */
     private val readSessionDsl: ThreadLocal<DSLContext?> = ThreadLocal()
     private val validatedReadSession: ThreadLocal<DSLContext?> = ThreadLocal()
+    private val readSessionControl: ThreadLocal<DucklakeReadSessionControl?> = ThreadLocal()
 
     /** The context reads use: the thread's pinned read session if one is open, else the pool. */
     private val dsl: DSLContext
@@ -256,7 +257,31 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     internal fun forConnection(connection: Connection): DSLContext =
         DSL.using(jooqConfiguration.derive(connection))
 
+    /**
+     * Statement cancellation/deadline opt-in; the old Supplier-only overload is unchanged.
+     * [control] must be unique to this outer session. Nested reads reuse it; attempting to replace
+     * an existing session's control rejects rather than silently ignore a deadline/cancellation.
+     */
+    fun <T> readSession(control: DucklakeReadSessionControl, action: java.util.function.Supplier<T>): T {
+        if (readSessionDsl.get() != null) {
+            require(readSessionControl.get() === control) { "Cannot replace the control of an owned read session" }
+            control.checkActive()
+            return action.get()
+        }
+        control.claim()
+        readSessionControl.set(control)
+        try {
+            control.checkActive()
+            return readSession(action)
+        } finally {
+            readSessionControl.remove()
+            control.finish()
+        }
+    }
+
     override fun <T> readSession(action: java.util.function.Supplier<T>): T {
+        val control = readSessionControl.get()
+        control?.checkActive()
         if (readSessionDsl.get() != null) {
             return action.get() // nested: reuse the outer session
         }
@@ -272,13 +297,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 trySetting("read-only") { conn.isReadOnly = true }
                 trySetting("REPEATABLE READ") { conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ }
             }
-            val sessionDsl = forConnection(conn)
-            metadata.begin(sessionDsl)
-            if (final11ReadRoute == Final11ReadRoute.POSTGRES) sessionDsl.execute("SET LOCAL intervalstyle='postgres'")
-            if (final11ReadRoute == Final11ReadRoute.MYSQL) Final11MySqlLayout.requireSession(sessionDsl)
+            val rawDsl = forConnection(conn)
+            val sessionDsl = if (control == null) rawDsl else DSL.using(rawDsl.configuration().deriveAppending(
+                org.jooq.impl.DefaultExecuteListenerProvider(control.listener()),
+            ))
             readSessionDsl.set(sessionDsl)
             try {
-                return action.get()
+                metadata.begin(sessionDsl)
+                if (final11ReadRoute == Final11ReadRoute.POSTGRES) sessionDsl.execute("SET LOCAL intervalstyle='postgres'")
+                if (final11ReadRoute == Final11ReadRoute.MYSQL) Final11MySqlLayout.requireSession(sessionDsl)
+                control?.checkActive()
+                return action.get().also { control?.checkActive() }
             }
             finally {
                 validatedReadSession.remove()
