@@ -5,6 +5,16 @@ Active queue; stable UF IDs are unchanged. For other review work use
 
 ## Shipping artifacts — October 21
 
+**Latest upstream review, October 24:** main advanced from `ea543c71` to
+`947c8496` (seven mainline merges). Public DuckDB-2.0 Linux extensions remain
+byte-identical to the qualified pins; no upgrade/repin is made. Continue guarded
+connector work, but prioritize a Trino legacy TIMESTAMPTZ calendar-partition
+pruning regression/fix: a native GMT-12-written 1.0 row is retained by native SQL
+but rejected by the current Trino matcher (matcher-level reproduction, not a full
+SQL failure claim). Future upgrade gates also include hashed native partition
+paths, row-group options and new Quack's rejection of metadata ATTACH READ_ONLY.
+R07 remains NO-GO. [Review, evidence and action](UPSTREAM-REVIEW-2026-10-24.md).
+
 - [x] Verify official DuckDB 2.0.0, JDBC 2.0.0.0 and Python 2.0.0 artifacts.
 - [x] Record actual core `d54cbbe3df`, signed DuckLake `417a9117f5`, Quack `f96420ed46`
   and final catalog `1.1`, separately from branch tips and frozen preview locks.
