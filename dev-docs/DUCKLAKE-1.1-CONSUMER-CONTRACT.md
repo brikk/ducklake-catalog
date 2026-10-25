@@ -251,6 +251,15 @@ implementation nor coordinated rollout is performed here; R07 and writes stay op
 
 ### R07 acceptance hardening and handoff
 
+**Additive deletion/history transfer APIs:** SQL-paged incremental/full deletion
+candidates, file-local inline-delete positions, exact bounded retained-file ID
+lookups and snapshot/change history now complement the file/planning/inline pages.
+Candidate cursors are enumeration phases, not final CDC event order; equal paths
+and earlier begins preserve tagged-window semantics. New planning/default paths
+validate physical layouts before numeric coercion. Caller budgets, payload decoding,
+engine capabilities, retention and real connector adoption remain mandatory.
+[Exact semantics, bounds and negative fixtures](../docs/READ-DELETION-PAGES-1.1.md).
+
 **Additive decoded inline payload pages:** ordinary and inclusive CDC candidate
 methods now apply SQL LIMIT/keyset and per-cell representation bounds before JDBC
 transfer, preserve original row/begin/end identities and fresh stable-ID target

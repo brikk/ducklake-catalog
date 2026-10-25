@@ -33,6 +33,7 @@ internal class Final11PlanningMetadata(
     private val session: () -> DSLContext,
     private val inlineRegistryExists: () -> Boolean,
     private val inlineLiveness: (Long, Long, Long) -> Boolean,
+    private val validateInlineRegistry: (DSLContext) -> Unit,
 ) : DucklakePlanningMetadata {
     override fun listSchemasPage(snapshotId: Long, afterSchemaId: Long?, limit: Int): List<DucklakeSchema> {
         val ctx = context(snapshotId, 0, afterSchemaId, limit)
@@ -125,6 +126,7 @@ internal class Final11PlanningMetadata(
         val ctx = context(snapshotId, tableId, afterSchemaVersion, limit)
         val visibleVersion = Final11ReadCompatibility.visibleSchemaVersion(ctx, snapshotId)
         if (!inlineRegistryExists()) return emptyList()
+        validateInlineRegistry(ctx)
         val i = DUCKLAKE_INLINED_DATA_TABLES.`as`("i")
         val rows = ctx.select(fields(i, limit)).from(i).where(i.TABLE_ID.eq(tableId))
             .and(i.SCHEMA_VERSION.le(visibleVersion))

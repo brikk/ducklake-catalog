@@ -30,3 +30,13 @@ data class DucklakeAddedFilePageEntry(val cursor: DucklakeAddedFileCursor, val d
 /** Seek identity of one physical inline row version, independent of its insertion/deletion event window. */
 @JvmRecord
 data class DucklakeInlineCursor(val rowId: Long, val beginSnapshot: Long)
+
+/** Incremental phase first, then full-file retirements; snapshot coordinates are candidate facts, not final CDC event order. */
+@JvmRecord
+data class DucklakeDeletionCursor(val fullFileDelete: Boolean, val snapshotId: Long, val dataFileId: Long, val deleteFileId: Long?)
+
+@JvmRecord
+data class DucklakeDeletionPageEntry(val cursor: DucklakeDeletionCursor, val deletion: DucklakeChangeFeedDeletion)
+
+@JvmRecord
+data class DucklakeInlinedFileDeleteCursor(val dataFileId: Long, val position: Long, val snapshotId: Long)

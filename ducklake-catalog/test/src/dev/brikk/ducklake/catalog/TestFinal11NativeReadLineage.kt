@@ -69,6 +69,9 @@ internal class TestFinal11NativeReadLineage {
                     assertThat(secondWindow.snapshotId).isEqualTo(earlier)
                     assertThat(secondWindow.previousDeletePath).isEqualTo(secondWindow.currentDeletePath)
                     assertThat(secondWindow.currentDeletePartialMax).isNull()
+                    val paged = c.getDeletionsBetweenPage(table.tableId, later, later, null, 1).single()
+                    assertThat(paged.deletion).isEqualTo(secondWindow)
+                    assertThat(c.getDeletionsBetweenPage(table.tableId, later, later, paged.cursor, 1)).isEmpty()
                     val metadata = c.readMetadata().getFileReadMetadata(table.tableId, current).single()
                     assertThat(metadata.deleteCount).isEqualTo(2)
                     assertThat(metadata.deleteRowGroupCount).isEqualTo(1)
@@ -103,6 +106,7 @@ internal class TestFinal11NativeReadLineage {
                     val table = c.getTable("main", "t", current)!!
                     val file = c.getDataFiles(table.tableId, current).single()
                     assertThat(file.rowIdStart).isNull()
+                    assertThat(c.getDataFilesByIdsBatch(table.tableId, listOf(file.dataFileId)).single().rowIdStart).isNull()
                     val path = c.readHierarchy().listRetainedFiles(DucklakeFileKind.DATA, null, 10).single { it.fileId == file.dataFileId }.resolvedPath
                     assertThat(parquet("SELECT i,_ducklake_internal_row_id,_ducklake_internal_snapshot_id,hex(b) " +
                         "FROM read_parquet(${q(path)}) ORDER BY i"))
@@ -162,6 +166,9 @@ internal class TestFinal11NativeReadLineage {
                     val candidate = c.getDeletionsBetween(table.tableId, later, later).single { !it.fullFileDelete }
                     assertThat(candidate.snapshotId).isEqualTo(earlier)
                     assertThat(candidate.previousDeletePath).isEqualTo(candidate.currentDeletePath)
+                    val page = c.getDeletionsBetweenPage(table.tableId, later, later, null, 1).single()
+                    assertThat(page.deletion).isEqualTo(candidate)
+                    assertThat(c.getDeletionsBetweenPage(table.tableId, later, later, page.cursor, 1)).isEmpty()
                     assertThat(c.readMetadata().getFileReadMetadata(table.tableId, current).single().deleteRowGroupCount).isNull()
                     assertThatThrownBy { c.getLiveRowCount(table.tableId, earlier) }.isInstanceOf(DucklakeInvalidOperationException::class.java)
                 }) }

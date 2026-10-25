@@ -53,11 +53,12 @@ then applies the already-qualified scalar delete. No failure is converted into a
 native writer pass: general MySQL updates/lifecycle remain deferred M01. The input
 values/expected read rows are unchanged, and no corpus golden/exclusion/pin moved.
 
-**Incomplete request coverage:** these methods do not yet page deletion candidates,
-inline versions/payloads/CDC, schema/table enumeration, partition specs/values or
-name maps. A connector that calls those unbounded APIs still cannot claim a globally
-bounded plan. Total query budgets, physical retention/leases and connector adoption
-remain separate requirements; this is not broad R07 or production approval.
+**Separate request coverage:** these methods do not themselves page other metadata
+or payloads. Use [planning metadata](READ-PLANNING-METADATA-1.1.md),
+[inline payload/CDC](READ-INLINE-PAGES-1.1.md) and [deletion/history](READ-DELETION-PAGES-1.1.md)
+entry points as needed. A connector that still calls the old unbounded APIs cannot
+claim a globally bounded plan. Total query budgets, physical retention/leases and
+connector adoption remain separate requirements; this is not broad R07 or production approval.
 
 Full maintained verification passes **872 JUnit tests** (723 catalog, 51 SLT,
 98 replay) and **86 separate direct-Java tests**, zero failures/errors/JUnit skips;

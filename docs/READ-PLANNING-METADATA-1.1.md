@@ -69,9 +69,10 @@ are expressly query/negative fixtures, not native import/flush or connector scan
 Existing 0.4/1.0 list APIs, constructors and JSON record shapes remain unchanged.
 
 File descriptors have separate [active/added pages](READ-FILE-PAGES-1.1.md).
-Deletion candidates and decoded inline ordinary/CDC payload transfers still need
-their own SQL paging; these metadata pages alone do **not** make a whole query
-globally bounded. Snapshot/file leases, arbitrary network interruption and engine
+Deletion candidates/history and decoded inline ordinary/CDC payload transfers have
+[separate deletion pages](READ-DELETION-PAGES-1.1.md) and [payload pages](READ-INLINE-PAGES-1.1.md);
+these metadata pages alone do **not** make a whole query globally bounded.
+Snapshot/file leases, arbitrary network interruption and engine
 capabilities are also separate. Read-only/opt-in defaults, migration/write guards,
 dependency/corpus pins and native failing gates are unchanged. Connector adoption
 must be verified on exact candidate bytes before extending the declared scope.

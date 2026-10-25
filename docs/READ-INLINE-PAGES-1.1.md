@@ -85,7 +85,9 @@ nanosecond timestamps. Native MySQL evolution is not claimed or skipped.
 Existing list-returning methods/constructors/record components/fragment JSON and
 legacy0.4/1.0 branches are unchanged. These pages do not implement a Doris inline
 transport/CDC surface, a Parquet reader, retention lease or cleanup permission.
-Deletion-candidate pagination and connector adoption still remain separate work.
+Deletion candidates, positional metadata and retained history have
+[separate SQL-paged APIs](READ-DELETION-PAGES-1.1.md). Connector adoption and whole-
+query budgets still require their own evidence.
 
 Verification adds31 tests (four common cases on each of five routes, two more on
 each of four native-mutation-qualified routes, and three local/unit guards).

@@ -159,7 +159,19 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
     companion object {
         const val MAX_ROWS = 65536
         const val MAX_TEXT = 16384
-        fun observedLayout(ctx: DSLContext, route: Final11ReadRoute): List<DucklakeMetadataColumn> {
+        fun observedLayout(ctx: DSLContext, route: Final11ReadRoute): List<DucklakeMetadataColumn> = observedLayout(ctx, route, REQUIRED)
+
+        fun requirePlanningLayout(ctx: DSLContext, route: Final11ReadRoute) { observedLayout(ctx, route, PLANNING_REQUIRED) }
+
+        fun requireInlineRegistryLayout(ctx: DSLContext, route: Final11ReadRoute) {
+            observedLayout(ctx, route, mapOf("ducklake_inlined_data_tables" to mapOf(
+                "table_id" to "BIGINT", "schema_version" to "BIGINT", "table_name" to "VARCHAR",
+            )))
+        }
+
+        private fun observedLayout(
+            ctx: DSLContext, route: Final11ReadRoute, required: Map<String, Map<String, String>>,
+        ): List<DucklakeMetadataColumn> {
             val columns = DSL.table(DSL.sql("information_schema.columns")).`as`("c")
             fun field(name: String) = DSL.field(DSL.name("c", name), String::class.java)
             val tableNames = if (route == Final11ReadRoute.MYSQL) {
@@ -169,18 +181,18 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
                 DSL.substring(field("data_type"), 1, 129)).from(columns)
                 .where(field("table_catalog").eq(Final11SqlBackend.catalog(ctx)))
                 .and(field("table_schema").eq(Final11SqlBackend.schema(ctx)))
-                .and(tableNames.`in`(REQUIRED.keys)).limit(257)
+                .and(tableNames.`in`(required.keys)).limit(257)
                 .fetch { DucklakeMetadataColumn(it.value1(), it.value2(), it.value3()) }
             if (rows.size > 256) invalidLayout("physical layout exceeds the column budget")
             if (rows.any { listOf(it.tableName, it.columnName, it.dataType).any { text -> text.length > 128 } }) {
                 invalidLayout("physical layout name/type exceeds the text budget")
             }
-            REQUIRED.forEach { (table, fields) -> fields.forEach { (name, type) ->
+            required.forEach { (table, fields) -> fields.forEach { (name, type) ->
                 if (rows.count { it.tableName == table && it.columnName == name && observedType(it, route) == type } != 1)
                     invalidLayout("missing or mismatched physical column $table.$name ($type)")
             } }
-            if (route == Final11ReadRoute.POSTGRES) validatePostgresDimensions(ctx, columns)
-            if (route == Final11ReadRoute.MYSQL) Final11MySqlLayout.validate(ctx, REQUIRED)
+            if (route == Final11ReadRoute.POSTGRES) validatePostgresDimensions(ctx, columns, required)
+            if (route == Final11ReadRoute.MYSQL) Final11MySqlLayout.validate(ctx, required)
             return rows.sortedWith(compareBy({ it.tableName }, { it.columnName }))
         }
 
@@ -188,24 +200,24 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
             if (route == Final11ReadRoute.MYSQL) return when {
                 column.columnName.endsWith("_uuid") && column.dataType == "text" -> "UUID"
                 column.dataType == "tinyint" -> "BOOLEAN"
-                column.dataType == "datetime" && column.columnName == "schedule_start" -> "TIMESTAMP WITH TIME ZONE"
+                column.dataType == "datetime" && column.columnName in setOf("schedule_start", "snapshot_time") -> "TIMESTAMP WITH TIME ZONE"
                 else -> metadataType(column.dataType, route)
             }
             return metadataType(column.dataType, route)
         }
 
-        private fun validatePostgresDimensions(ctx: DSLContext, columns: Table<*>) {
+        private fun validatePostgresDimensions(ctx: DSLContext, columns: Table<*>, required: Map<String, Map<String, String>>) {
             fun text(name: String) = DSL.field(DSL.name("c", name), String::class.java)
             fun number(name: String) = DSL.field(DSL.name("c", name), Int::class.javaObjectType)
             val rows = ctx.select(text("table_name"), text("column_name"), text("domain_name"), number("character_maximum_length"),
                 number("datetime_precision")).from(columns)
                 .where(text("table_catalog").eq(DSL.field("current_database()", String::class.java)))
                 .and(text("table_schema").eq(DSL.field("current_schema()", String::class.java)))
-                .and(text("table_name").`in`(REQUIRED.keys)).limit(257).fetch()
+                .and(text("table_name").`in`(required.keys)).limit(257).fetch()
             if (rows.size > 256) invalidLayout("physical layout exceeds the column budget")
-            rows.filter { REQUIRED[it.value1()]?.containsKey(it.value2()) == true }.forEach {
+            rows.filter { required[it.value1()]?.containsKey(it.value2()) == true }.forEach {
                 if (it.value3() != null || it.value4() != null) invalidLayout("domain/narrowed metadata column ${it.value1()}.${it.value2()}")
-                if (it.value2() == "schedule_start" && it.value5() != 6) invalidLayout("schedule_start precision must be 6")
+                if (it.value2() in setOf("schedule_start", "snapshot_time") && it.value5() != 6) invalidLayout("${it.value2()} precision must be 6")
             }
         }
 
@@ -237,6 +249,26 @@ internal class Final11ReadMetadataQueries(private val ctx: DSLContext, private v
                 "schedule_start" to "TIMESTAMP WITH TIME ZONE"),
             "ducklake_column" to mapOf("table_id" to "BIGINT", "column_id" to "BIGINT", "parent_column" to "BIGINT", "nulls_allowed" to "BOOLEAN",
                 "column_name" to "VARCHAR", "column_type" to "VARCHAR", "initial_default" to "VARCHAR", "default_value_type" to "VARCHAR"),
+        )
+        private val PLANNING_REQUIRED = REQUIRED + mapOf(
+            "ducklake_data_file" to (REQUIRED.getValue("ducklake_data_file") + mapOf("file_order" to "BIGINT", "file_format" to "VARCHAR",
+                "file_size_bytes" to "BIGINT", "footer_size" to "BIGINT", "row_id_start" to "BIGINT", "partition_id" to "BIGINT",
+                "mapping_id" to "BIGINT", "partial_max" to "BIGINT")),
+            "ducklake_delete_file" to (REQUIRED.getValue("ducklake_delete_file") + mapOf("file_size_bytes" to "BIGINT",
+                "footer_size" to "BIGINT", "partial_max" to "BIGINT")),
+            "ducklake_column" to (REQUIRED.getValue("ducklake_column") + mapOf("begin_snapshot" to "BIGINT", "end_snapshot" to "BIGINT",
+                "column_order" to "BIGINT")),
+            "ducklake_snapshot" to mapOf("snapshot_id" to "BIGINT", "schema_version" to "BIGINT", "snapshot_time" to "TIMESTAMP WITH TIME ZONE",
+                "next_catalog_id" to "BIGINT", "next_file_id" to "BIGINT"),
+            "ducklake_snapshot_changes" to mapOf("snapshot_id" to "BIGINT", "changes_made" to "VARCHAR", "author" to "VARCHAR",
+                "commit_message" to "VARCHAR", "commit_extra_info" to "VARCHAR"),
+            "ducklake_partition_info" to mapOf("partition_id" to "BIGINT", "table_id" to "BIGINT", "begin_snapshot" to "BIGINT", "end_snapshot" to "BIGINT"),
+            "ducklake_partition_column" to mapOf("partition_id" to "BIGINT", "table_id" to "BIGINT", "partition_key_index" to "BIGINT",
+                "column_id" to "BIGINT", "transform" to "VARCHAR"),
+            "ducklake_file_partition_value" to mapOf("data_file_id" to "BIGINT", "table_id" to "BIGINT", "partition_key_index" to "BIGINT",
+                "partition_value" to "VARCHAR"),
+            "ducklake_name_mapping" to mapOf("mapping_id" to "BIGINT", "column_id" to "BIGINT", "source_name" to "VARCHAR", "target_field_id" to "BIGINT",
+                "parent_column" to "BIGINT", "is_partition" to "BOOLEAN"),
         )
     }
 }
