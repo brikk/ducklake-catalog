@@ -1,5 +1,11 @@
 # R07 consumer continuation and additive catalog APIs — October 24
 
+**Superseded API checkpoint, October25:** the pending payload/deletion/history
+entry points below are now supplied by df00fcd/6730bb8, fully verified. Unknown
+history is corrected in10f81f9. Fresh connector sessions are adopting10f81f9 and
+must separately qualify6730bb8; nothing is inferred from library tests.
+[Latest exact contracts, evidence and next handoff](R07-CATALOG-PAGING-2026-10-25.md).
+
 ## Current decision
 
 **Latest follow-up:** Trino `e4743d5a7dd60bc05d3b4f9e84594662fb3a384e` adopts decoded

@@ -1,5 +1,13 @@
 # DuckLake 1.1 support TODO
 
+**October25:** catalog10f81f9/df00fcd/6730bb8 correct unknown default history and
+supply decoded inline ordinary/CDC, deletion/position, retained-ID and snapshot/
+change-history pages with physical-type/allocation guards. Full985 maintained+86
+direct-Java tests/17,602 records pass. Fresh GPT6.1Sol connector sessions are
+qualifying10f81f9; next handoff is immutable6730bb8. R07 remains OPEN for actual
+adoption/whole-query/engine/lease/route/fleet evidence; native failures are unwaived.
+[Latest contracts, logs and work ownership](R07-CATALOG-PAGING-2026-10-25.md).
+
 **October24 R07 continuation:** Trino now has positive five-route two-worker SQL
 with the legacy timezone pruning fix; Doris has a guarded PostgreSQL/S3 file tier.
 Catalog3fd75dc/0058e8d/6146a3e/78c2a12 add decoded missing-file defaults, actual JDBC

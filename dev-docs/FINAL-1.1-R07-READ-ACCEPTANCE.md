@@ -1,5 +1,12 @@
 # R07 read acceptance and rollout handoff — October 23, 2026
 
+**October25 catalog follow-up:** reported inline payload/CDC, deletion/position,
+retained file-ID and snapshot/change-history transfer APIs are implemented and
+fully checked (985 maintained+86 direct-Java tests/17,602 records). Latest local
+candidate6730bb8 is immutable. Active fresh connector sessions are still qualifying
+10f81f9, not automatically the newer bytes; whole-query/engine/lease/native/rollout
+gates remain open. [Current contracts, exact candidate and next handoff](R07-CATALOG-PAGING-2026-10-25.md).
+
 **October24 continuation:** the original library/consumer-handoff checkpoint below
 is historical. Both plugins now have positive guarded read-only SQL evidence;
 Trino's timezone fix is verified, and consumer-requested catalog default/control/
