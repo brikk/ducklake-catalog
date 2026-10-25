@@ -1,12 +1,25 @@
 # DuckLake 1.1 support TODO
 
 **Current coordination checkpoint:** [scope separation, verified status and code-quality gate](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
-New assignments/candidates are paused while current qualification finishes and
-final diffs are reviewed. Older issues/hardening and engine/rollout work remain
-tracked, not silently folded into format compatibility or waived. Dated entries
-below are evidence checkpoints, not proof that the active working changes are done.
+**October 25 reconciled state:** the latest Trino (`83cb24b`) and Doris (`3bad03f`)
+adoption rounds are finished on catalog `6730bb8`. The current checkpoint separates
+completed implementation from upstream verification, connector scope and release.
+The next finite quality batch is QG-01 cancellation, QG-02 proxy lifecycle and QG-05
+Unicode name identity; its fixes are pending. No automatic candidate/API expansion.
 
-**October25:** catalog10f81f9/df00fcd/6730bb8 correct unknown default history and
+R01/R05/R06 are complete for their approved scopes. R02/R04's scoped reader features
+are implemented; identified DuckLake extension fixes await verification in published
+binaries. R03's qualified reader is implemented with explicit unsupported values;
+its interval-flush failure has no confirmed fix. R07's broad acceptance/rollout stays
+open, but does not erase completed library and connector work. **W01–W06 writes
+remain pending.** See the checkpoint for exact upstream tests and the future sequence.
+
+The checkboxes below retain each original item's full acceptance scope. They are
+not the sole implementation-status field. Older defects/hardening and engine/rollout
+remain tracked independently. Dated entries below are historical evidence; their
+then-current “pending” statements are superseded by this checkpoint.
+
+**Historical October25 API checkpoint:** catalog10f81f9/df00fcd/6730bb8 correct unknown default history and
 supply decoded inline ordinary/CDC, deletion/position, retained-ID and snapshot/
 change-history pages with physical-type/allocation guards. Full985 maintained+86
 direct-Java tests/17,602 records pass. Fresh GPT6.1Sol connector sessions are

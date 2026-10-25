@@ -3,6 +3,13 @@
 Active queue; stable UF IDs are unchanged. For other review work use
 [BACKLOG.md](BACKLOG.md). Consumer support lives in [compatibility](../docs/COMPATIBILITY.md).
 
+**Current October 25 state:** [reconciled implementation and upstream-verification ledger](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
+Today's four official DuckDB-2.0 Linux extension downloads are byte-identical to
+October 24; main remains `947c8496`. R02/R04 source fixes await artifact verification;
+R03's interval fix is not established. Trino's older timezone-pruning issue was
+fixed in `9913cd6` and retained in its final qualification. Both latest consumer
+rounds are finished. The historical review below does not reopen that completed work.
+
 ## Shipping artifacts — October 21
 
 **Latest upstream review, October 24:** main advanced from `ea543c71` to

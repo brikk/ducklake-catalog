@@ -6,7 +6,9 @@ and native Quack, qualified
 against official DuckDB **2.0.0**, DuckLake `417a9117f5` and Quack `f96420ed46`
 (protocol v3). It is not full 1.1 support,
 blanket PostgreSQL/MySQL certification or permission to write/migrate a catalog.
-See [qualified backend routes and restrictions](READ-BACKENDS.md); R07 acceptance/rollout remains separate.
+See [qualified backend routes and restrictions](READ-BACKENDS.md) and the
+[current implementation/verification checkpoint](../dev-docs/R07-SCOPE-AND-QUALITY-CHECKPOINT.md);
+R07's broad acceptance/rollout remains separate from completed scoped implementation.
 Direct PostgreSQL additionally has an explicit [narrower projection subset](READ-POSTGRES-1.1.md),
 not the full DuckDB-backed tier described below.
 MySQL has a separate [existing-catalog read-only subset](READ-MYSQL-1.1.md), not
@@ -114,8 +116,9 @@ The reader rejects these rather than silently returning wrong values:
   decimal, VARCHAR/JSON/BLOB, UUID, finite date/time/timestamp/interval families and
   SQL NULL, recursively within STRUCT/LIST/MAP. Native-disallowed TIME → TIME_NS
   ALTER is not treated as a supported promotion.
-- Empty ordinary inline projections: use `countInlinedRows` for counts. Identity-only
-  CDC can still use its row/snapshot metadata.
+- Empty ordinary projections through the legacy list API: use `countInlinedRows`
+  for counts. The [decoded page API](READ-INLINE-PAGES-1.1.md) instead supports
+  identity-only empty projections; CDC can also use its row/snapshot metadata.
 
 Requested columns must come from the target snapshot's metadata. Stored NULLs
 remain NULL; a literal default string `NULL` is not an SQL NULL sentinel. The adapter

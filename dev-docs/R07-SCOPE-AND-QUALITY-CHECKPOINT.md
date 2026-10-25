@@ -1,130 +1,236 @@
 # 1.1 scope and code-quality checkpoint
 
-October25,2026. **This is the current coordination checkpoint**, not another
-implementation plan or a new claim that all R07 work is complete. Earlier dated
-reports remain evidence. New assignments/candidates are paused while the two
-current rounds finish and their final diffs are reviewed. No code was changed by
-this review; active connector checkouts were not edited or formatted.
+**Current evaluation: October 25, 2026.** This is the current status and next-work
+list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
+Historical reports are evidence, not additional active queues.
 
-## Where we actually are
+## Decision in plain language
 
-| Component | Last committed, verified checkpoint | Current6730bb8 round |
+**Keep the implementation. Do not restart or rebuild the history commit by commit.**
+The declared library read features are implemented and have recorded qualification.
+Both latest connector adoption rounds are finished. Three concrete connector
+quality findings require a narrow correction/verification batch. This evaluation
+did not establish a need for another catalog API or a library rewrite.
+
+Feature implementation, verification against upstream software, connector capability
+and production release are different statuses. A feature can be implemented and
+independently tested while its last interoperability test awaits an upstream fix.
+That pending test is still pending, not a passing test or unfinished coding.
+
+The earlier word **“native”** meant running SQL through DuckDB with its DuckLake
+extension, sometimes using Quack or a PostgreSQL/MySQL scanner. It did not identify
+the faulty component. Below, failures name the operation and known component;
+unresolved attribution is explicit. Existing task names containing `Native` remain
+unchanged so their original reproducers remain runnable.
+
+## Original queue: implementation versus remaining acceptance
+
+| Requirement | Our implementation | Remaining acceptance / scope |
 |---|---|---|
-| Catalog | `6730bb8`:985 maintained+86 driver-only tests,17,602 records; lint/ABI/wire/Java17 pass | Candidate immutable; no new source round assigned |
-| Trino | `cd4afc1`, candidate10f81f9:128 candidate/265 released tests, lint,81 records; actual PostgreSQL engine cancellation/deadline before unlock | Working changes uncommitted. Latest returned message is **interim**: qualification reported running, no final result/commit |
-| Doris | `3448107`, candidate10f81f9:16 live/14 targeted; candidate262/236 and released253/227 Java25/17 lanes, lint/ABI/assembly; default ZIP restored | Working changes uncommitted; no final6730bb8 result yet |
+| R01 initial defaults | Complete for qualified scalar missing-field defaults; `ce9608c`, later file API `3fd75dc` and history correction `10f81f9` | Preserve stored NULLs and initial rather than later INSERT defaults; whole-container defaults remain unsupported |
+| R02 inline evolution | Qualified stable-ID reader implemented, `91af736`; PostgreSQL evolution completed through `1e01447` | Three DuckLake extension regressions have merged fixes awaiting artifact verification; unsupported conversions and MySQL evolution remain explicit |
+| R03 types/edge values | Qualified finite temporal/interval/NULL-type reader implemented, `fa9a04d` | VARIANT, infinities and TIME 24:00 reject explicitly; interval persistence after DuckDB+DuckLake flush is unresolved, not known fixed awaiting release |
+| R04 rich metadata | Complete scoped companion, `fb0c982`, PostgreSQL/MySQL ports in R06 | DuckLake migrated-bound fix awaits artifact verification; exposing metadata does not qualify pruning or exact aggregates |
+| R05 hierarchy/paths | Complete explicit bounded metadata/path tier, `2d062e7` | Does not unlock legacy nested-schema scans or grant permission to delete files |
+| R06 backend reads | Complete owner-approved five-route scope through `4dc319c` | MySQL reads existing catalogs only; M01 creation/migration/mutation/scanner acceptance is separate |
+| R07 read acceptance | Library qualification `58ef4d7`, later APIs through `6730bb8`; both connector adoption rounds finished | Three connector quality findings below; broad rollout/engine requirements remain separately open |
+| W01–W06 writes | Pending, deferred | Writer contracts, metadata mutation, lifecycle, maintenance/transactions, migration/restore and write acceptance |
 
-These are different candidate bytes and qualification scopes, not additive unique
-test totals. Do not call the latest connector round done or infer integration from
-the catalog test count. Original supported scopes remain: Trino's explicit guarded
-read-only trials, and Doris's default-off PostgreSQL/S3 native-file tier. Unsupported
-inline/types/historical filtering still refuse; no blanket1.1 or production sign-off.
+R02–R04 and R07's original umbrella checkboxes remain open for their full stated
+acceptance. They must not be interpreted as “implementation never completed.”
+No original requirement or failing gate is removed by this status split.
 
-## Separate origin from release impact
+## Exact current integration state
 
-| Track | What belongs here | Completion meaning |
+All three main trees were clean at evaluation start. Catalog documentation HEAD was
+`0cd5a48`; runtime source is still `6730bb871350fe27d6c926db2f1d8f50f41cb5e1`.
+The immutable bundle is `/tmp/opencode/catalog-r07-6730bb8`. Both consumers used
+catalog JAR SHA256 `9ae564720d48b78f8aa6d4349cc082a8ff11815dfe8a9e639a5c140cc95cbab6`.
+All ten bundle manifest entries were rechecked successfully from `maven-repository`.
+
+| Component | Final evidence | Scope, not a blanket support claim |
 |---|---|---|
-| **1.1 interoperability** | Changed inline layout/schema/default/type contracts, format admission, required descriptor/row/delete semantics and actual connector scans for the declared scope | Exact candidate integration passes and no known wrong-row case in the claimed tier; unsupported cases explicit |
-| **Pre-existing correctness** | TIMESTAMPTZ partition false negatives affecting1.0 too; other older identity/count/schema defects where proven | Independently tracked/regression-tested fixes, not described as new1.1 format changes |
-| **General hardening/quality** | SQL paging, traversal/memory budgets, cancellation/deadlines, lifecycle/resource handling and consolidation | Its own reviewed behavior/limits; not an endlessly expanding definition of format compatibility |
-| **Engine/operations/rollout** | Missing Doris inline/CDC/snapshot/cancel interfaces, retention/leases, packaging/fleets/aggregate pools and artifact upgrades | Explicit separate scope/owner decisions, not automatically a veto on every already-qualified read subset |
+| Catalog | Existing full 985 maintained + 86 separate driver-only tests, 17,602 corpus records; lint/ABI/wire/Java17 | Metadata/inline reads and descriptors; physical file scanning belongs to connectors |
+| Trino `83cb24b043d90eaad162e43ef5a51396e5b61ed8` | Final callback/report; retained XML independently confirms 143 candidate and 266 released tests, zero failures/errors/skips | Guarded opt-in five-route SQL/worker trials, inline/file/CDC; missing-file defaults on four routes, MySQL evolution rejected |
+| Doris `3bad03f7c01864e85beda2e87abba7f92ecea518`, implementation `f025a93` | Final callback/report; retained XML confirms 17 live and 14 targeted tests, zero failures/errors/skips | Default-off PostgreSQL/S3 unencrypted ordinary file tier; inline/mixed-history/unsupported types reject |
 
-Some changes span tracks: owned sessions are necessary for our1.1 read contract,
-while stronger whole-query cancellation/resource guarantees are broader work. Old
-deletion/lineage behavior can also affect1.1. An old or general defect **can still
-block shipping if reachable/serious**; classification is not a waiver. Keep native
-R02/R03/R04/M01 and the long-path producer failure visible against their affected
-operations, without turning them into an undifferentiated “1.1 doesn't work.”
+Doris's Java25/17 candidate lanes are 262/236 and released lanes 253/227, with one
+unchanged legacy skip per overlapping lane. Do not add overlapping lanes into a
+unique-test total. Its released ZIP was restored byte-identically. Trino's 81-record
+types run and both consumers' PostgreSQL cancellation/recovery evidence are in their
+final reports. These are retained results, not newly rerun engine suites here.
 
-The historical R07 umbrella remains open; this checkpoint does not silently tick
-or remove its original constraints. The agreed limited-read milestone, quality
-gate and broader engine/production work must now be reported separately.
+Authoritative consumer reports:
+- `../trino-ducklake/dev-docs/R07-TRINO-CANDIDATE-QUALIFICATION.md` (sibling repository).
+- `../doris-ducklake/dev-docs/VALIDATION-R07-ADOPTION-2026-10-25.md` (sibling repository).
 
-## Bounded first-pass quality review
+Both sessions are finished: Trino `ses_e8be2ebaeffeDrkOEHWirU0xs3`, Doris
+`ses_e8be6ad39ffedAk2DgeiQf6A3j`. Earlier statements that they were pending or dirty
+are superseded. Do not restart their completed assignments.
 
-Reviewed the highest-risk reader/adapter/lifecycle boundaries from committed
-snapshots, not every line of every changed file. Baselines: catalog4dc319c→7e73bae,
-Trino20af905→cd4afc1, Doriscf09dcb→3448107. This window covers R07/consumer trials,
-**not the whole earlier R01–R06 implementation**. Active uncommitted changes are
-not reviewed/approved as finished. Copies are retained under
-`/tmp/opencode/r07-quality-review-2026-10-25/`.
+### Declared read boundary
 
-Inventory:3,258 added production lines across57 files,4,656 test lines and3,524
-documentation lines, excluding small build/harness changes. Tests/docs explain
-much activity, but the production change is still substantial; volume or green
-tests do not establish design quality.
+The library's current contracts are [general reads](../docs/READING-1.1.md),
+[backend routes](../docs/READ-BACKENDS.md), [PostgreSQL](../docs/READ-POSTGRES-1.1.md)
+and [existing MySQL](../docs/READ-MYSQL-1.1.md). Ordinary/historical/CDC inline values
+use qualified types and stable identities; descriptors are not file scans. Legacy
+nested-schema APIs still refuse, while the explicit hierarchy companion is supported.
+Legacy empty ordinary projections reject; the new decoded page API supports
+identity-only empty projections. Unsupported cases must remain explicit failures.
 
-### QG-01 — Trino cancellation fan-out / registry locking
+Doris materializes a bounded plan: 128 total pages, at most the configured
+16-coordinate historical window, and existing physical/work/byte limits. It does
+not stream an unlimited catalog. Trino's per-view totals are likewise not whole-query
+or cross-node guarantees. Accepted scans assume physical objects remain retained;
+concurrent physical cleanup/lease safety is not qualified by a metadata transaction.
 
-At `cd4afc1`, `candidate/src/dev/brikk/ducklake/trino/plugin/DucklakeCandidateAdapter.kt:77-83`
-calls each driver's `cancel()` **inside ConcurrentHashMap.computeIfPresent**.
-One exception aborts the remaining fan-out; a blocking driver holds the registry
-bin lock while registrations/final cleanup also need that map. The catalog control
-explicitly allows driver cancel to block/fail, so this is not an impossible input.
+## Findings and exact next fix batch
 
-**Source-confirmed failure behavior, not a reproduced engine incident.** Recheck
-the final6730bb8 diff (the same pattern was still visible in the live working file
-at review time). Require a focused multi-control/failing-cancel test, attempt all
-registered controls, and keep driver calls outside registry locks. Do not silently
-claim that also solves late worker/task-close or cross-node cancellation.
+### QG-01 — Trino cancellation under registry locks; introduced in `cd4afc1`
 
-### QG-02 — Doris proxy Object/lifecycle methods trigger capture
+At final `83cb24b`, `candidate/src/.../DucklakeCandidateAdapter.kt:86–91` calls
+driver cancellation within `ConcurrentHashMap.computeIfPresent`. An exception
+aborts the remaining controls; a blocking call holds a lock required by same-query
+registration/cleanup. The library explicitly documents that cancellation can fail
+or block.
 
-At `3448107`, `read-tiers/r07/dev/brikk/ducklake/doris/plugin/DuckLakeFinal11.kt:40-49`
-loads the full plan before dispatching **every** proxy call. `equals`/`hashCode`
-have no plan-dispatch implementation and can throw; `toString` and the nominally
-no-op `close` can trigger SQL/S3 capture merely to log or close an unused facade.
-This conflicts with the intended deferred/no-SQL construction/lifecycle boundary.
+**Reproduced at source-slice level:** first failing control leaves the second
+unattempted; same-query registration waits while the driver stub blocks.
+Fix narrowly: snapshot/register state under the map lock, perform driver calls
+outside it, attempt all captured controls, and preserve failure diagnostics.
+Regression must exercise the actual adapter with failure and concurrent lifecycle
+cases. This does not promise cancellation of late workers or remote nodes.
 
-**Source-confirmed proxy behavior, no production incident asserted.** The file was
-unchanged in the active diff at review time. Recheck the final round, then require
-identity-safe Object methods and lifecycle methods that do not load the plan,
-with tests that prove the capture supplier is not called. Do not patch active
-verification underneath the running session.
+### QG-02 — Doris proxy lifecycle forces capture; introduced in `3228a80`
 
-### QG-03 — Catalog API and responsibility growth
+At final `3bad03f`, `read-tiers/r07/.../DuckLakeFinal11.kt:40–49` loads the plan before
+every proxy dispatch. The plan has no equals/hashCode implementation; close and
+toString also force capture. Logging/closing an unused facade can issue SQL/S3 work
+and fail.
 
-`JdbcDucklakeCatalog.kt` was already5,845 lines at4dc319c; it is now6,280, with12
-additional concrete public entry points and further SQL/mapping helpers. This did
-not create the entire large class, but it worsens its concentration of query,
-layout, transaction, paging, projection and cancellation responsibilities. I own
-that choice. Review the public read boundary and extraction of cohesive query
-components before stable publication; do not begin a blind rewrite during this gate.
+**Reproduced at source-slice level:** equals/hashCode each capture then fail;
+toString/close each capture, and close propagates a capture failure. Fix narrowly:
+identity-safe Object methods and no-load lifecycle dispatch before accessing the
+lazy plan. The actual-facade regression must prove zero capture calls, including a
+supplier that would fail, and preserve statement ownership/memoization.
 
-### QG-04 — Duplicated schema/budget policy and temporary compatibility machinery
+### QG-05 — Trino Unicode name lookup changes identity; introduced in `83cb24b`
 
-Trino reconstructs/validates column trees in `DucklakeCandidateAdapter.kt:115-166`;
-the catalog and Doris have their own schema validation. This is partly legitimate
-boundary validation, but policies/units/limits can drift. Byte budgets also have
-different scopes/units (encoded cell, decoded page, outer view, physical transfer).
-Name them clearly and test contract agreement rather than treating them as one
-global guarantee. Trino's minimum last-cursor inequality check is weaker than
-Doris's strict per-row order check; recheck the final implementation.
+The new `getSchema`/`getTable` overrides at `DucklakeCandidateAdapter.kt:127–133`
+use Kotlin `equals(ignoreCase=true)`. That equates Unicode long-s `ſ` with ASCII
+`s`; DuckDB and the library hierarchy contract distinguish them. With only `ſ`
+present, a request for `s` selects it; with both present, the new lookup reports a
+false ambiguity. `DucklakeMetadata.getTableHandle` calls this lookup.
 
-The typed `candidate/released` and `read-tiers` split is reasonable **temporary
-trial isolation**, but keeping0.12 compilation must not force permanent bridges or
-become an absolute design veto. Decide the versioned0.13 API/retirement boundary
-deliberately; no new reflection/internal-access layer should grow by accident.
+**Reproduced comparison and independent engine control:** the exact filter
+expressions match `ſ` for request `s`; DuckDB 2.0 creates both tables and returns
+their distinct values (1 and 2). This is not yet an executed Trino SQL regression.
+Add actual-adapter/SQL tests for schema and table names, existing ASCII case rules,
+distinct Unicode names and real duplicate rejection; use the established ASCII-only
+identifier folding rather than a new name policy. Prior library SQL LOWER behavior
+is a separate older compatibility concern, not proof the new comparator is correct.
 
-## What is good / what this review does not prove
+### QG-03/04 — Structural assessment and bounded disposition
 
-Typed public adapters, explicit default-off/write barriers, modular Doris physical
-readers, same-view budgets and independently expected SQL/negative tests are good
-foundations. No vendor/FE source patch or shared-storage staging workaround was
-introduced in these reviewed commits. We should retain that work, not reset it.
+The JDBC class concentrates admission/session orchestration and growing SQL mapping
+responsibilities. However, projection, schema, metadata, hierarchy, backend decoding
+and page-value logic already have separate components. There is no evidence from
+this evaluation that reconstructing the project would improve correctness.
 
-This is a first-pass source review, **not a full concurrency/security audit or new
-test run**. Healthy-driver SQL tests don't cover QG-01's failure case; passing scan
-tests don't cover QG-02's Object contract. Findings must be verified against final
-diffs and fixed narrowly where still present. No current code is certified “clean”
-just because a prior suite passed, and no unknown working edit is discarded.
+Consumer schema/budget validation is duplicated. Some boundary validation is
+legitimate; byte/work totals have different units and scopes. QG-05 is a concrete
+policy divergence to repair now. Do not create a shared validation framework to fix
+three local defects. Trino's cursor-last inequality is weaker than Doris's per-row
+ordering check, but finite budgets bound repetition and no producer ordering defect
+was demonstrated here. Track stricter defensive validation as hardening.
 
-## Coordination decision
+Before stable publication, decide the 0.13 public API and retirement of temporary
+0.12 candidate/released compilation bridges. That design decision is separate from
+finishing the current limited reads; no permanent compatibility-shim project follows.
 
-Let the existing qualification runs finish; require actual final commits/evidence,
-not interim completion messages. Then review those final diffs and address introduced
-defects as a bounded quality batch. **No more feature/candidate expansion by default.**
-Keep separate backlogs for older correctness/hardening and engine/rollout work;
-still fix them, but stop attributing all of them to1.1. Use one reviewed candidate
-and one coherent integration checkpoint rather than another serial feature handoff.
-No release/push/deployment/default-on/migration/1.1-write/cleanup approval follows.
+## Older defects: disposition, not disappearance
+
+| Existing work | Current disposition |
+|---|---|
+| Trino timezone partition false negatives | Older correctness defect; fix `9913cd6`, with continuing final-round regression evidence. Do not reopen as unfinished 1.1 format work |
+| Catalog C08 defaults, C16 interval parsing, C21 empty projection | Scoped 1.1 behavior addressed by R01/R03/page APIs; this does not close every legacy-path part of those older findings |
+| C07 pruning / C09 missing-table classification | Older candidates, not newly verified failures. Conservative 1.1 min/max pruning avoids that optimization; message-based missing-table fallback still exists. Dedicated current-code reachability/reproduction remains older-backlog work |
+| C12 lineage / C18 partition ownership / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |
+| C06 MySQL implicit-DDL atomicity, C10/C11/C17/C19 mutation rules | Relevant prerequisites for future write work, not a reason to reimplement approved read-only routes |
+| Remaining C/H/B/R/N/Q and UF backlog | Retained in [BACKLOG](BACKLOG.md) and [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md); not a completed whole-project audit |
+
+Priority is severity and reachability, not age. A proven older wrong-row defect in
+the declared read path must be fixed before that path is signed off, in a separately
+attributable commit. This evaluation did not establish another such library defect.
+Unknowns stay explicitly unknown rather than being called either fixed or blockers.
+
+## Upstream verification linked to each feature
+
+Availability checked October 25: DuckLake main remains
+`947c8496c9becc53ed487b859384ce65e6edd2e3`; latest DuckDB/JDBC releases remain
+2.0.0/2.0.0.0. Fresh official `v2.0.0/linux_amd64` DuckLake/Quack/PG-scanner/MySQL-scanner
+downloads match the October 24 hashes. DuckLake is still `417a9117f5`; a source merge
+has not changed these downloaded bytes. No installation or repin occurred.
+
+| Follow-up | Defective operation / known fix | Exact remaining verification |
+|---|---|---|
+| R02-U1 | DuckLake legacy STRUCT order read/delete/flush; [fork #96](https://github.com/PeterVanHolland/ducklake/pull/96), `ffec2d6`, via [upstream #1806](https://github.com/duckdb/ducklake/pull/1806) | `upstreamR02NativeTest`: `v10_inlined_struct_field_order.test` |
+| R02-U2 | DuckLake accepts non-literal added-field default; [fork #93](https://github.com/PeterVanHolland/ducklake/pull/93), `ef2fc34`, via #1806 | Same task: `add_struct_field_non_literal_default.test` |
+| R02-U3 | DuckLake crashes on same-transaction STRUCT edits; [fork #90](https://github.com/PeterVanHolland/ducklake/pull/90), `337f390`, verified ancestor of current main | Same task: `add_struct_alter_same_transaction.test` |
+| R04-U1 | DuckLake migration retains unsafe bounds; fork #94 via #1806, merge `6ed5086` | `upstreamR04NativeTest`: `v10_retyped_bounds.test` |
+| R03-U1 | DuckDB+DuckLake interval flush loses microseconds; exact faulty component/fix not established | `upstreamR03NativeTest`: `acknowledged inline interval components and microseconds survive native flush` |
+| M01 | MySQL creation/upgrade/mutation/scanner/type failures; no blanket fixed-source claim | `:ducklake-catalog:final11MySqlNativeTest` (6) and `:ducklake-test-corpus-replay:upstreamMySqlNativeTest` (4); [per-case causes](../docs/READ-MYSQL-1.1-BLOCKERS.md) |
+| Doris producer path | DuckLake produces object-store-rejected long partition component; [#1838](https://github.com/duckdb/ducklake/pull/1838) includes hashing fix, exact case unverified on updated bytes | Existing strict long-path producer test (1 failure), independent from ordinary Doris reads |
+
+R02–R04 tasks are in `:ducklake-test-corpus-replay`. Original failure counts remain
+3/1/1, not rerun or waived here. R02/R04 status is **implementation complete for
+declared scope; external verification awaiting fixed artifact**. R03/M01 have
+unresolved external failures; do not label them all “waiting for shipping.”
+
+When an artifact changes, first qualify identity and changed contracts, then run
+these exact regressions. Quack ATTACH read-only handling, hashed paths, row groups
+and statistics require the already-recorded upgrade assessment. Only reopen our
+specific feature if that verification demonstrates a mismatch.
+
+## What was evaluated, and limits of the conclusion
+
+Reviewed the catalog R01–R07 change inventory (`505aeac..6730bb8`) and the JDBC
+read/session/default/inline/count/paging diff; sampled current compatibility,
+projection/default/evolution/schema, page decoding, metadata and retained-path
+implementations. Reviewed the final Trino production delta `cd4afc1..83cb24b` and
+Doris `3448107..3bad03f`, their current lifecycle methods and final reports. Read
+the original backlog for reachability/prior-fix triage, not a full re-audit of it.
+
+Fresh evidence: bundle SHA checks; retained consumer XML inspection; isolated
+Kotlin source-slice probes with stub cancellation/capture; DuckDB identifier control.
+Probes and source hashes: `/tmp/opencode/r07-evaluation/quality_probe.py`,
+`sources.json`, `quality-probe.log`, `duckdb-identifiers.log`.
+Upstream download hashes: `/tmp/opencode/r07-recovery-upstream-2026-10-25/availability-curl.json`.
+The earlier review copies remain `/tmp/opencode/r07-quality-review-2026-10-25/`.
+
+No connector runtime fix, new candidate, broad test run, deployment or full
+concurrency/security audit was performed. Source-slice reproductions establish
+local behavior, not a production incident or a substitute for actual-adapter tests.
+
+## Future sequence and finish line
+
+1. **Next bounded batch:** actual-component regressions and narrow fixes for
+   QG-05 (name identity), QG-01 (cancellation), QG-02 (proxy lifecycle). Separate
+   attributable commits in their owning repositories. Reuse catalog `6730bb8`.
+2. **Final verification:** affected connector tests, required lint/runtime/compatibility
+   checks and the affected guarded SQL lanes on final code. Reuse unchanged library
+   evidence. No catalog rebuild unless a demonstrated library defect requires it.
+3. **Close the limited-read implementation milestone:** existing declared contracts
+   plus the corrected connector boundaries pass; update this checkpoint with commits.
+   Pending upstream tests and unsupported cases remain separately named. Broader R07
+   rollout is not automatically approved.
+4. **Subsequent decisions:** upstream artifact verification when available; older
+   backlog by impact; engine expansion/retention/fleet and API-publication design;
+   then separately scoped W01–W06 write work. All six write steps remain pending.
+
+No automatic assignments or expanding API/refactor batches. A new major requirement
+returns as an explicit scope decision. Preserve current work, original tests/goldens,
+exclusions, immutable bundles and pins. No push/release/publication/deployment,
+default-on reads, migration, 1.1 writes, physical cleanup, vendor workaround, new
+skip or full connector corpus campaign is authorized. Respect session-owned
+infrastructure and scoped Doris FE Maven-local artifacts; no global service stops.
