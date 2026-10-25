@@ -1,13 +1,15 @@
 # DuckLake 1.1 support TODO
 
-**Current coordination checkpoint:** [scope separation, verified status and code-quality gate](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
+**Current coordination checkpoint:** [completed limited-read milestone and remaining work](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
 **October 25 reconciled state:** the latest Trino (`83cb24b`) and Doris (`3bad03f`)
 adoption rounds are finished on catalog `6730bb8`. The current checkpoint separates
 completed implementation from upstream verification, connector scope and release.
 Step 3's finite quality batch is verified: QG-01 cancellation and QG-05 Unicode
 identity in Trino `3385429`; QG-02 proxy lifecycle in Doris `4efd9bc`. The existing
-catalog candidate is unchanged. Step 4 limited-read closeout is next; no automatic
-candidate/API expansion or repeat test campaign.
+catalog candidate is unchanged. **Step 4 limited-read implementation closeout is
+complete**, based on unchanged library/scan evidence and final-code repair tests.
+Exact supported scopes and evidence reuse are recorded in the checkpoint. No
+automatic candidate/API expansion or repeat test campaign follows.
 
 R01/R05/R06 are complete for their approved scopes. R02/R04's scoped reader features
 are implemented; identified DuckLake extension fixes await verification in published
@@ -40,9 +42,10 @@ engine/lease/route/deployment gates remain. Native failures are unchanged/unwaiv
 [Current continuation and precise owner handoffs](R07-CONSUMER-CONTINUATION-2026-10-24.md).
 
 Canonical implementation queue, starting from maintained DuckDB 2.0.0 / JDBC
-2.0.0.0 and signed DuckLake `417a9117f5`, Quack `f96420ed46`. **Read work is active;
-write work is deferred.** The [existing reader](../docs/READING-1.1.md) remains
-default-off until its claimed scope is qualified. This is not blanket 1.1 support.
+2.0.0.0 and signed DuckLake `417a9117f5`, Quack `f96420ed46`. **Declared limited-read
+implementation is complete; broader verification/rollout and write work remain.**
+The [existing reader](../docs/READING-1.1.md) remains default-off; implementation
+closeout is not release enablement or blanket 1.1 support.
 
 ## Read support
 
@@ -97,9 +100,10 @@ default-off until its claimed scope is qualified. This is not blanket 1.1 suppor
   propagation and bounded planning. Update public scope and consumer handoff; only
   enable claimed cases after their gates pass. Connector agents qualify their own
   Parquet scans, CDC and coordinator/worker behavior.
-  In-repository library acceptance/hardening and the handoff are verified below;
-  R07 remains open for external consumer/rollout evidence and broader native release
-  approval. Strict native failures are recorded, not skipped or waived.
+  Library and declared connector implementation acceptance, including the quality
+  repairs, is complete in the current checkpoint. R07 remains open for broader
+  engine/rollout evidence and upstream release verification. Strict external failures
+  are recorded, not skipped or waived; the completed limited-read milestone is separate.
 
 ## Deferred native MySQL work — outside the approved R06 read-only scope
 

@@ -1,6 +1,14 @@
 # R07 read acceptance and rollout handoff — October 23, 2026
 
-**October25 catalog follow-up:** reported inline payload/CDC, deletion/position,
+**Current October 25 closeout:** the declared limited-read implementation milestone
+is complete on catalog `6730bb8`, Trino `3385429` and Doris `4efd9bc`. Both adoption
+rounds and the bounded quality repairs are finished. See the
+[current scope/evidence/remaining-work checkpoint](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
+The dated acceptance records below retain their original scope and artifact identity;
+their pending-session statements are historical. Broader R07 rollout, upstream
+verification and W01–W06 writes remain separately open.
+
+**Historical October25 catalog follow-up:** reported inline payload/CDC, deletion/position,
 retained file-ID and snapshot/change-history transfer APIs are implemented and
 fully checked (985 maintained+86 direct-Java tests/17,602 records). Latest local
 candidate6730bb8 is immutable. Active fresh connector sessions are still qualifying

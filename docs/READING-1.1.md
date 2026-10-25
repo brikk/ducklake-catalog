@@ -1,5 +1,10 @@
 # Conservative DuckLake 1.1 reads
 
+**Implementation milestone complete, October 25, 2026**, for the declared opt-in
+development scope below. The [closeout checkpoint](../dev-docs/R07-SCOPE-AND-QUALITY-CHECKPOINT.md)
+records accepted library/connector revisions, final-code checks, reused evidence
+and specific pending upstream tests. This does not enable default-on reads or writes.
+
 Available on **0.13.0-SNAPSHOT development code**, not stable 0.12.0. This is an
 explicit, limited read tier over **direct Java Quack**, read-only local DuckDB files
 and native Quack, qualified

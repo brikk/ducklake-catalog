@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Current status: October 25, 2026; step 3 repairs verified.** This is the current status and next-work
+**Current status: October 25, 2026; limited-read implementation milestone COMPLETE.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -11,7 +11,9 @@ The declared library read features are implemented and have recorded qualificati
 Both latest connector adoption rounds are finished. The three concrete connector
 quality findings are now repaired and verified: Trino `3385429`, Doris `4efd9bc`.
 The catalog candidate remains `6730bb8`; no library API or rewrite was needed.
-Step 4 is the limited-read acceptance closeout, using the evidence already obtained.
+Step 4 is complete: the declared limited-read implementation is accepted using the
+verified unchanged library, prior scoped connector integration and final-code repair
+tests. Follow-on verification and development remain separately tracked below.
 
 Feature implementation, verification against upstream software, connector capability
 and production release are different statuses. A feature can be implemented and
@@ -34,7 +36,7 @@ unchanged so their original reproducers remain runnable.
 | R04 rich metadata | Complete scoped companion, `fb0c982`, PostgreSQL/MySQL ports in R06 | DuckLake migrated-bound fix awaits artifact verification; exposing metadata does not qualify pruning or exact aggregates |
 | R05 hierarchy/paths | Complete explicit bounded metadata/path tier, `2d062e7` | Does not unlock legacy nested-schema scans or grant permission to delete files |
 | R06 backend reads | Complete owner-approved five-route scope through `4dc319c` | MySQL reads existing catalogs only; M01 creation/migration/mutation/scanner acceptance is separate |
-| R07 read acceptance | Library qualification `58ef4d7`, later APIs through `6730bb8`; both connector adoption rounds finished; three quality repairs verified | Limited-read closeout is next; broad rollout/engine requirements remain separately open |
+| R07 read acceptance | **Limited-read implementation milestone complete**: library through `6730bb8`, Trino `3385429`, Doris `4efd9bc`; scoped integration and three quality repairs accepted | Original broader rollout/engine requirements remain open; this is not full-format or production release certification |
 | W01–W06 writes | Pending, deferred | Writer contracts, metadata mutation, lifecycle, maintenance/transactions, migration/restore and write acceptance |
 
 R02–R04 and R07's original umbrella checkboxes remain open for their full stated
@@ -91,6 +93,31 @@ are superseded. Do not restart their completed assignments.
 Commands, logs and exact verification scopes are in the existing consumer reports.
 Evidence is retained under `/tmp/opencode/r07-step3-{trino,doris}-*`.
 
+### Step 4 acceptance and evidence reuse
+
+The closeout checked source boundaries, retained XML and successful final build logs
+against the committed revisions. There have been **only documentation changes** in
+the catalog since `6730bb8`. Trino's production delta since its adopted `83cb24b` is
+only `DucklakeCandidateAdapter.kt`; Doris's since `3bad03f` is only
+`DuckLakeFinal11.kt`. No changed dependency, scan decoder or schema/row/delete
+projection was found that would invalidate the reused library/scan evidence.
+
+| Accepted contract | Final-code coverage and retained evidence | Closeout |
+|---|---|---|
+| Catalog's declared five-route metadata/inline reader | Unchanged `6730bb8`, exact bundle identity, full maintained/direct-Java/corpus/ABI/wire evidence | Accepted without rebuilding unchanged code |
+| Trino schema/table identity | Actual adapter and two-worker SQL at `3385429`: Unicode distinction, ASCII equivalence, absent names, genuine duplicate refusal | Accepted |
+| Trino cancellation and lifecycle | Actual adapter/control fault regressions plus real PostgreSQL cancellation/deadline-before-unlock and pool recovery at `3385429` | Accepted within documented driver/caller boundaries |
+| Doris non-owning facade lifecycle | Actual facade no-load/identity/failure-memoization tests at `4efd9bc` on Java25/17; lint and runtime-floor checks | Accepted |
+| Other declared Trino/Doris scan behavior | Prior exact-artifact scoped integration results; changed-code review confirms scan implementations unchanged by repair | Evidence reused, not represented as fresh end-to-end testing of the repaired Doris artifact |
+
+The affected-contract review found no additional required run for this implementation
+closeout. No test suite was rerun merely for bookkeeping. The machine-readable
+source/test reconciliation is `/tmp/opencode/r07-step4-closeout/evidence.json`.
+This accepts the documented opt-in development scope, not all DuckLake 1.1 cases,
+every old backlog item, publication, production/default-on use, or concurrent cleanup.
+The repaired Doris artifact still has no new live FE/BE run; its last live artifact
+and the narrower final-code lifecycle verification remain explicitly distinguished.
+
 ### Declared read boundary
 
 The library's current contracts are [general reads](../docs/READING-1.1.md),
@@ -141,8 +168,8 @@ that would fail, usable lifecycle after failure, and shared statement memoizatio
 
 ### QG-05 — Repaired in `3385429`; introduced in `83cb24b`
 
-The new `getSchema`/`getTable` overrides at `DucklakeCandidateAdapter.kt:127–133`
-use Kotlin `equals(ignoreCase=true)`. That equates Unicode long-s `ſ` with ASCII
+The evaluated `83cb24b` `getSchema`/`getTable` overrides at `DucklakeCandidateAdapter.kt:127–133`
+used Kotlin `equals(ignoreCase=true)`. That equated Unicode long-s `ſ` with ASCII
 `s`; DuckDB and the library hierarchy contract distinguish them. With only `ſ`
 present, a request for `s` selects it; with both present, the new lookup reports a
 false ambiguity. `DucklakeMetadata.getTableHandle` calls this lookup.
@@ -163,9 +190,9 @@ and page-value logic already have separate components. There is no evidence from
 this evaluation that reconstructing the project would improve correctness.
 
 Consumer schema/budget validation is duplicated. Some boundary validation is
-legitimate; byte/work totals have different units and scopes. QG-05 is a concrete
-policy divergence to repair now. Do not create a shared validation framework to fix
-three local defects. Trino's cursor-last inequality is weaker than Doris's per-row
+legitimate; byte/work totals have different units and scopes. QG-05 was a concrete
+policy divergence and is repaired locally. No shared validation framework was needed
+for the three defects. Trino's cursor-last inequality is weaker than Doris's per-row
 ordering check, but finite budgets bound repetition and no producer ordering defect
 was demonstrated here. Track stricter defensive validation as hardening.
 
@@ -238,21 +265,31 @@ step 3 repairs and actual-component verification are recorded above. Neither is 
 full concurrency/security audit or a production-incident claim. No new catalog
 candidate or deployment was performed.
 
-## Future sequence and finish line
+## Closed milestone and explicit follow-ons
 
-1. **Completed step 3:** QG-05/QG-01 in Trino `3385429`, QG-02 in Doris `4efd9bc`,
-   with actual-component regressions and checks above. Catalog `6730bb8` is reused.
-2. **Step 4 final verification accounting:** reuse the final-code defect results and
-   unchanged library/consumer evidence. Identify any genuinely uncovered affected
-   contract before running additional checks; do not repeat suites automatically.
-   No catalog rebuild unless a demonstrated library defect requires it.
-3. **Step 4 limited-read closeout:** record acceptance of the existing declared
-   contracts and corrected connector boundaries, using the explicit artifact scopes.
-   Pending upstream tests and unsupported cases remain separately named. Broader R07
-   rollout is not automatically approved.
-4. **Subsequent decisions:** upstream artifact verification when available; older
-   backlog by impact; engine expansion/retention/fleet and API-publication design;
-   then separately scoped W01–W06 write work. All six write steps remain pending.
+The recovery evaluation, three-defect repair and limited-read implementation
+closeout are complete. Follow-on tracking is also in place; it is not a claim that
+the follow-on work has run. The original R02–R04/R07 broad acceptance checkboxes
+remain open for the specific external/rollout requirements they still contain.
+
+1. **Await fixed artifacts:** R02-U1/U2/U3 and R04-U1 above. Verify the exact
+   published bytes and named tests when a relevant approved artifact is available.
+2. **Unresolved producer/backend cases:** R03 interval persistence, M01 MySQL
+   operations/types, and Doris's long partition-path producer test. Establish exact
+   fix/qualification status per case, not another general reader implementation round.
+3. **Older correctness:** retain the existing backlog, prioritize demonstrated
+   reachable defects, and keep their commits attributable to their original scope.
+4. **Broader R07 engine/release work:** Trino view/tag/comment/internal/global resource
+   accounting and driver/worker cancellation; Doris inline/CDC/snapshot/cancel hooks;
+   aggregate pools, retention/leases, genuine 0.4/fleet coverage and versioned API/
+   packaging/publication decisions. These need their own bounded assignments.
+5. **W01–W06:** all six write steps remain pending. A separately scoped write phase
+   starts with writer contracts and applicable older writer defects (including C06
+   MySQL atomicity), then metadata/mutation/maintenance/migration and write acceptance.
+
+Reopen a completed read requirement only for a concrete failure in its declared
+scope or an explicitly approved scope change. Reuse evidence for unchanged code;
+do not restart qualification or expand APIs solely because a broader queue is open.
 
 No automatic assignments or expanding API/refactor batches. A new major requirement
 returns as an explicit scope decision. Preserve current work, original tests/goldens,
