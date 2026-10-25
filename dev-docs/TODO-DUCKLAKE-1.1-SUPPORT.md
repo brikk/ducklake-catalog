@@ -4,8 +4,10 @@
 **October 25 reconciled state:** the latest Trino (`83cb24b`) and Doris (`3bad03f`)
 adoption rounds are finished on catalog `6730bb8`. The current checkpoint separates
 completed implementation from upstream verification, connector scope and release.
-The next finite quality batch is QG-01 cancellation, QG-02 proxy lifecycle and QG-05
-Unicode name identity; its fixes are pending. No automatic candidate/API expansion.
+Step 3's finite quality batch is verified: QG-01 cancellation and QG-05 Unicode
+identity in Trino `3385429`; QG-02 proxy lifecycle in Doris `4efd9bc`. The existing
+catalog candidate is unchanged. Step 4 limited-read closeout is next; no automatic
+candidate/API expansion or repeat test campaign.
 
 R01/R05/R06 are complete for their approved scopes. R02/R04's scoped reader features
 are implemented; identified DuckLake extension fixes await verification in published

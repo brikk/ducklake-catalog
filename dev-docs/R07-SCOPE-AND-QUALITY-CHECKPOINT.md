@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Current evaluation: October 25, 2026.** This is the current status and next-work
+**Current status: October 25, 2026; step 3 repairs verified.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -8,9 +8,10 @@ Historical reports are evidence, not additional active queues.
 
 **Keep the implementation. Do not restart or rebuild the history commit by commit.**
 The declared library read features are implemented and have recorded qualification.
-Both latest connector adoption rounds are finished. Three concrete connector
-quality findings require a narrow correction/verification batch. This evaluation
-did not establish a need for another catalog API or a library rewrite.
+Both latest connector adoption rounds are finished. The three concrete connector
+quality findings are now repaired and verified: Trino `3385429`, Doris `4efd9bc`.
+The catalog candidate remains `6730bb8`; no library API or rewrite was needed.
+Step 4 is the limited-read acceptance closeout, using the evidence already obtained.
 
 Feature implementation, verification against upstream software, connector capability
 and production release are different statuses. A feature can be implemented and
@@ -33,7 +34,7 @@ unchanged so their original reproducers remain runnable.
 | R04 rich metadata | Complete scoped companion, `fb0c982`, PostgreSQL/MySQL ports in R06 | DuckLake migrated-bound fix awaits artifact verification; exposing metadata does not qualify pruning or exact aggregates |
 | R05 hierarchy/paths | Complete explicit bounded metadata/path tier, `2d062e7` | Does not unlock legacy nested-schema scans or grant permission to delete files |
 | R06 backend reads | Complete owner-approved five-route scope through `4dc319c` | MySQL reads existing catalogs only; M01 creation/migration/mutation/scanner acceptance is separate |
-| R07 read acceptance | Library qualification `58ef4d7`, later APIs through `6730bb8`; both connector adoption rounds finished | Three connector quality findings below; broad rollout/engine requirements remain separately open |
+| R07 read acceptance | Library qualification `58ef4d7`, later APIs through `6730bb8`; both connector adoption rounds finished; three quality repairs verified | Limited-read closeout is next; broad rollout/engine requirements remain separately open |
 | W01–W06 writes | Pending, deferred | Writer contracts, metadata mutation, lifecycle, maintenance/transactions, migration/restore and write acceptance |
 
 R02–R04 and R07's original umbrella checkboxes remain open for their full stated
@@ -68,6 +69,28 @@ Both sessions are finished: Trino `ses_e8be2ebaeffeDrkOEHWirU0xs3`, Doris
 `ses_e8be6ad39ffedAk2DgeiQf6A3j`. Earlier statements that they were pending or dirty
 are superseded. Do not restart their completed assignments.
 
+### Step 3 repair evidence — current connector revisions
+
+- **Trino `3385429`: QG-01 and QG-05 fixed.** Six focused tests pass with zero
+  failures/errors/skips, plus lint and candidate hash verification. Tests exercise
+  actual adapter/control registration with JDBC cancellation faults, two-worker
+  Unicode/ASCII name resolution, true duplicate rejection, and real PostgreSQL
+  engine cancellation/deadline-before-unlock with pool recovery.
+- **Doris `4efd9bc`: QG-02 fixed.** Three actual-facade lifecycle regressions pass
+  on both Java25 and Java17. Full `check java17PluginTest` passes: 265/239 passing
+  cases (266/240 totals, one identical pre-existing skip per overlapping lane),
+  lint and the 24,767-class Java17 runtime scan. Capture failure memoization and
+  shared statement ownership remain covered.
+- These regressions failed against the original production code before the fixes.
+  The repaired Doris artifact has not been staged into FE/BE; the previous 17-case
+  live run keeps its own artifact identity, rather than being claimed as rerun.
+- Both default released-lane JARs were rebuilt byte-identically to their previous
+  hashes; candidate classes are absent. Doris's released ZIP remains unchanged.
+  No catalog artifact, pin, test golden/exclusion or release default changed.
+
+Commands, logs and exact verification scopes are in the existing consumer reports.
+Evidence is retained under `/tmp/opencode/r07-step3-{trino,doris}-*`.
+
 ### Declared read boundary
 
 The library's current contracts are [general reads](../docs/READING-1.1.md),
@@ -84,11 +107,11 @@ not stream an unlimited catalog. Trino's per-view totals are likewise not whole-
 or cross-node guarantees. Accepted scans assume physical objects remain retained;
 concurrent physical cleanup/lease safety is not qualified by a metadata transaction.
 
-## Findings and exact next fix batch
+## Repaired findings and bounded design disposition
 
-### QG-01 — Trino cancellation under registry locks; introduced in `cd4afc1`
+### QG-01 — Repaired in `3385429`; introduced in `cd4afc1`
 
-At final `83cb24b`, `candidate/src/.../DucklakeCandidateAdapter.kt:86–91` calls
+At evaluated `83cb24b`, `candidate/src/.../DucklakeCandidateAdapter.kt:86–91` called
 driver cancellation within `ConcurrentHashMap.computeIfPresent`. An exception
 aborts the remaining controls; a blocking call holds a lock required by same-query
 registration/cleanup. The library explicitly documents that cancellation can fail
@@ -96,25 +119,27 @@ or block.
 
 **Reproduced at source-slice level:** first failing control leaves the second
 unattempted; same-query registration waits while the driver stub blocks.
-Fix narrowly: snapshot/register state under the map lock, perform driver calls
-outside it, attempt all captured controls, and preserve failure diagnostics.
-Regression must exercise the actual adapter with failure and concurrent lifecycle
-cases. This does not promise cancellation of late workers or remote nodes.
+The repair snapshots controls under the map lock, performs driver calls outside it,
+attempts all captured controls despite JDBC/runtime exceptions, and preserves the
+first failure with later distinct failures suppressed. Actual-adapter/control tests
+now cover failing fan-out and registration/final cleanup while a driver blocks.
+A blocking driver can still delay the caller; this does not promise cancellation
+of later registrations or remote nodes.
 
-### QG-02 — Doris proxy lifecycle forces capture; introduced in `3228a80`
+### QG-02 — Repaired in `4efd9bc`; introduced in `3228a80`
 
-At final `3bad03f`, `read-tiers/r07/.../DuckLakeFinal11.kt:40–49` loads the plan before
+At evaluated `3bad03f`, `read-tiers/r07/.../DuckLakeFinal11.kt:40–49` loaded the plan before
 every proxy dispatch. The plan has no equals/hashCode implementation; close and
 toString also force capture. Logging/closing an unused facade can issue SQL/S3 work
 and fail.
 
 **Reproduced at source-slice level:** equals/hashCode each capture then fail;
-toString/close each capture, and close propagates a capture failure. Fix narrowly:
-identity-safe Object methods and no-load lifecycle dispatch before accessing the
-lazy plan. The actual-facade regression must prove zero capture calls, including a
-supplier that would fail, and preserve statement ownership/memoization.
+toString/close each capture, and close propagates a capture failure. The repair
+dispatches identity-safe Object methods and no-op close before accessing the lazy
+plan. Actual-facade regressions now prove zero capture calls, including a context
+that would fail, usable lifecycle after failure, and shared statement memoization.
 
-### QG-05 — Trino Unicode name lookup changes identity; introduced in `83cb24b`
+### QG-05 — Repaired in `3385429`; introduced in `83cb24b`
 
 The new `getSchema`/`getTable` overrides at `DucklakeCandidateAdapter.kt:127–133`
 use Kotlin `equals(ignoreCase=true)`. That equates Unicode long-s `ſ` with ASCII
@@ -124,11 +149,11 @@ false ambiguity. `DucklakeMetadata.getTableHandle` calls this lookup.
 
 **Reproduced comparison and independent engine control:** the exact filter
 expressions match `ſ` for request `s`; DuckDB 2.0 creates both tables and returns
-their distinct values (1 and 2). This is not yet an executed Trino SQL regression.
-Add actual-adapter/SQL tests for schema and table names, existing ASCII case rules,
-distinct Unicode names and real duplicate rejection; use the established ASCII-only
-identifier folding rather than a new name policy. Prior library SQL LOWER behavior
-is a separate older compatibility concern, not proof the new comparator is correct.
+their distinct values (1 and 2). The repair uses Guava's ASCII-only comparison;
+actual-adapter and two-worker Trino SQL regressions now pass for schema/table names,
+existing ASCII case rules, distinct Unicode names and absent names. Authored true
+duplicates still reject. Prior library SQL LOWER behavior remains a separate older
+compatibility concern, not a reason to change this corrected identifier contract.
 
 ### QG-03/04 — Structural assessment and bounded disposition
 
@@ -208,20 +233,21 @@ Probes and source hashes: `/tmp/opencode/r07-evaluation/quality_probe.py`,
 Upstream download hashes: `/tmp/opencode/r07-recovery-upstream-2026-10-25/availability-curl.json`.
 The earlier review copies remain `/tmp/opencode/r07-quality-review-2026-10-25/`.
 
-No connector runtime fix, new candidate, broad test run, deployment or full
-concurrency/security audit was performed. Source-slice reproductions establish
-local behavior, not a production incident or a substitute for actual-adapter tests.
+The evaluation itself made no runtime changes or broad test run. The subsequent
+step 3 repairs and actual-component verification are recorded above. Neither is a
+full concurrency/security audit or a production-incident claim. No new catalog
+candidate or deployment was performed.
 
 ## Future sequence and finish line
 
-1. **Next bounded batch:** actual-component regressions and narrow fixes for
-   QG-05 (name identity), QG-01 (cancellation), QG-02 (proxy lifecycle). Separate
-   attributable commits in their owning repositories. Reuse catalog `6730bb8`.
-2. **Final verification:** affected connector tests, required lint/runtime/compatibility
-   checks and the affected guarded SQL lanes on final code. Reuse unchanged library
-   evidence. No catalog rebuild unless a demonstrated library defect requires it.
-3. **Close the limited-read implementation milestone:** existing declared contracts
-   plus the corrected connector boundaries pass; update this checkpoint with commits.
+1. **Completed step 3:** QG-05/QG-01 in Trino `3385429`, QG-02 in Doris `4efd9bc`,
+   with actual-component regressions and checks above. Catalog `6730bb8` is reused.
+2. **Step 4 final verification accounting:** reuse the final-code defect results and
+   unchanged library/consumer evidence. Identify any genuinely uncovered affected
+   contract before running additional checks; do not repeat suites automatically.
+   No catalog rebuild unless a demonstrated library defect requires it.
+3. **Step 4 limited-read closeout:** record acceptance of the existing declared
+   contracts and corrected connector boundaries, using the explicit artifact scopes.
    Pending upstream tests and unsupported cases remain separately named. Broader R07
    rollout is not automatically approved.
 4. **Subsequent decisions:** upstream artifact verification when available; older
