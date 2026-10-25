@@ -1,5 +1,11 @@
 # DuckLake 1.1 support TODO
 
+**Current coordination checkpoint:** [scope separation, verified status and code-quality gate](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
+New assignments/candidates are paused while current qualification finishes and
+final diffs are reviewed. Older issues/hardening and engine/rollout work remain
+tracked, not silently folded into format compatibility or waived. Dated entries
+below are evidence checkpoints, not proof that the active working changes are done.
+
 **October25:** catalog10f81f9/df00fcd/6730bb8 correct unknown default history and
 supply decoded inline ordinary/CDC, deletion/position, retained-ID and snapshot/
 change-history pages with physical-type/allocation guards. Full985 maintained+86
