@@ -1,5 +1,25 @@
 # R07 catalog payload/deletion paging — October 25, 2026
 
+**Doris consumer update:** `3448107ad3a0ea7375863e69cf4e442633354e25` qualifies
+10f81f9 paged capture:16 live/14 targeted checks, candidate262/236 and released
+253/227 Java25/Java17 lanes, lint/ABI/assembly, restored byte-identical released ZIP.
+The128-total-page boundary is retained and practical history limits remain explicit.
+Source report: `/home/jayson/DEV/brikk/doris-ducklake/dev-docs/VALIDATION-R07-PAGING-2026-10-25.md`.
+The prior Doris assignment below has finished; fresh GPT6.1Sol session
+`ses_e8be6ad39ffedAk2DgeiQf6A3j` is now assigned6730bb8 integration/requalification.
+Use only APIs needed by the ordinary tier; do not invent an engine inline/CDC
+surface because payload/deletion metadata APIs now exist.
+
+**Trino consumer update:** `cd4afc1d8036bbe0169ba6ceae6d70bb865addff` qualifies
+10f81f9 typed planning pages/controlled views (128 candidate/265 released tests,
+lint,81 corpus records). Actual PostgreSQL engine cancellation and deadline stop
+the waiting metadata statement before fixture unlock, followed by one-connection
+recovery; worker/other-driver/network/lease guarantees are not inferred. Source
+report: `/home/jayson/DEV/brikk/trino-ducklake/dev-docs/R07-TRINO-CANDIDATE-QUALIFICATION.md`.
+Fresh GPT6.1Sol session `ses_e8be2ebaeffeDrkOEHWirU0xs3` now adopts6730bb8 payload/
+deletion/history APIs. Both earlier10f81f9 task entries below are historical; both
+latest6730bb8 results are pending. No newer-byte consumer success is inferred.
+
 ## Outcome and boundary
 
 The reported catalog payload/deletion/history transfer entry points are now
