@@ -111,12 +111,12 @@ internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private 
             setProperty("token", server.getToken())
         })
 
-    fun reader(): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
+    fun reader(enableFinal11Reads: Boolean = true): JdbcDucklakeCatalog = JdbcDucklakeCatalog(DucklakeCatalogConfig().apply {
         catalogDatabaseUrl = readerUrl
         catalogDatabasePassword = server?.getToken()
         dataPath = data.toString()
         maxCatalogConnections = 1
-        enableFinal11Reads = true
+        this.enableFinal11Reads = enableFinal11Reads
     })
 
     override fun close() {

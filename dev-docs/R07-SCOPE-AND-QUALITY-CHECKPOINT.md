@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Current status: October 25, 2026; limited-read implementation milestone COMPLETE.** This is the current status and next-work
+**Read milestone closed October 25; October 26 library corrections verified.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -44,6 +44,53 @@ acceptance. They must not be interpreted as “implementation never completed.�
 No original requirement or failing gate is removed by this status split.
 
 ## Exact current integration state
+
+### October 26 library correctness follow-up
+
+The separate two-item batch fixes direct catalog schema/table lookup and C09 error
+classification. The accepted `6730bb8` consumer bundle below is not overwritten or
+silently presented as containing these newer source changes.
+
+- **Identifier lookup:** actual API tests reproduced false ambiguity for distinct
+  `Ä`/`ä` names on all five 1.1 routes. Schema/table point reads now reuse the
+  hierarchy's ASCII-folding and binary-comparison rules, independent of metadata
+  collation, with a two-row limit retaining duplicate detection. PostgreSQL ICU
+  nondeterministic and MySQL case/accent-insensitive collations are exercised.
+  Missing names stay absent; genuine duplicates reject; retired names do not collide.
+- **C09:** actual 1.0 raw/decoded ordinary/CDC reads on local DuckDB, DuckDB/Quack
+  and direct Java Quack no longer convert missing physical columns into empty data.
+  An existing inline view's unrelated missing relation also propagates. The shared
+  classifier reads only a recognized relation-not-found diagnostic, respects
+  contradictory SQLStates, and requires the expected relation for optional-table
+  fallback. Unknown/localized diagnostics propagate. Genuine lazy absence and
+  missing-catalog initialization errors remain covered. Existing owned-session
+  failure propagation already worked and is preserved.
+- **Verification complete:** 26 focused tests plus lint pass. The final forced
+  `check :ducklake-catalog:quackPreviewTest --rerun-tasks` with the full pinned corpus
+  passes **1,006 maintained tests** (857 catalog / 51 SLT / 98 replay), **86 separate
+  direct-Java tests** and **17,602 corpus records**. No JUnit failures/errors/skips;
+  existing 100 file / 12 record corpus exclusions remain unchanged. Lint, frozen
+  compatibility/wire controls and the Java17 check pass (7,830 classes / 17 artifacts).
+  Full run: 28m22s, performed once on the final code.
+  Before the fixes, 10 of the initial 20 cases failed with the expected API/diagnostic
+  behavior. The additional genuine-initialization controls pass on all three
+  DuckDB/Quack routes; the PostgreSQL inline-read interoperability regression also passes.
+  Logs: `/tmp/opencode/catalog-read-corrections-red.log`,
+  `catalog-read-corrections-focused.log`, `catalog-read-corrections-full.log`.
+  Retained XML: `/tmp/opencode/catalog-read-corrections-full-xml/`.
+- **Consumer impact:** no public interface/record/wire shape changes. Trino's
+  guarded adapter already implements its own ASCII-only paged name lookup; Doris's
+  guarded tier uses paged/captured metadata and the existing hierarchy rules. Neither
+  guarded adapter uses the unowned legacy fallback that swallowed these errors.
+  Their code and immutable candidate selection remain unchanged; these library-source
+  fixes are not a new connector artifact qualification. No new integration bundle
+  was needed for this internal correction; the old bundle remains unchanged. Legacy
+  consumers can benefit when they adopt the corrected library in their next dependency update.
+
+This batch does not close C10's DDL namespace work or change view-name lookup,
+upstream verification, reader type support, 1.1 write guards or rollout approval.
+
+### Accepted October 25 integration baseline
 
 All three main trees were clean at evaluation start. Catalog documentation HEAD was
 `0cd5a48`; runtime source is still `6730bb871350fe27d6c926db2f1d8f50f41cb5e1`.
@@ -95,9 +142,10 @@ Evidence is retained under `/tmp/opencode/r07-step3-{trino,doris}-*`.
 
 ### Step 4 acceptance and evidence reuse
 
-The closeout checked source boundaries, retained XML and successful final build logs
-against the committed revisions. There have been **only documentation changes** in
-the catalog since `6730bb8`. Trino's production delta since its adopted `83cb24b` is
+The October 25 closeout checked source boundaries, retained XML and successful final
+build logs against the then-committed revisions. At that closeout there had been
+**only documentation changes** in the catalog since `6730bb8`; the October 26 source
+corrections are tracked separately above. Trino's production delta since its adopted `83cb24b` is
 only `DucklakeCandidateAdapter.kt`; Doris's since `3bad03f` is only
 `DuckLakeFinal11.kt`. No changed dependency, scan decoder or schema/row/delete
 projection was found that would invalidate the reused library/scan evidence.
@@ -179,8 +227,9 @@ expressions match `ſ` for request `s`; DuckDB 2.0 creates both tables and retur
 their distinct values (1 and 2). The repair uses Guava's ASCII-only comparison;
 actual-adapter and two-worker Trino SQL regressions now pass for schema/table names,
 existing ASCII case rules, distinct Unicode names and absent names. Authored true
-duplicates still reject. Prior library SQL LOWER behavior remains a separate older
-compatibility concern, not a reason to change this corrected identifier contract.
+duplicates still reject. The October 26 batch above also fixes the older direct
+library schema/table SQL LOWER behavior; view lookup and C10 DDL namespace work
+remain separate from these corrected read contracts.
 
 ### QG-03/04 — Structural assessment and bounded disposition
 
@@ -206,7 +255,8 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 |---|---|
 | Trino timezone partition false negatives | Older correctness defect; fix `9913cd6`, with continuing final-round regression evidence. Do not reopen as unfinished 1.1 format work |
 | Catalog C08 defaults, C16 interval parsing, C21 empty projection | Scoped 1.1 behavior addressed by R01/R03/page APIs; this does not close every legacy-path part of those older findings |
-| C07 pruning / C09 missing-table classification | Older candidates, not newly verified failures. Conservative 1.1 min/max pruning avoids that optimization; message-based missing-table fallback still exists. Dedicated current-code reachability/reproduction remains older-backlog work |
+| C07 pruning | Older candidate, not newly verified here; conservative 1.1 min/max pruning avoids that optimization. Dedicated current-code reproduction remains older-backlog work |
+| C09 missing-table classification | Fixed and fully verified October 26: actual legacy DuckDB/Quack silent-empty reproductions now propagate, while legitimate absence and existing owned-session behavior remain covered |
 | C12 lineage / C18 partition ownership / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |
 | C06 MySQL implicit-DDL atomicity, C10/C11/C17/C19 mutation rules | Relevant prerequisites for future write work, not a reason to reimplement approved read-only routes |
 | Remaining C/H/B/R/N/Q and UF backlog | Retained in [BACKLOG](BACKLOG.md) and [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md); not a completed whole-project audit |

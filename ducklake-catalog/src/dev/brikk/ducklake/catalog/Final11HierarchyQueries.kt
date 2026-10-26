@@ -19,9 +19,7 @@ import org.jooq.Condition
 import org.jooq.DSLContext
 import org.jooq.Field
 import org.jooq.Record
-import org.jooq.SQLDialect
 import org.jooq.impl.DSL
-import org.jooq.impl.SQLDataType
 import java.time.Instant
 import java.util.UUID
 
@@ -243,14 +241,8 @@ internal class Final11HierarchyQueries(private val ctx: DSLContext, private val 
         Final11SchemaHierarchy.MAX_TEXT + 1).`as`(name)
     private fun active(alias: String, snapshot: Long) = number(alias, "begin_snapshot").le(snapshot)
         .and(number(alias, "end_snapshot").isNull.or(number(alias, "end_snapshot").gt(snapshot)))
-    private fun sameName(alias: String, column: String, name: String): Condition {
-        var folded = DSL.field(DSL.name(alias, column), String::class.java)
-        if (ctx.dialect().family() == SQLDialect.MYSQL) {
-            for (letter in 'A'..'Z') folded = DSL.replace(folded, DSL.`val`(letter.toString()), DSL.`val`(letter.lowercaseChar().toString()))
-        } else folded = DSL.function("translate", SQLDataType.VARCHAR, folded,
-            DSL.`val`("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), DSL.`val`("abcdefghijklmnopqrstuvwxyz"))
-        return encoded(folded).eq(encoded(DSL.`val`(key(name))))
-    }
+    private fun sameName(alias: String, column: String, name: String): Condition =
+        CatalogIdentifiers.matches(ctx, DSL.field(DSL.name(alias, column), String::class.java), name)
     private fun encoded(value: Field<String>): Field<ByteArray> = Final11SqlBackend.bytes(ctx, value)
     private fun spend(amount: Int) { work += amount; if (work > MAX_WORK) invalid("hierarchy lookup/traversal budget exceeded") }
 

@@ -25,7 +25,6 @@ For authorized upstream work and the next RC checkpoint, use the separate
 |---|---|
 | C07 | Logical-type pruning: float32 equality and end-of-day TIME must not lose matching rows. UF-04's bucket work is separate. |
 | C08 | Apply initial defaults to absent old-inline columns without replacing stored NULLs; make CDC contract decisions explicit. |
-| C09 | Narrow missing-table classification on DuckDB/Quack; missing columns/query errors must not silently return empty data. |
 | C10 | Case-insensitive relation/sibling-field namespace checks for sequential DDL and races. |
 | C11 | Validate surviving STRUCT/LIST/MAP arity and nested removal paths. |
 | C12 | Per-output partial-rewrite origins or required embedded IDs; no overlapping fallback row-ID ranges. |
@@ -73,6 +72,12 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C09 and direct schema/table identifier reads — October 26:** precise expected-table
+  error classification replaces the legacy silent-empty fallback; ASCII-only/binary
+  name matching preserves distinct Unicode names on all five read routes. Actual-API
+  regressions and the full 1,006 maintained + 86 direct-Java / 17,602-record run pass.
+  [Evidence and consumer scope](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#october-26-library-correctness-follow-up).
+  This does not close C10 DDL namespaces or change view-name lookup.
 - C01 `62058cc`, C02 `db75f2b`, C03/C20 `f8f6eb8`, C04 `7a0c429`:
   correctness fixes with regression evidence retained in the archived review.
 - C05 and remaining C14 diagnostics `3ae1c18`:

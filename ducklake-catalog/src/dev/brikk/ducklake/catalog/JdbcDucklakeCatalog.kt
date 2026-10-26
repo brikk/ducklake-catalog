@@ -379,7 +379,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      */
     private fun rethrowUnlessMissingTable(e: DataAccessException, tableName: String, what: String) {
         val sqlException = findSqlException(e)
-        if (sqlException == null || !isMissingCatalogSchema(sqlException)) {
+        if (sqlException == null || !MissingCatalogTable.matches(sqlException, tableName)) {
             throw e
         }
         // An actual missing-table error has already poisoned a pinned transaction. Expected
@@ -528,9 +528,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun getSchema(schemaName: String, snapshotId: Long): DucklakeSchema? {
         val sch = DUCKLAKE_SCHEMA.`as`("sch")
-        return dsl.selectFrom(sch)
-            .where(DSL.lower(sch.SCHEMA_NAME).eq(schemaName.lowercase(Locale.ENGLISH)))
+        val ctx = dsl
+        return ctx.selectFrom(sch)
+            .where(CatalogIdentifiers.matches(ctx, sch.SCHEMA_NAME, schemaName))
             .and(activeAt(sch, snapshotId))
+            .limit(2) // Keep ambiguity detection without transferring an unbounded duplicate set.
             .fetchOne()
             ?.let { toDucklakeSchema(it) }
     }
@@ -547,10 +549,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val schema = getSchema(schemaName, snapshotId) ?: return null
 
         val tab = DUCKLAKE_TABLE.`as`("tab")
-        return dsl.selectFrom(tab)
+        val ctx = dsl
+        return ctx.selectFrom(tab)
             .where(tab.SCHEMA_ID.eq(schema.schemaId))
-            .and(DSL.lower(tab.TABLE_NAME).eq(tableName.lowercase(Locale.ENGLISH)))
+            .and(CatalogIdentifiers.matches(ctx, tab.TABLE_NAME, tableName))
             .and(activeAt(tab, snapshotId))
+            .limit(2)
             .fetchOne()
             ?.let { toDucklakeTable(it) }
     }
@@ -6097,32 +6101,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         /**
          * Recognizes the "the `ducklake_snapshot` metadata table does not exist" error across
          * backends — i.e. the catalog database is reachable but its DuckLake schema was never
-         * created. Matched by the standard "undefined table" SQLStates/codes AND a message that
-         * names a `ducklake_` table (so a genuinely missing user table can't be misclassified).
+         * created. Requires the backend's relation-not-found diagnostic naming a `ducklake_`
+         * table; contradictory SQLStates, column errors and echoed SQL cannot establish absence.
          */
-        internal fun isMissingCatalogSchema(exception: SQLException): Boolean {
-            val sqlState = exception.sqlState
-            val undefinedTableState = sqlState == "42P01" || // PostgreSQL undefined_table
-                sqlState == "42S02"                          // MySQL / SQL-standard base table not found
-            val undefinedTableCode = exception.errorCode == 1146 // MySQL ER_NO_SUCH_TABLE
-            if (undefinedTableState || undefinedTableCode) {
-                return true
-            }
-            if (!sqlState.isNullOrEmpty() && sqlState != "HY000") {
-                // The driver classified the error and it is NOT "undefined table" (e.g. PostgreSQL
-                // 42703 undefined_column, whose HINT can mention a ducklake_* table). Trust it.
-                return false
-            }
-            // DuckDB JDBC reports no SQLState; only the message identifies the error.
-            val message = exception.message?.lowercase(Locale.ROOT) ?: return false
-            return message.contains("ducklake_") &&
-                (
-                    message.contains("does not exist") ||       // DuckDB / PostgreSQL wording
-                        message.contains("doesn't exist") ||    // MySQL wording
-                        message.contains("no such table") ||    // SQLite
-                        message.contains("not found")           // DuckDB Catalog Error variants
-                    )
-        }
+        internal fun isMissingCatalogSchema(exception: SQLException): Boolean = MissingCatalogTable.matches(exception)
 
         private fun isDuplicateKeyViolation(exception: SQLException): Boolean {
             val sqlState = exception.sqlState

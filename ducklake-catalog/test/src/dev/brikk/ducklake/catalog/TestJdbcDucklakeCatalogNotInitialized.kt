@@ -72,4 +72,20 @@ class TestJdbcDucklakeCatalogNotInitialized {
         assertThat(JdbcDucklakeCatalog.isMissingCatalogSchema(
             java.sql.SQLException("relation \"orders\" does not exist"))).isFalse()
     }
+
+    @Test
+    fun detectorRejectsColumnsFunctionsAndUnrelatedRelationsEvenWithCatalogNamesInSql() {
+        val messages = listOf(
+            "Binder Error: Referenced column \"ducklake_value\" not found in FROM clause!",
+            "Catalog Error: Scalar Function with name ducklake_function does not exist!",
+            "Catalog Error: Table with name orders does not exist!\nLINE 1: SELECT * FROM ducklake_snapshot JOIN orders ON true",
+            "Binder Error: invalid expression\nSELECT 'Catalog Error: Table with name ducklake_snapshot does not exist!'",
+        )
+        messages.forEach { message ->
+            assertThat(JdbcDucklakeCatalog.isMissingCatalogSchema(java.sql.SQLException(message))).describedAs(message).isFalse()
+        }
+        assertThat(JdbcDucklakeCatalog.isMissingCatalogSchema(java.sql.SQLException("ERROR: relation \"orders\" does not exist", "42P01"))).isFalse()
+        assertThat(JdbcDucklakeCatalog.isMissingCatalogSchema(java.sql.SQLException("Table 'db.orders' doesn't exist", "42S02", 1146))).isFalse()
+        assertThat(JdbcDucklakeCatalog.isMissingCatalogSchema(java.sql.SQLException("column ducklake_value does not exist", "42703"))).isFalse()
+    }
 }
