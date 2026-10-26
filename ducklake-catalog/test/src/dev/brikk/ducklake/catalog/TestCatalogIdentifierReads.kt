@@ -15,6 +15,22 @@ internal class TestCatalogIdentifierReads {
     @Nested inner class MySql : Contract({ ReadAcceptanceFixture.MySql() })
 
     abstract class Contract(private val fixture: () -> ReadAcceptanceFixture) {
+        @Test fun viewLookupsPreserveUnicodeIdentity() {
+            fixture().use { f ->
+                f.native("CREATE VIEW lake.main.\"Ä\" AS SELECT 1 AS i; CREATE VIEW lake.main.\"ä\" AS SELECT 2 AS i; " +
+                    "CREATE VIEW lake.main.\"MiXeD\" AS SELECT 3 AS i")
+                f.reader().use { c -> c.readSession(Supplier {
+                    val snapshot = c.currentSnapshotId
+                    val schema = c.getSchema("main", snapshot)!!
+                    val views = c.listViews(schema.schemaId, snapshot).associateBy { it.viewName }
+                    assertThat(c.getView("MAIN", "Ä", snapshot)).isEqualTo(views.getValue("Ä"))
+                    assertThat(c.getView("main", "ä", snapshot)).isEqualTo(views.getValue("ä"))
+                    assertThat(c.getView("main", "mixed", snapshot)).isEqualTo(views.getValue("MiXeD"))
+                    assertThat(c.getView("main", "missing", snapshot)).isNull()
+                }) }
+            }
+        }
+
         @Test fun pointLookupsPreserveAsciiEquivalenceAndDistinctUnicodeNames() {
             fixture().use { f ->
                 f.native("CREATE SCHEMA lake.\"Ä\"; CREATE SCHEMA lake.\"ä\"; CREATE SCHEMA lake.\"MiXeD\"; " +

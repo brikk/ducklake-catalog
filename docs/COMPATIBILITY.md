@@ -22,6 +22,12 @@ Pass Quack tokens in `catalogDatabasePassword`, not shared URLs. The direct Java
 route uses ordinary remote JDBC transactions and does not require embedded DuckDB
 in the client process. Quack serves metadata, not Parquet data access.
 
+Catalog-owned logs and diagnostic exceptions redact URLs containing user-info or
+options, including their diagnostic URL getters. Options are omitted conservatively,
+not matched against a password-name allowlist. The configured connection URL is
+unchanged; a redacted diagnostic value must not be reused to connect. Driver/pool
+logging remains governed by those components' own settings.
+
 Local/direct JDBC routes expect initialized metadata. The native Quack route uses
 DuckLake ATTACH and can bootstrap missing metadata. This library does not enable
 automatic 1.1 migration. Native Quack bootstrap explicitly selects 1.0; when creating

@@ -25,17 +25,14 @@ For authorized upstream work and the next RC checkpoint, use the separate
 |---|---|
 | C07 | Logical-type pruning: float32 equality and end-of-day TIME must not lose matching rows. UF-04's bucket work is separate. |
 | C08 | Apply initial defaults to absent old-inline columns without replacing stored NULLs; make CDC contract decisions explicit. |
-| C10 | Case-insensitive relation/sibling-field namespace checks for sequential DDL and races. |
 | C11 | Validate surviving STRUCT/LIST/MAP arity and nested removal paths. |
 | C12 | Per-output partial-rewrite origins or required embedded IDs; no overlapping fallback row-ID ranges. |
 | C13 | Migrate callers off weak legacy materialization boundaries without silently removing shipped APIs. |
 | C16 | Large/signed interval parsing and literal CAST-string provenance. |
 | C17 | Real MySQL inline DDL type/identifier rendering or safe refusal; coordinate with C06. |
-| C18 | Partition-spec ownership and key coverage, distinguishing missing keys from SQL NULL. |
 | C19 | Rewrite/version sort expressions on rename, including subsequent native inserts and old snapshots. |
 | C21 | Empty inline projections preserve cardinality or reject explicitly. |
 | C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
-| C23 | Redact credential-bearing JDBC URLs in diagnostics/logs. |
 | C24 | Consistent typed initialization errors for CREATE and file writes. |
 
 Use the corresponding C heading in the archived review for the original reproduction
@@ -72,12 +69,20 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C10 / C18 / C23 and view-name matching — October 26:** transaction-local
+  schema/relation/sibling-name admission, partition-spec ownership and exact supplied
+  keys, and redacted catalog-owned URL diagnostics. Five-route API regressions,
+  concurrency controls, view history/tags and the full 1,030 maintained + 86
+  direct-Java / 17,602-record run pass. MySQL view/tag metadata targets are explicitly
+  quoted. [Scope, limits and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#october-26-local-correctness-views-namespaces-partitions-and-diagnostics).
+  This repairs existing 0.4/1.0 mutations and 1.1 view reads; it does not enable 1.1
+  writes or close C06/C11/C17/C19. Driver/pool logs are outside catalog-owned URL rendering.
 - **C09 and direct schema/table identifier reads — October 26:** precise expected-table
   error classification replaces the legacy silent-empty fallback; ASCII-only/binary
   name matching preserves distinct Unicode names on all five read routes. Actual-API
   regressions and the full 1,006 maintained + 86 direct-Java / 17,602-record run pass.
   [Evidence and consumer scope](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#october-26-library-correctness-follow-up).
-  This does not close C10 DDL namespaces or change view-name lookup.
+  C10 DDL namespaces and view-name lookup were subsequently addressed by the batch above.
 - C01 `62058cc`, C02 `db75f2b`, C03/C20 `f8f6eb8`, C04 `7a0c429`:
   correctness fixes with regression evidence retained in the archived review.
 - C05 and remaining C14 diagnostics `3ae1c18`:

@@ -133,7 +133,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     // Retained only for diagnostics (the "catalog not initialized" message). Never used for
     // connection — the pool already holds the parsed URL.
-    private val catalogDatabaseUrl: String = config.catalogDatabaseUrl ?: "<unset>"
+    private val catalogDatabaseUrl: String = JdbcUrlDiagnostics.redact(config.catalogDatabaseUrl ?: "<unset>")
 
     init {
         @Suppress("SENSELESS_COMPARISON")
@@ -201,7 +201,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // Name the pool after the catalog so several catalogs in one JVM are distinguishable in
         // logs/metrics (default would be HikariPool-1, -2, ...). Leak detection at 2 minutes: every
         // catalog operation holds a connection for milliseconds to seconds; anything longer is a bug.
-        hikariConfig.poolName = "ducklake-catalog-" + Integer.toHexString(catalogDatabaseUrl.hashCode())
+        hikariConfig.poolName = "ducklake-catalog-" + Integer.toHexString(configuredUrl.hashCode())
         hikariConfig.leakDetectionThreshold = LEAK_DETECTION_THRESHOLD_MS
 
         this.hikariDataSource = HikariDataSource(hikariConfig)
@@ -243,7 +243,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         log.log(
             System.Logger.Level.INFO,
             "Initialized Ducklake JDBC catalog: {0} (jOOQ dialect: {1})",
-            config.catalogDatabaseUrl, dialect)
+            catalogDatabaseUrl, dialect)
     }
 
     /**
@@ -2959,7 +2959,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val view = DUCKLAKE_VIEW.`as`("view")
         val matches = fetchViewsWithTags(
             view.SCHEMA_ID.eq(schema.schemaId)
-                .and(DSL.lower(view.VIEW_NAME).eq(viewName.lowercase(Locale.ENGLISH))),
+                .and(CatalogIdentifiers.matches(dsl, view.VIEW_NAME, viewName)),
             snapshotId,
         )
         if (matches.size > 1) {
@@ -3193,7 +3193,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
                     requireCatalogWritesSupported(txDsl, registersFiles)
 
-                    action.execute(tx)
+                    executeWriteAction(tx, action, transactionStartSnapshotId[0])
 
                     // 3. Strict optimistic conflict check: if snapshot lineage advanced, abort.
                     ensureSnapshotLineageUnchanged(txDsl, tx.getCurrentSnapshotId(), operationDescription)
@@ -3271,6 +3271,18 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         catch (e: SQLException) {
             if (committed) throw DucklakePostCommitException(operationDescription, e)
             throw DucklakeException("Failed to $operationDescription", e)
+        }
+    }
+
+    private fun executeWriteAction(tx: DucklakeWriteTransaction, action: WriteTransactionAction, start: Long) {
+        try {
+            action.execute(tx)
+        } catch (e: DucklakeEntityAlreadyExistsException) {
+            // Preserve logical-conflict diagnostics for a name committed since this operation began.
+            if (tx.getCurrentSnapshotId() > start) {
+                runConflictMatrix(tx.dsl(), tx.getChanges(), start, tx.getCurrentSnapshotId())
+            }
+            throw e
         }
     }
 
@@ -3435,6 +3447,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val schemaId = tx.resolveSchemaId(schemaName)
             val viewId = tx.allocateCatalogId()
             tx.recordChange(WriteChange.CreatedView(schemaId, schemaName, viewName))
+            tx.namespaces.requireRelationAvailable(schemaId, viewName)
 
             insertViewRow(tx, viewId, UUID.fromString(newCatalogUuid()), schemaId, viewName, dialect, sql, columnAliases)
             insertViewTags(tx, viewId, tags)
@@ -3466,9 +3479,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val sourceView = resolveActiveViewRow(tx, sourceSchemaId, sourceViewName)
             val targetSchemaId = tx.resolveSchemaId(targetSchemaName)
 
-            if (hasActiveTable(tx, targetSchemaId, targetViewName) || hasActiveView(tx, targetSchemaId, targetViewName)) {
-                throw DucklakeEntityAlreadyExistsException("relation", "$targetSchemaName.$targetViewName")
-            }
+            tx.recordChange(WriteChange.CreatedView(targetSchemaId, targetSchemaName, targetViewName))
+            tx.namespaces.requireRelationAvailable(targetSchemaId, targetViewName)
 
             // Tags are keyed by view_id, which is preserved — nothing to do for them.
             endSnapshotActiveView(tx, sourceView.viewId)
@@ -3485,7 +3497,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // Upstream records a RENAMED view as `created_view:"schema"."new_name"` so a concurrent
             // CREATE of the same name is detected as a collision; `altered_view` keeps the
             // alter-vs-alter dueling check on the view id.
-            tx.recordChange(WriteChange.CreatedView(targetSchemaId, targetSchemaName, targetViewName))
             tx.recordChange(WriteChange.AlteredView(sourceView.viewId))
             tx.incrementSchemaVersion()
         }
@@ -3528,8 +3539,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         )
             .from(view)
             .where(view.SCHEMA_ID.eq(schemaId))
-            .and(DSL.lower(view.VIEW_NAME).eq(viewName.lowercase(Locale.ENGLISH)))
+            .and(CatalogIdentifiers.matches(tx.dsl(), view.VIEW_NAME, viewName))
             .and(activeAt(view, tx.getCurrentSnapshotId()))
+            .limit(2)
             .fetchOne()
         if (row == null) {
             throw DucklakeEntityNotFoundException("view", "schema_id=$schemaId, view_name=$viewName")
@@ -3566,7 +3578,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .set(view.SCHEMA_ID, schemaId)
             .set(view.VIEW_NAME, viewName)
             .set(view.DIALECT, dialect)
-            .set(view.SQL, viewSql)
+            // SQL is reserved in MySQL; explicitly quote this metadata column on every backend.
+            .set(DSL.field(DSL.quotedName("sql"), String::class.java), viewSql)
             // Spec quoted list — upstream parses this at catalog load and fails the WHOLE
             // catalog on anything else. Never store engine payloads here; use tags.
             .set(view.COLUMN_ALIASES, DucklakeQuotedList.encode(columnAliases))
@@ -3582,8 +3595,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             tx.dsl().insertInto(tag)
                 .set(tag.OBJECT_ID, viewId)
                 .set(tag.BEGIN_SNAPSHOT, tx.getNewSnapshotId())
-                .set(tag.KEY, key)
-                .set(tag.VALUE, value)
+                .set(DSL.field(DSL.quotedName("key"), String::class.java), key)
+                .set(DSL.field(DSL.quotedName("value"), String::class.java), value)
                 .execute()
         }
     }
@@ -3637,6 +3650,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         executeWriteTransaction("create schema $schemaName") { tx ->
             val schemaId = tx.allocateCatalogId()
             tx.recordChange(WriteChange.CreatedSchema(schemaName))
+            tx.namespaces.requireSchemaAvailable(schemaName)
             val schemaUuid = UUID.fromString(newCatalogUuid())
 
             tx.dsl().insertInto(sch)
@@ -3695,6 +3709,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         val pathIsRelative: Boolean = location?.isRelative ?: true
         executeWriteTransaction("create table $schemaName.$tableName") { tx ->
             val schemaId = tx.resolveSchemaId(schemaName)
+            tx.recordChange(WriteChange.CreatedTable(schemaId, schemaName, tableName))
+            tx.namespaces.requireRelationAvailable(schemaId, tableName)
+            CatalogNamespaces.requireDistinctColumns(columns)
             val tableId = tx.allocateCatalogId()
             val ctx = tx.dsl()
             val tableUuid = UUID.fromString(newCatalogUuid())
@@ -3715,7 +3732,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val topLevelColumnIds: MutableMap<String, Long> = linkedMapOf()
             for (column in columns) {
                 val columnId = insertColumnTree(tx, tableId, column, OptionalLong.empty())
-                topLevelColumnIds[column.name] = columnId
+                topLevelColumnIds[Final11InlineTypes.identifierKey(column.name)] = columnId
             }
 
             // 3. Table stats are NOT created at CREATE TABLE time — DuckDB creates them
@@ -3734,7 +3751,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
                 var keyIndex: Long = 0
                 for (field in partitionSpec) {
-                    val columnId = topLevelColumnIds[field.columnName]
+                    val columnId = topLevelColumnIds[Final11InlineTypes.identifierKey(field.columnName)]
                         ?: throw DucklakeEntityNotFoundException("partition column", field.columnName)
                     ctx.insertInto(partcol)
                         .set(partcol.PARTITION_ID, partitionId)
@@ -3766,7 +3783,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
 
             tx.incrementSchemaVersion(tableId)
-            tx.recordChange(WriteChange.CreatedTable(schemaId, schemaName, tableName))
         }
     }
 
@@ -4232,17 +4248,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 throw DucklakeInvalidOperationException(
                     "Renaming a table across schemas is not supported: table data paths are schema-relative")
             }
-            val clash = metadata.fetchOne(
-                ctx,
-                ctx.select(tab.TABLE_ID)
-                    .from(tab)
-                    .where(tab.SCHEMA_ID.eq(targetSchemaId))
-                    .and(DSL.lower(tab.TABLE_NAME).eq(newTableName.lowercase(Locale.ENGLISH)))
-                    .and(activeAt(tab, tx.getCurrentSnapshotId())),
-            )
-            if (clash != null) {
-                throw DucklakeEntityAlreadyExistsException("table", "$targetSchemaName.$newTableName")
-            }
+            tx.recordChange(WriteChange.CreatedTable(targetSchemaId, targetSchemaName, newTableName))
+            tx.namespaces.requireRelationAvailable(targetSchemaId, newTableName)
 
             // End-snapshot the current version; re-insert under the same table_id/uuid/path —
             // only name (and possibly schema_id) change, so data files and history stay put.
@@ -4270,7 +4277,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // detected as a name collision by the created-tables matrix check. altered_table is kept
             // as well: the library's lineage of the table changed, so a concurrent INSERT that
             // resolved the table by its OLD name is made to re-plan.
-            tx.recordChange(WriteChange.CreatedTable(targetSchemaId, targetSchemaName, newTableName))
             tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
@@ -4291,16 +4297,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .and(activeAt(sch, tx.getCurrentSnapshotId())),
             ) ?: throw DucklakeEntityNotFoundException("schema", schemaName)
 
-            val clash = metadata.fetchOne(
-                ctx,
-                ctx.select(sch.SCHEMA_ID)
-                    .from(sch)
-                    .where(DSL.lower(sch.SCHEMA_NAME).eq(newName.lowercase(Locale.ENGLISH)))
-                    .and(activeAt(sch, tx.getCurrentSnapshotId())),
-            )
-            if (clash != null) {
-                throw DucklakeEntityAlreadyExistsException("schema", newName)
-            }
+            tx.recordChange(WriteChange.DroppedSchema(schemaId, schemaName))
+            tx.recordChange(WriteChange.CreatedSchema(newName))
+            tx.namespaces.requireSchemaAvailable(newName)
 
             // ducklake_schema has a PRIMARY KEY on schema_id (upstream DDL), so a rename
             // cannot be a same-id versioned-row replacement like table renames. Instead the
@@ -4312,8 +4311,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // vocabulary has no schema-rename type (its parser throws on unknown types), and
             // that pair is the honest conflict surface either way.
             val newSchemaId = tx.allocateCatalogId()
-            tx.recordChange(WriteChange.DroppedSchema(schemaId, schemaName))
-            tx.recordChange(WriteChange.CreatedSchema(newName))
 
             metadata.execute(
                 ctx,
@@ -4546,9 +4543,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     override fun addColumn(tableId: Long, column: TableColumnSpec) {
         InlinedDataTables.requireNonSystemColumn(column.name)
         executeWriteTransaction("add column to table $tableId") { tx ->
+            tx.recordChange(WriteChange.AlteredTable(tableId))
+            tx.namespaces.requireColumnAvailable(tableId, null, column.name)
+            CatalogNamespaces.requireDistinctColumns(listOf(column))
             insertColumnTree(tx, tableId, column, OptionalLong.empty())
             tx.recordColumnSchemaChange(tableId)
-            tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
 
@@ -4588,11 +4587,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (current.parentColumn == null) {
                 InlinedDataTables.requireNonSystemColumn(newName)
             }
+            tx.recordChange(WriteChange.AlteredTable(tableId))
+            tx.namespaces.requireColumnAvailable(tableId, current.parentColumn, newName, columnId)
             replaceColumnVersion(tx, tableId, columnId, topLevelOnly = false) { next ->
                 next.setColumnName(newName)
             }
             tx.recordColumnSchemaChange(tableId)
-            tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
 
@@ -4854,7 +4854,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (ignoreExisting) {
             val current = activeColumnRows(dsl, tableId, currentSnapshotId)
             val parentId = resolveColumnIdByPath(current, parentPath)
-            if (current.any { it.parentColumn == parentId && it.columnName == field.name }) {
+            if (CatalogNamespaces.findColumn(current, parentId, field.name) != null) {
                 return
             }
         }
@@ -4867,13 +4867,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     "Cannot add a field to non-struct column ${parentPath.joinToString(".")} (type=${parent.columnType})",
                 )
             }
-            if (columns.any { it.parentColumn == parentId && it.columnName == field.name }) {
-                throw DucklakeEntityAlreadyExistsException("field", (parentPath + field.name).joinToString("."))
-            }
+            tx.recordChange(WriteChange.AlteredTable(tableId))
+            tx.namespaces.requireColumnAvailable(tableId, parentId, field.name, displayName = (parentPath + field.name).joinToString("."))
+            CatalogNamespaces.requireDistinctColumns(listOf(field))
             DucklakeTypeNames.validate(field, (parentPath + field.name).joinToString("."))
             insertColumnTree(tx, tableId, field, OptionalLong.of(parentId))
             tx.recordColumnSchemaChange(tableId)
-            tx.recordChange(WriteChange.AlteredTable(tableId))
         }
     }
 
@@ -4918,7 +4917,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         var parentId: Long? = null
         var currentId: Long? = null
         for (name in path) {
-            val match = columns.firstOrNull { it.columnName == name && it.parentColumn == parentId }
+            val match = CatalogNamespaces.findColumn(columns, parentId, name)
                 ?: throw DucklakeEntityNotFoundException("field", "${path.joinToString(".")} (no '$name')")
             currentId = match.columnId
             parentId = match.columnId
@@ -4989,6 +4988,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     ) {
         require(mode != InsertMode.FLUSH || preservedRowIdStart != null) { "FLUSH requires preservedRowIdStart" }
         val ctx = tx.dsl()
+        val partitions = PartitionWriteValidation(ctx, metadata, tableId, tx.getCurrentSnapshotId())
+        fragments.forEach(partitions::validate)
         val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         val partval = DUCKLAKE_FILE_PARTITION_VALUE.`as`("partval")
@@ -5909,28 +5910,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // the unqualified form `JdbcDucklakeCatalog.newCatalogUuid()`.
         fun newCatalogUuid(): String =
             V7_UUIDS.generate().toString()
-
-        private fun hasActiveView(tx: DucklakeWriteTransaction, schemaId: Long, viewName: String): Boolean {
-            val view = DUCKLAKE_VIEW.`as`("view")
-            return tx.dsl().fetchExists(
-                DSL.selectOne()
-                    .from(view)
-                    .where(view.SCHEMA_ID.eq(schemaId))
-                    .and(DSL.lower(view.VIEW_NAME).eq(viewName.lowercase(Locale.ENGLISH)))
-                    .and(activeAt(view, tx.getCurrentSnapshotId())),
-            )
-        }
-
-        private fun hasActiveTable(tx: DucklakeWriteTransaction, schemaId: Long, tableName: String): Boolean {
-            val tab = DUCKLAKE_TABLE.`as`("tab")
-            return tx.dsl().fetchExists(
-                DSL.selectOne()
-                    .from(tab)
-                    .where(tab.SCHEMA_ID.eq(schemaId))
-                    .and(DSL.lower(tab.TABLE_NAME).eq(tableName.lowercase(Locale.ENGLISH)))
-                    .and(activeAt(tab, tx.getCurrentSnapshotId())),
-            )
-        }
 
         private fun referencedColumnIds(fragments: List<DucklakeWriteFragment>): Set<Long> =
             fragments.flatMap { it.columnStats }.mapTo(HashSet()) { it.columnId }

@@ -47,7 +47,7 @@ No original requirement or failing gate is removed by this status split.
 
 ### October 26 library correctness follow-up
 
-The separate two-item batch fixes direct catalog schema/table lookup and C09 error
+The first two-item batch, `05c6ca6`, fixes direct catalog schema/table lookup and C09 error
 classification. The accepted `6730bb8` consumer bundle below is not overwritten or
 silently presented as containing these newer source changes.
 
@@ -87,8 +87,61 @@ silently presented as containing these newer source changes.
   was needed for this internal correction; the old bundle remains unchanged. Legacy
   consumers can benefit when they adopt the corrected library in their next dependency update.
 
-This batch does not close C10's DDL namespace work or change view-name lookup,
-upstream verification, reader type support, 1.1 write guards or rollout approval.
+That first batch did not close C10 or change view-name lookup. The separate local
+correctness batch below addresses those paths; upstream verification, reader type
+support, 1.1 write guards and rollout approval stay independent.
+
+### October 26 local correctness: views, namespaces, partitions and diagnostics
+
+The owner authorized this finite follow-up. Initial actual-API regressions failed
+22 of 32 cases on unchanged code: Unicode view ambiguity on all five routes,
+accepted duplicate namespaces/columns and incomplete partition metadata on all five
+1.0 write routes, and exposed synthetic URL credentials in catalog diagnostics.
+
+- **View names:** read and write lookup use the shared ASCII-only/binary comparison,
+  preserving distinct Unicode identities. Real 1.1 producers cover read lookup;
+  1.0 API tests cover replace/rename/drop, historical tags and cross-kind collisions.
+  These tests also exposed existing MySQL view/tag insertion errors: the reserved
+  `sql` and `key`/`value` metadata targets are now explicitly quoted.
+- **C10 namespaces:** schema and shared table/view admission runs inside the owned
+  transaction; column and nested-field siblings reject duplicates under the same
+  identifier rules. Duplicate input trees reject before metadata insertion. Existing
+  IF-NOT-EXISTS field behavior recognizes ASCII-equivalent names without a snapshot.
+  Race tests and existing controls preserve one-winner behavior and logical-conflict
+  classification on retry; qualified field diagnostics and change-record ordering
+  are retained. These repair existing 0.4/1.0 mutation paths, not 1.1 write support.
+- **C18 partition payloads:** registration checks spec ownership/visibility and exact
+  key coverage before any fragment is inserted. A present key with SQL NULL is
+  distinct from an absent key; extra/missing keys, foreign/unknown specs and values
+  without a spec reject. Queries fetch at most two ownership rows and the supplied
+  key count plus one sentinel; validated spec keys are cached only inside the batch.
+  Retired owned specs retain their immutable identities; this is structural payload
+  validation, not recomputation of partition transforms or a new partition policy.
+- **C23 diagnostic URLs:** catalog-owned log messages, error messages and diagnostic
+  URL getters omit URL options/user-info rather than enumerating password aliases.
+  The real connection URL and its properties remain unchanged. Diagnostic URL getters
+  remain binary/source-compatible but their redacted values are not connection strings.
+  This covers library-owned output; it does not rewrite third-party driver/pool logs
+  or arbitrary exception causes.
+
+**Verified complete:** focused checks cover all four repairs plus existing concurrency,
+DDL, view-tag and DuckDB-oracle controls. The final forced
+`check :ducklake-catalog:quackPreviewTest --rerun-tasks -Dducklake.corpus.dirs=all`
+passes **1,030 maintained tests** (881 catalog / 51 SLT / 98 replay), **86 separate
+direct-Java tests**, and **17,602 corpus records**. No JUnit failures/errors/skips;
+the existing 100 file / 12 record corpus exclusions are unchanged. Lint, frozen
+compatibility/wire controls and Java17 checks pass (7,834 classes / 17 artifacts).
+Full run: 29m34s, once on the final code. Initial lint findings were fixed without
+changing rules; the two focused runtime failures led to the MySQL identifier quoting
+fix and restoration of the established qualified field-error message.
+
+Evidence prefix: `/tmp/opencode/catalog-local-correctness-*` (initial red, focused
+iterations, final targeted check, full log and full XML). C10/C18/C23 are closed for
+the documented scopes. C11 nested arity, C06 MySQL atomicity and other backlog items
+remain separate. No connector source, immutable bundle, upstream/corpus pin, test
+golden/exclusion or 1.1 write guard changed. Consumers adopt these library-source
+corrections in a later coordinated dependency update; no new integration bundle or
+connector deployment is claimed here.
 
 ### Accepted October 25 integration baseline
 
@@ -228,8 +281,8 @@ their distinct values (1 and 2). The repair uses Guava's ASCII-only comparison;
 actual-adapter and two-worker Trino SQL regressions now pass for schema/table names,
 existing ASCII case rules, distinct Unicode names and absent names. Authored true
 duplicates still reject. The October 26 batch above also fixes the older direct
-library schema/table SQL LOWER behavior; view lookup and C10 DDL namespace work
-remain separate from these corrected read contracts.
+library schema/table SQL LOWER behavior. The subsequent local-correctness batch
+also fixes view lookup and C10 admission; those results are recorded separately above.
 
 ### QG-03/04 — Structural assessment and bounded disposition
 
@@ -257,8 +310,9 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | Catalog C08 defaults, C16 interval parsing, C21 empty projection | Scoped 1.1 behavior addressed by R01/R03/page APIs; this does not close every legacy-path part of those older findings |
 | C07 pruning | Older candidate, not newly verified here; conservative 1.1 min/max pruning avoids that optimization. Dedicated current-code reproduction remains older-backlog work |
 | C09 missing-table classification | Fixed and fully verified October 26: actual legacy DuckDB/Quack silent-empty reproductions now propagate, while legitimate absence and existing owned-session behavior remain covered |
-| C12 lineage / C18 partition ownership / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |
-| C06 MySQL implicit-DDL atomicity, C10/C11/C17/C19 mutation rules | Relevant prerequisites for future write work, not a reason to reimplement approved read-only routes |
+| C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |
+| C12 lineage / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |
+| C06 MySQL implicit-DDL atomicity, C11/C17/C19 mutation rules | Relevant prerequisites for future write work, not a reason to reimplement approved read-only routes |
 | Remaining C/H/B/R/N/Q and UF backlog | Retained in [BACKLOG](BACKLOG.md) and [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md); not a completed whole-project audit |
 
 Priority is severity and reachability, not age. A proven older wrong-row defect in

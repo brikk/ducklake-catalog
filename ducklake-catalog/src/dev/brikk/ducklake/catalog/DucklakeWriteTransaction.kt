@@ -39,6 +39,7 @@ internal class DucklakeWriteTransaction(
     private val initialSchemaVersion: Long = schemaVersion
     private val schemaVersionTableIds: MutableSet<Long> = linkedSetOf()
     private val changes: MutableList<WriteChange> = mutableListOf()
+    val namespaces = CatalogNamespaces(dsl, currentSnapshotId)
 
     /**
      * Returns the connection-scoped [DSLContext] for building jOOQ statements that
@@ -81,7 +82,7 @@ internal class DucklakeWriteTransaction(
     fun resolveSchemaId(schemaName: String): Long {
         val schema = DUCKLAKE_SCHEMA.`as`("write_schema")
         return dsl.select(schema.SCHEMA_ID).from(schema)
-            .where(schema.SCHEMA_NAME.lower().eq(DSL.lower(DSL.`val`(schemaName))))
+            .where(CatalogIdentifiers.matches(dsl, schema.SCHEMA_NAME, schemaName))
             .and(schema.BEGIN_SNAPSHOT.le(currentSnapshotId))
             .and(schema.END_SNAPSHOT.isNull.or(schema.END_SNAPSHOT.gt(currentSnapshotId)))
             .limit(2).fetchOne(schema.SCHEMA_ID) ?: throw DucklakeEntityNotFoundException("schema", schemaName)
@@ -94,7 +95,7 @@ internal class DucklakeWriteTransaction(
     fun resolveTableId(schemaId: Long, tableName: String): Long {
         val table = DUCKLAKE_TABLE.`as`("write_table")
         return dsl.select(table.TABLE_ID).from(table)
-            .where(table.SCHEMA_ID.eq(schemaId)).and(table.TABLE_NAME.lower().eq(DSL.lower(DSL.`val`(tableName))))
+            .where(table.SCHEMA_ID.eq(schemaId)).and(CatalogIdentifiers.matches(dsl, table.TABLE_NAME, tableName))
             .and(table.BEGIN_SNAPSHOT.le(currentSnapshotId))
             .and(table.END_SNAPSHOT.isNull.or(table.END_SNAPSHOT.gt(currentSnapshotId)))
             .limit(2).fetchOne(table.TABLE_ID) ?: throw DucklakeEntityNotFoundException("table", tableName)
