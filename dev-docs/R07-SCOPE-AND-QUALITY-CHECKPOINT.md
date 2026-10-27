@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Read milestone closed October 25; October 26 library corrections verified.** This is the current status and next-work
+**Read milestone closed October 25; October 27 C11/C19 corrections verified.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -137,11 +137,50 @@ fix and restoration of the established qualified field-error message.
 
 Evidence prefix: `/tmp/opencode/catalog-local-correctness-*` (initial red, focused
 iterations, final targeted check, full log and full XML). C10/C18/C23 are closed for
-the documented scopes. C11 nested arity, C06 MySQL atomicity and other backlog items
-remain separate. No connector source, immutable bundle, upstream/corpus pin, test
-golden/exclusion or 1.1 write guard changed. Consumers adopt these library-source
+the documented scopes. C11/C19 were handled by the subsequent batch below; C06 MySQL
+atomicity and other backlog items remain separate. No connector source, immutable
+bundle, upstream/corpus pin, test golden/exclusion or 1.1 write guard changed. Consumers adopt these library-source
 corrections in a later coordinated dependency update; no new integration bundle or
 connector deployment is claimed here.
+
+### October 27 correctness follow-up — C11 and C19
+
+The owner requested the next local fixes if upstream availability did not unblock
+our pending gates. The source/artifact review below established that condition.
+
+- **C11:** `dropColumn` admits only top-level columns. `dropField` requires a nested
+  STRUCT field, preserves at least one sibling and refuses required LIST/MAP roles.
+  Nested changes cannot bypass partition/sort dependencies through their root.
+  Valid subtree removals still preserve old snapshots and surviving identities.
+- **C19:** top-level renames parse stored DuckDB sort expressions with the existing
+  jOOQ dependency and rewrite only unqualified column references, not function names,
+  types or literal text. The same transaction ends the previous sort-info version and
+  allocates a new sort ID with copied directions/null ordering. Historical sort
+  expressions remain unchanged; unrelated-column renames do not mint new sort IDs.
+  Actual DuckDB inserts and time travel after rename pass on local and PostgreSQL lakes.
+- **Explicit boundary:** unsupported dialects or parser syntax, subqueries, qualified
+  references and bind parameters refuse before mutation. Nested renames under a
+  sort-dependent root also refuse. Admission bounds are 4,096 sort keys, 16,384
+  characters per metadata text/expression, 128 opening delimiters before parsing,
+  and 8,192 rendering visits per expression. These are bounded interpretation limits,
+  not a new SQL dialect or a promise of arbitrary-expression rewriting.
+- **Verification complete:** 47 focused tests and lint pass. The final forced full
+  check passes **1,059 maintained tests** (910 catalog / 51 SLT / 98 replay), **86
+  separate direct-Java tests** and **17,602 corpus records**. No JUnit failures/errors/
+  skips; the existing 100 file / 12 record corpus exclusions remain unchanged. Lint,
+  frozen compatibility/wire controls and Java17 checks pass (7,839 classes / 17
+  artifacts). Full run: 30m51s, once on final code.
+  Initial failures reproduced destructive removals and stale sort metadata on all
+  five 1.0 API routes, plus broken subsequent DuckDB INSERT on local/PostgreSQL.
+  Five initial historical-DTO expectations were corrected to include the legitimate
+  newly known end snapshot, then independently rerun red on the actual last-field bug.
+  Evidence: `/tmp/opencode/catalog-c11-c19-*` (red, focused, full log and archived XML)
+  and `catalog-c11-history-red.log`.
+
+This is a library-source correction; no connector bundle, upstream dependency or
+corpus pin was changed, and 1.1 writes remain guarded. C11/C19 corruption prevention
+is complete within the explicit interpretation limits above; unsupported sort syntax
+remains a refusal, not a claim of a general SQL rewriting engine.
 
 ### Accepted October 25 integration baseline
 
@@ -312,7 +351,8 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | C09 missing-table classification | Fixed and fully verified October 26: actual legacy DuckDB/Quack silent-empty reproductions now propagate, while legitimate absence and existing owned-session behavior remain covered |
 | C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |
 | C12 lineage / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |
-| C06 MySQL implicit-DDL atomicity, C11/C17/C19 mutation rules | Relevant prerequisites for future write work, not a reason to reimplement approved read-only routes |
+| C11 nested removals / C19 sorted renames | Fixed and fully verified October 27; structural admission and versioned parsed sort-reference updates with explicit unsupported-expression refusals |
+| C06 MySQL implicit-DDL atomicity / C17 inline DDL rendering | Relevant prerequisites for future write work, not a reason to reimplement approved read-only routes |
 | Remaining C/H/B/R/N/Q and UF backlog | Retained in [BACKLOG](BACKLOG.md) and [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md); not a completed whole-project audit |
 
 Priority is severity and reachability, not age. A proven older wrong-row defect in
@@ -322,11 +362,33 @@ Unknowns stay explicitly unknown rather than being called either fixed or blocke
 
 ## Upstream verification linked to each feature
 
-Availability checked October 25: DuckLake main remains
-`947c8496c9becc53ed487b859384ce65e6edd2e3`; latest DuckDB/JDBC releases remain
-2.0.0/2.0.0.0. Fresh official `v2.0.0/linux_amd64` DuckLake/Quack/PG-scanner/MySQL-scanner
-downloads match the October 24 hashes. DuckLake is still `417a9117f5`; a source merge
-has not changed these downloaded bytes. No installation or repin occurred.
+**Refreshed October 27, 06:34 UTC:** latest stable DuckDB/JDBC remain 2.0.0/2.0.0.0.
+Fresh official `v2.0.0/linux_amd64` DuckLake/Quack/PG-scanner/MySQL-scanner downloads
+are byte-identical to the qualified pins; the published DuckLake is still `417a9117f5`.
+No installation or repin occurred.
+
+Source **has** advanced: DuckLake main is `4c8981b8519013a58cdfc173b03eeb2b47d45497`
+(three new mainline merges, 58 reachable commits since `947c8496`); DuckDB main is
+`3a8bf4bdf408f680115acbe2dfc41afb00a7572f`. Useful new source work includes:
+
+- [DuckLake #1850](https://github.com/duckdb/ducklake/pull/1850): PostgreSQL flush
+  avoids waiting on readers when dropping superseded inline tables; imported foreign
+  field IDs use name mapping; bucket type/spec handling and option retry fixes.
+  These inform future integration tests, not physical-file lease guarantees.
+- [DuckLake #1852](https://github.com/duckdb/ducklake/pull/1852): timestamp-bound
+  caching, change feeds starting after the newest snapshot, commit-time snapshot
+  timestamps and batched stats work. [#1849](https://github.com/duckdb/ducklake/pull/1849)
+  updates PostgreSQL/SQLite scanner source pins, not our shipped artifacts.
+- [DuckDB #27901](https://github.com/duckdb/duckdb/pull/27901): VARIANT traversal
+  depth admission, relevant to future upstream-compatible value decoding.
+  [#27255](https://github.com/duckdb/duckdb/pull/27255) warns on plain DuckDB attachment
+  of DuckLake metadata; deliberate metadata attachment may need explicit `TYPE duckdb`
+  on a future upgrade, not a switch to a migrating DuckLake attachment.
+
+No published change clears R02/R04 or establishes a passing interval/MySQL producer
+gate today. New source benefits therefore do not replace the next local correctness
+batch or waive old failures. Full API deltas, selected patch inspection and download
+hashes are retained under `/tmp/opencode/catalog-upstream-review-2026-10-27/`.
 
 | Follow-up | Defective operation / known fix | Exact remaining verification |
 |---|---|---|

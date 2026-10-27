@@ -25,12 +25,10 @@ For authorized upstream work and the next RC checkpoint, use the separate
 |---|---|
 | C07 | Logical-type pruning: float32 equality and end-of-day TIME must not lose matching rows. UF-04's bucket work is separate. |
 | C08 | Apply initial defaults to absent old-inline columns without replacing stored NULLs; make CDC contract decisions explicit. |
-| C11 | Validate surviving STRUCT/LIST/MAP arity and nested removal paths. |
 | C12 | Per-output partial-rewrite origins or required embedded IDs; no overlapping fallback row-ID ranges. |
 | C13 | Migrate callers off weak legacy materialization boundaries without silently removing shipped APIs. |
 | C16 | Large/signed interval parsing and literal CAST-string provenance. |
 | C17 | Real MySQL inline DDL type/identifier rendering or safe refusal; coordinate with C06. |
-| C19 | Rewrite/version sort expressions on rename, including subsequent native inserts and old snapshots. |
 | C21 | Empty inline projections preserve cardinality or reject explicitly. |
 | C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
 | C24 | Consistent typed initialization errors for CREATE and file writes. |
@@ -69,6 +67,12 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C11 / C19 — October 27:** nested removals preserve valid type trees and cannot
+  bypass root dependency checks; supported DuckDB sort expressions are rewritten by
+  parsed column reference and versioned on rename. Actual DuckDB INSERT and historical
+  reads pass after library renames. Unknown dialects/syntax and unsafe nested sorted
+  changes refuse before mutation. Full 1,059 maintained + 86 direct-Java /
+  17,602-record checks pass. [Exact scope and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#october-27-correctness-follow-up--c11-and-c19).
 - **C10 / C18 / C23 and view-name matching — October 26:** transaction-local
   schema/relation/sibling-name admission, partition-spec ownership and exact supplied
   keys, and redacted catalog-owned URL diagnostics. Five-route API regressions,
@@ -76,7 +80,8 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
   direct-Java / 17,602-record run pass. MySQL view/tag metadata targets are explicitly
   quoted. [Scope, limits and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#october-26-local-correctness-views-namespaces-partitions-and-diagnostics).
   This repairs existing 0.4/1.0 mutations and 1.1 view reads; it does not enable 1.1
-  writes or close C06/C11/C17/C19. Driver/pool logs are outside catalog-owned URL rendering.
+  writes or close C06/C17. C11/C19 were addressed subsequently above. Driver/pool logs
+  are outside catalog-owned URL rendering.
 - **C09 and direct schema/table identifier reads — October 26:** precise expected-table
   error classification replaces the legacy silent-empty fallback; ASCII-only/binary
   name matching preserves distinct Unicode names on all five read routes. Actual-API

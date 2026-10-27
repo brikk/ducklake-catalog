@@ -4559,6 +4559,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             if (columns.none { it.columnId == columnId }) {
                 throw DucklakeEntityNotFoundException("column", columnId.toString())
             }
+            CatalogColumnTree(columns).requireRoot(columnId)
             // End-snapshot the column and EVERY transitive descendant. Nested types nest
             // arbitrarily (struct<struct<...>>, list<struct<...>>, map<k, struct<...>>); a
             // one-level `parent_column = columnId` cascade leaves grandchildren active with a
@@ -4566,7 +4567,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // "Could not find parent column for column ...". Mirrors
             // DuckLakeTableEntry::RemoveColumns, which recurses.
             val subtree = collectSubtreeIds(columns, columnId)
-            validateColumnCanBeDropped(ctx, tableId, columns, columnId, subtree, tx.getCurrentSnapshotId())
+            validateColumnCanBeDropped(tx, tableId, columns, columnId, subtree)
             metadata.execute(ctx, ctx.update(col)
                 .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(col.TABLE_ID.eq(tableId))
@@ -4581,14 +4582,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun renameColumn(tableId: Long, columnId: Long, newName: String) {
         executeWriteTransaction("rename column in table $tableId") { tx ->
-            val current = activeColumnRows(tx.dsl(), tableId, tx.getCurrentSnapshotId())
-                .firstOrNull { it.columnId == columnId }
-                ?: throw DucklakeEntityNotFoundException("column", columnId.toString())
+            val columns = CatalogColumnTree(activeColumnRows(tx.dsl(), tableId, tx.getCurrentSnapshotId()))
+            val current = columns.column(columnId)
             if (current.parentColumn == null) {
                 InlinedDataTables.requireNonSystemColumn(newName)
             }
             tx.recordChange(WriteChange.AlteredTable(tableId))
             tx.namespaces.requireColumnAvailable(tableId, current.parentColumn, newName, columnId)
+            val sort = CatalogSortChanges(tx, metadata, tableId)
+            if (current.parentColumn == null) sort.rename(current.columnName, newName)
+            else sort.requireUnreferenced(columns.root(current).columnName)
             replaceColumnVersion(tx, tableId, columnId, topLevelOnly = false) { next ->
                 next.setColumnName(newName)
             }
@@ -4597,12 +4600,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     private fun validateColumnCanBeDropped(
-        ctx: DSLContext,
+        tx: DucklakeWriteTransaction,
         tableId: Long,
         columns: List<DucklakeColumn>,
         columnId: Long,
         subtree: Set<Long>,
-        snapshotId: Long,
     ) {
         val column = columns.first { it.columnId == columnId }
         if (column.parentColumn == null && columns.count { it.parentColumn == null } == 1) {
@@ -4610,8 +4612,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 "Cannot drop column '${column.columnName}': table only has one column remaining",
             )
         }
-        requireColumnNotPartitioned(ctx, tableId, column, subtree, snapshotId)
-        requireColumnNotSorted(ctx, tableId, column, snapshotId)
+        requireColumnNotPartitioned(tx.dsl(), tableId, column, subtree, tx.getCurrentSnapshotId())
+        CatalogSortChanges(tx, metadata, tableId).requireUnreferenced(column.columnName)
     }
 
     private fun requireColumnNotPartitioned(
@@ -4639,89 +4641,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 "Cannot drop column '${column.columnName}': the table is partitioned by this column",
             )
         }
-    }
-
-    private fun requireColumnNotSorted(
-        ctx: DSLContext,
-        tableId: Long,
-        column: DucklakeColumn,
-        snapshotId: Long,
-    ) {
-        val sortinfo = DUCKLAKE_SORT_INFO.`as`("sortinfo")
-        val sortexpr = DUCKLAKE_SORT_EXPRESSION.`as`("sortexpr")
-        val expressions = metadata.fetch(
-            ctx,
-            ctx.select(sortexpr.EXPRESSION).from(sortinfo)
-                .innerJoin(sortexpr)
-                .on(sortinfo.SORT_ID.eq(sortexpr.SORT_ID))
-                .and(sortinfo.TABLE_ID.eq(sortexpr.TABLE_ID))
-                .where(sortinfo.TABLE_ID.eq(tableId))
-                .and(activeAt(sortinfo, snapshotId)),
-        ).mapNotNull { it.get(sortexpr.EXPRESSION) }
-        if (expressions.any { expressionReferencesColumn(it, column.columnName) }) {
-            throw DucklakeInvalidOperationException(
-                "Cannot drop column '${column.columnName}': the table is sorted by this column",
-            )
-        }
-    }
-
-    /** SQL identifier scan for stored DuckDB sort expressions; quoted string literals are ignored. */
-    private fun expressionReferencesColumn(expression: String, columnName: String): Boolean {
-        var pos = 0
-        while (pos < expression.length) {
-            val c = expression[pos]
-            when {
-                c == '\'' -> pos = skipSqlQuoted(expression, pos, '\'')
-                c == '"' -> {
-                    val (identifier, next) = readQuotedIdentifier(expression, pos)
-                    if (identifier.equals(columnName, ignoreCase = true)) return true
-                    pos = next
-                }
-                c.isLetter() || c == '_' -> {
-                    val start = pos++
-                    while (pos < expression.length && isIdentifierPart(expression[pos])) pos++
-                    if (expression.substring(start, pos).equals(columnName, ignoreCase = true)) return true
-                }
-                else -> pos++
-            }
-        }
-        return false
-    }
-
-    private fun isIdentifierPart(c: Char): Boolean = c.isLetterOrDigit() || c == '_' || c == '$'
-
-    private fun skipSqlQuoted(text: String, start: Int, quote: Char): Int {
-        var pos = start + 1
-        while (pos < text.length) {
-            if (text[pos] != quote) {
-                pos++
-            }
-            else if (pos + 1 < text.length && text[pos + 1] == quote) {
-                pos += 2
-            }
-            else {
-                return pos + 1
-            }
-        }
-        return pos
-    }
-
-    private fun readQuotedIdentifier(text: String, start: Int): Pair<String, Int> {
-        val value = StringBuilder()
-        var pos = start + 1
-        while (pos < text.length) {
-            if (text[pos] != '"') {
-                value.append(text[pos++])
-            }
-            else if (pos + 1 < text.length && text[pos + 1] == '"') {
-                value.append('"')
-                pos += 2
-            }
-            else {
-                return value.toString() to pos + 1
-            }
-        }
-        return value.toString() to pos
     }
 
     /**
@@ -4879,12 +4798,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     override fun dropField(tableId: Long, fieldPath: List<String>) {
         val col = DUCKLAKE_COLUMN.`as`("col")
         executeWriteTransaction("drop field ${fieldPath.joinToString(".")} from table $tableId") { tx ->
+            if (fieldPath.size < 2) throw DucklakeInvalidOperationException("dropField requires a nested STRUCT field path")
             val ctx = tx.dsl()
             val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())
             val targetId = resolveColumnIdByPath(columns, fieldPath)
+            val root = CatalogColumnTree(columns).requireDroppableField(targetId)
             // End-snapshot the field and every transitive descendant (struct subfields nest
             // arbitrarily) — same recursive cascade as dropColumn.
             val subtree = collectSubtreeIds(columns, targetId)
+            requireColumnNotPartitioned(ctx, tableId, root, subtree + root.columnId, tx.getCurrentSnapshotId())
+            CatalogSortChanges(tx, metadata, tableId).requireUnreferenced(root.columnName)
             metadata.execute(ctx, ctx.update(col)
                 .set(col.END_SNAPSHOT, tx.getNewSnapshotId())
                 .where(col.TABLE_ID.eq(tableId))

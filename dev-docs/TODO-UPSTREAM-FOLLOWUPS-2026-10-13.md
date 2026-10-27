@@ -3,12 +3,15 @@
 Active queue; stable UF IDs are unchanged. For other review work use
 [BACKLOG.md](BACKLOG.md). Consumer support lives in [compatibility](../docs/COMPATIBILITY.md).
 
-**Current October 25 state:** [reconciled implementation and upstream-verification ledger](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
-Today's four official DuckDB-2.0 Linux extension downloads are byte-identical to
-October 24; main remains `947c8496`. R02/R04 source fixes await artifact verification;
-R03's interval fix is not established. Trino's older timezone-pruning issue was
-fixed in `9913cd6` and retained in its final qualification. Both latest consumer
-rounds are finished. The historical review below does not reopen that completed work.
+**Current October 27 state:** [reconciled implementation and upstream-verification ledger](R07-SCOPE-AND-QUALITY-CHECKPOINT.md).
+DuckLake main advanced to `4c8981b` through #1849/#1850/#1852; source improvements
+include reader-friendly PostgreSQL inline cleanup, foreign field-ID imports,
+partition/options handling and snapshot-time/CDC behavior. DuckDB source also advanced.
+Latest stable core/JDBC are still 2.0.0/2.0.0.0, and all four freshly downloaded
+official DuckDB-2.0 Linux extensions are byte-identical to our qualified pins.
+R02/R04 still await published-artifact verification; interval/MySQL gates are not
+newly green. Evidence: `/tmp/opencode/catalog-upstream-review-2026-10-27/`.
+The historical review below does not reopen completed reader/connector work.
 
 ## Shipping artifacts — October 21
 

@@ -722,7 +722,8 @@ interface DucklakeCatalog : AutoCloseable {
     fun addColumn(tableId: Long, column: TableColumnSpec)
 
     /**
-     * Drop a column from a table. Sets end_snapshot on the column's current row and on every
+     * Drop a top-level column from a table (use [dropField] for nested STRUCT fields).
+     * Sets end_snapshot on the column's current row and on every
      * transitive descendant row (nested struct/list/map children at any depth), so no active row is
      * left with a dangling `parent_column`. Fails if the column is not active at the current
      * snapshot. Increments schema version. Creates a new snapshot atomically.
@@ -732,6 +733,8 @@ interface DucklakeCatalog : AutoCloseable {
     /**
      * Rename a column. End-snapshots the current column row and inserts a new row
      * with the same column_id but updated column_name.
+     * Supported DuckDB sort expressions are versioned with rewritten column references; unknown
+     * dialects/syntax refuse before mutation. Nested renames of a sort-dependent root also refuse.
      * Increments schema version. Creates a new snapshot atomically.
      */
     fun renameColumn(tableId: Long, columnId: Long, newName: String)
@@ -776,6 +779,8 @@ interface DucklakeCatalog : AutoCloseable {
      *
      * [fieldPath] is the dotted path to the field, INCLUDING the top-level column name (e.g.
      * `[s, child]`). End-snapshots the field's `ducklake_column` row and all of its descendants.
+     * Refuses the last STRUCT field, required LIST/MAP children, root-only paths and fields under
+     * a partition/sort-dependent root. No snapshot or partial mutation is published on refusal.
      * Increments schema version, creates a new snapshot atomically.
      */
     fun dropField(tableId: Long, fieldPath: List<String>)

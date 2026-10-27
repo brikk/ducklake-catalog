@@ -22,7 +22,9 @@ import java.security.MessageDigest
 import java.util.Properties
 
 /** Native setup is deliberately outside library readers. Every backend owns its files/server. */
-internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private val migrate: Boolean = false) : AutoCloseable {
+internal class Final11DuckDbBackendFixture(
+    val route: Final11ReadRoute, private val migrate: Boolean = false, private val formatVersion: String = "1.1",
+) : AutoCloseable {
     val root: Path = Files.createTempDirectory(Files.createDirectories(Path.of("/tmp/opencode")), "catalog-r06-")
     val data: Path = Files.createDirectories(root.resolve("data"))
     val file: Path = root.resolve("metadata.db")
@@ -66,7 +68,7 @@ internal class Final11DuckDbBackendFixture(val route: Final11ReadRoute, private 
                 }
                 server.getQuackAttachUri()
             }
-            val version = if (!initialized && migrate) "1.0" else "1.1"
+            val version = if (!initialized && migrate) "1.0" else formatVersion
             s.execute("ATTACH ${q("ducklake:$target")} AS lake(DATA_PATH ${q(data.toString())},METADATA_CATALOG 'meta'," +
                 "DUCKLAKE_VERSION '$version',AUTOMATIC_MIGRATION ${if (initialized && migrate) "TRUE" else "FALSE"})")
             val rows = if (s.execute(sql)) s.resultSet.use { r -> buildList {

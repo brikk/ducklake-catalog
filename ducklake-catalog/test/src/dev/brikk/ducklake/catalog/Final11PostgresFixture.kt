@@ -20,7 +20,7 @@ import java.sql.DriverManager
 import java.sql.Connection
 
 /** Native setup and direct SQL observation, always outside the library reader's owned transaction. */
-internal class Final11PostgresFixture(private val migrate: Boolean = false) : AutoCloseable {
+internal class Final11PostgresFixture(private val migrate: Boolean = false, private val formatVersion: String = "1.1") : AutoCloseable {
     val root: Path = Files.createTempDirectory(Files.createDirectories(Path.of("/tmp/opencode")), "catalog-r06-pg-")
     val data: Path = Files.createDirectories(root.resolve("data"))
     private val server = TestingDucklakePostgreSqlCatalogServer()
@@ -50,7 +50,7 @@ internal class Final11PostgresFixture(private val migrate: Boolean = false) : Au
                 assertThat(r.getString(3)).isEqualTo("core")
             }
             s.executeQuery("SELECT current_setting('allow_unsigned_extensions')").use { r -> check(r.next()); assertThat(r.getBoolean(1)).isFalse() }
-            val version = if (migrate && !initialized) "1.0" else "1.1"
+            val version = if (migrate && !initialized) "1.0" else formatVersion
             s.execute("ATTACH '${server.getDuckDbAttachUri().replace("'", "''")}' AS lake " +
                 "(DATA_PATH '${data.toString().replace("'", "''")}',DUCKLAKE_VERSION '$version'," +
                 "AUTOMATIC_MIGRATION ${if (migrate && initialized) "TRUE" else "FALSE"})")
