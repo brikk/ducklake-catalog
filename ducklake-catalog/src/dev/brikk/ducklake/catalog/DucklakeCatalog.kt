@@ -443,8 +443,9 @@ interface DucklakeCatalog : AutoCloseable {
      * inclusive window — inserted (`begin_snapshot ∈ [start,end]`) or deleted
      * (`end_snapshot ∈ [start,end]`) — for the change feed. [columnIds] are the feed's requested
      * columns (by id) as of the end snapshot; each row's [DucklakeInlinedChangeRow.values] are
-     * projected to them in order (null-filled where a column didn't exist in the row's schema
-     * version). Empty when the inlined table doesn't exist.
+     * projected to them in order. Legacy feeds remain null-filled where a column didn't exist in
+     * the row's schema version; opt-in final-1.1 feeds use their qualified initial-default projection.
+     * Empty when the inlined table doesn't exist. Empty payload projections retain row/snapshot identity.
      * Candidate API: a version with equal begin/end snapshots never existed in a committed
      * state and must not produce either CDC image. Consumers filter it before pairing images.
      * Opt-in final-1.1 raw temporal values follow [readInlinedData]'s validated text contract.
@@ -487,6 +488,12 @@ interface DucklakeCatalog : AutoCloseable {
      * nested values as DuckDB text, `time` as `java.sql.Time`, …; see [InlinedValues]). Prefer
      * [readInlinedDataDecoded], which normalises them; this form is kept for consumers that carry
      * their own converter.
+     * Ordinary legacy reads supply qualified scalar initial defaults for requested root IDs absent
+     * from the physical schema, using metadata at [snapshotId], not caller-supplied defaults/types.
+     * Existing stored NULLs remain NULL. Missing-column defaults on MySQL and unqualified default
+     * types/history reject explicitly. Synthesized defaults use the shared typed projection's
+     * text/byte representations; present columns retain their original raw JDBC representation.
+     * Without final-1.1 opt-in, an empty projection returns one empty list per live row.
      * With [DucklakeCatalogConfig.enableFinal11Reads], reads require an owned [readSession] and
      * unqualified default/type-evolution or payload projections are rejected, not guessed as NULL.
      * In that opt-in tier, each root containing temporal leaves (including a whole nested root)

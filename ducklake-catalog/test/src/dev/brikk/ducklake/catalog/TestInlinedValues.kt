@@ -24,6 +24,13 @@ import java.time.ZoneOffset
 
 /** Pure decoding rules of [InlinedValues] (the backend round-trips live in the *Interop tests). */
 class TestInlinedValues {
+    @Test
+    fun quotedCastStringsRetainTheirLiteralProvenanceInLegacyNestedValues() {
+        val type = InlinedTypeNode("list", "v", listOf(InlinedTypeNode("varchar", "element")))
+        assertThat(InlinedValues.decode("['CAST(\\'hello\\' AS VARCHAR)']", type))
+            .isEqualTo(listOf("CAST('hello' AS VARCHAR)"))
+    }
+
     private fun leaf(type: String, name: String = "c") = InlinedTypeNode(type, name)
 
     @Test

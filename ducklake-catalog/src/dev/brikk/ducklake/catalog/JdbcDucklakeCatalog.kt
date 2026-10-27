@@ -630,10 +630,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         return Final11PostgresEvolution(ctx, Final11InlineSchema(emptyList())).plan(null, field).apply(null)
     }
 
-    private fun fetchTableColumns(tableId: Long, snapshotId: Long): List<DucklakeColumn> {
+    private fun fetchTableColumns(
+        tableId: Long, snapshotId: Long, bounded: Boolean = conservativeFinal11Read(dsl),
+    ): List<DucklakeColumn> {
         val col = DUCKLAKE_COLUMN.`as`("col")
         val ctx = dsl
-        val bounded = conservativeFinal11Read(ctx)
         val fields = col.fields().map { field ->
             if (bounded && field.dataType.isString) {
                 DSL.substring(field.coerce(String::class.java), 1, Final11ReadMetadataQueries.MAX_TEXT + 1).`as`(field.name)
@@ -2652,7 +2653,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * column tree. When [decode] is requested, types whose native JDBC mapping loses information on
      * text-backed backends (`time` → `java.sql.Time` drops microseconds, `timetz` also its offset,
      * `interval` → a driver class) are read as text via [textCastIfNeeded]; [InlinedValues] then
-     * parses them. Absent columns project SQL NULL, or a qualified final-1.1 typed initial default.
+     * parses them. Absent columns use a checked initial-default projection when supplied;
+     * unplanned missing fields (including legacy CDC) retain SQL NULL.
      */
     private class InlinedProjection(
         val fields: List<Field<*>>, val types: List<InlinedTypeNode?>,
@@ -2726,6 +2728,26 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
+    /** Only ordinary legacy reads fill missing roots; legacy CDC deliberately retains NULL-fill. */
+    private fun ordinaryInlineProjections(
+        tableName: String, tableId: Long, snapshot: Long, source: List<DucklakeColumn>, ids: List<Long>,
+    ): Map<Long, Final11InlineProjection.Projection> {
+        if (conservativeFinal11Read(dsl)) return final11InlineProjections(tableName, tableId, snapshot, source, ids)
+        val roots = source.filter { it.parentColumn == null }.map { it.columnId }.toSet()
+        val missing = ids.distinct().filter { it !in roots }
+        if (missing.isEmpty()) return emptyMap()
+        // Fetch the requested snapshot's real defaults/types, never trust caller-supplied DTO values.
+        val target = Final11InlineSchema(fetchTableColumns(tableId, snapshot, bounded = true))
+        val origin = Final11InlineSchema(source)
+        return when (dialect) {
+            SQLDialect.DUCKDB -> Final11InlineProjection(dsl, origin, target).plan(tableName, missing)
+            SQLDialect.POSTGRES -> Final11PostgresProjection(dsl, origin, target).plan(tableName, missing)
+            else -> throw DucklakeInvalidOperationException(
+                "Legacy missing-column defaults have no qualified ${if (dialect == SQLDialect.MYSQL) "MySQL" else dialect.name} read path",
+            )
+        }
+    }
+
     private fun readInlinedDataInternal(
         tableId: Long,
         schemaVersion: Long,
@@ -2733,9 +2755,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         columns: List<DucklakeColumn>,
         decode: Boolean,
     ): List<List<Any?>> {
-        if (columns.isEmpty()) {
-            if (final11ReadsEnabled) throw DucklakeInvalidOperationException("Opt-in reader requires a nonempty projection; use countInlinedRows for counts")
-            return emptyList()
+        if (columns.isEmpty() && final11ReadsEnabled) {
+            throw DucklakeInvalidOperationException("Opt-in reader requires a nonempty projection; use countInlinedRows for counts")
         }
 
         requireMySqlPayloadTypes(tableId, snapshotId, columns.map { it.columnId })
@@ -2748,11 +2769,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         val allSourceColumns = getAllColumnsWithParentage(tableId, sourceSchemaSnapshot)
         val sourceColumnsById: Map<Long, DucklakeColumn> = allSourceColumns.filter { it.parentColumn == null }.associateBy { it.columnId }
-        val readProjections = final11InlineProjections(inlined.name, tableId, snapshotId, allSourceColumns, columns.map { it.columnId })
+        val readProjections = ordinaryInlineProjections(inlined.name, tableId, snapshotId, allSourceColumns, columns.map { it.columnId })
         val projection = inlinedProjection(sourceColumnsById, allSourceColumns, columns.map { it.columnId }, "c", decode, readProjections)
 
         return try {
-            val result = dsl.select(projection.fields)
+            // A zero-column legacy projection still selects row identity to preserve cardinality.
+            val result = dsl.select(projection.fields.ifEmpty { listOf(inlined.rowId) })
                 .from(inlined.table)
                 .where(inlined.activeAt(snapshotId))
                 .orderBy(inlined.rowId)

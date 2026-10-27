@@ -121,7 +121,7 @@ The reader rejects these rather than silently returning wrong values:
   decimal, VARCHAR/JSON/BLOB, UUID, finite date/time/timestamp/interval families and
   SQL NULL, recursively within STRUCT/LIST/MAP. Native-disallowed TIME → TIME_NS
   ALTER is not treated as a supported promotion.
-- Empty ordinary projections through the legacy list API: use `countInlinedRows`
+- Opt-in empty ordinary projections through the legacy list API: use `countInlinedRows`
   for counts. The [decoded page API](READ-INLINE-PAGES-1.1.md) instead supports
   identity-only empty projections; CDC can also use its row/snapshot metadata.
 

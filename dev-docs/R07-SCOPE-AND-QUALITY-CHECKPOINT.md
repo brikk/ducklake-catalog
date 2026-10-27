@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Read milestone closed October 25; October 27 C06/C17 safeguards verified.** This is the current status and next-work
+**Read milestone closed October 25; legacy C08/C21 corrections verified and C16 reconciled.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -234,6 +234,49 @@ GRADLE_USER_HOME=/tmp/opencode/catalog-r07-gradle-isolated mise exec -- ./gradle
   --no-daemon --no-configuration-cache
 ```
 
+### Legacy-read reconciliation and C08/C21 follow-up
+
+The owner authorized this bounded batch after a current-code probe on `3c1e1dc`:
+native DuckDB returned `(7,42)` after ADD COLUMN DEFAULT, while legacy ordinary reads
+returned `(7,NULL)`; a live row's empty projection returned no rows. C16's original
+large/signed interval, millisecond and quoted-CAST cases already pass in the shared
+decoder (`fa9a04d` / `1e01447`), including outside the 1.1 opt-in path.
+
+- **C08:** ordinary legacy reads reuse the existing checked default projections
+  only for missing root IDs. Fresh bounded target metadata supplies type/default
+  authority; rename/widening and later INSERT defaults do not change initial values.
+  Stored NULLs and present-column behavior remain intact. DuckDB/Quack/PostgreSQL
+  support qualified scalar values and NULL containers; unsupported default history,
+  non-NULL containers and MySQL missing-column evolution reject explicitly.
+- **CDC decision:** legacy raw/decoded feeds retain the documented NULL-fill for
+  absent source fields. Their identity-only projections already retain cardinality.
+  Final-1.1 ordinary/CDC/page behavior is retained, not extended to new types/routes.
+- **C21:** non-opt-in ordinary reads select row identity for an empty payload,
+  producing one empty value list per live row under the same snapshot predicate.
+  Opt-in ordinary lists still reject empty projections; their page API supports
+  identity-only projections as before.
+- **C16:** reconciliation closes the existing decoder defects; no datatype
+  representation or parser rewrite was needed. A maintained regression now also
+  locks quoted literal `CAST(...)` preservation through the legacy nested decoder.
+  The upstream R03 interval-flush persistence failure remains independently open.
+- **Verification complete:** corrected JUnit Unit-return declarations ensure all
+  18 targeted cases are discovered; 17 C08/C21 cases fail on unchanged production
+  code, and the already-fixed C16 case passes. Mixed Int/Long expected lists were
+  explicitly typed before the fixed-code run. **72 focused tests and lint pass**, with
+  zero failures/errors/skips. The final forced full check passes **1,087 maintained
+  tests** (938 catalog / 51 SLT / 98 replay), **86 separate direct-Java tests** and
+  **17,602 corpus records**. Zero JUnit failures/errors/skips; existing 100 file /
+  12 record corpus exclusions are unchanged. Lint, frozen compatibility/wire
+  controls and Java17 checks pass (7,840 classes / 17 artifacts). Full run: 32m58s,
+  once on final code, with the same full-check command and pins as C06/C17 above.
+  Evidence: `/tmp/opencode/catalog-backlog-reconcile.log` and `catalog-c08-c21-*`.
+
+C08/C21 are closed within these explicit read/representation boundaries; C16 is
+closed by reconciliation of existing implementation and current evidence. C07
+pruning is the next bounded current-code reproduction candidate. Public signatures
+and wire shapes are unchanged. The immutable connector qualification bundle remains
+`6730bb8`; later library fixes await coordinated consumer adoption.
+
 ### Accepted October 25 integration baseline
 
 All three main trees were clean at evaluation start. Catalog documentation HEAD was
@@ -317,8 +360,9 @@ The library's current contracts are [general reads](../docs/READING-1.1.md),
 and [existing MySQL](../docs/READ-MYSQL-1.1.md). Ordinary/historical/CDC inline values
 use qualified types and stable identities; descriptors are not file scans. Legacy
 nested-schema APIs still refuse, while the explicit hierarchy companion is supported.
-Legacy empty ordinary projections reject; the new decoded page API supports
-identity-only empty projections. Unsupported cases must remain explicit failures.
+In the opt-in tier, empty ordinary projections through the legacy list API reject;
+the new decoded page API supports identity-only empty projections. Non-opt-in
+legacy behavior is addressed by C21 above. Unsupported cases remain explicit failures.
 
 Doris materializes a bounded plan: 128 total pages, at most the configured
 16-coordinate historical window, and existing physical/work/byte limits. It does
@@ -398,7 +442,8 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | Existing work | Current disposition |
 |---|---|
 | Trino timezone partition false negatives | Older correctness defect; fix `9913cd6`, with continuing final-round regression evidence. Do not reopen as unfinished 1.1 format work |
-| Catalog C08 defaults, C16 interval parsing, C21 empty projection | Scoped 1.1 behavior addressed by R01/R03/page APIs; this does not close every legacy-path part of those older findings |
+| C08 defaults / C21 empty projection | Legacy ordinary paths corrected and fully verified above; documented legacy CDC NULL-fill preserved, unsupported defaults/MySQL evolution explicit |
+| C16 interval / quoted CAST decoding | Reconciled as already fixed in shared decoders; current legacy-path evidence and exact quoted-CAST regression pass. Upstream interval-flush persistence remains separate |
 | C07 pruning | Older candidate, not newly verified here; conservative 1.1 min/max pruning avoids that optimization. Dedicated current-code reproduction remains older-backlog work |
 | C09 missing-table classification | Fixed and fully verified October 26: actual legacy DuckDB/Quack silent-empty reproductions now propagate, while legitimate absence and existing owned-session behavior remain covered |
 | C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |

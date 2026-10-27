@@ -25,11 +25,8 @@ For authorized upstream work and the next RC checkpoint, use the separate
 | ID | Work / closure criterion |
 |---|---|
 | C07 | Logical-type pruning: float32 equality and end-of-day TIME must not lose matching rows. UF-04's bucket work is separate. |
-| C08 | Apply initial defaults to absent old-inline columns without replacing stored NULLs; make CDC contract decisions explicit. |
 | C12 | Per-output partial-rewrite origins or required embedded IDs; no overlapping fallback row-ID ranges. |
 | C13 | Migrate callers off weak legacy materialization boundaries without silently removing shipped APIs. |
-| C16 | Large/signed interval parsing and literal CAST-string provenance. |
-| C21 | Empty inline projections preserve cardinality or reject explicitly. |
 | C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
 | C24 | Consistent typed initialization errors for CREATE and file writes. |
 
@@ -67,6 +64,20 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C08 / C21 — legacy ordinary-read corrections:** missing root IDs now use the
+  existing checked initial-default projection on DuckDB/Quack/PostgreSQL, with fresh
+  target metadata and preserved stored NULLs. MySQL missing-column evolution and
+  unqualified defaults reject explicitly. Non-opt-in empty ordinary projections
+  return one empty value list per live row. Legacy CDC retains its documented
+  NULL-fill contract; the 1.1 tier retains its separate default/page behavior.
+  Full 1,087 maintained + 86 direct-Java / 17,602-record checks pass.
+  [Exact scope and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#legacy-read-reconciliation-and-c08c21-follow-up).
+- **C16 — reconciled as already fixed:** shared interval decoding (`fa9a04d`, later
+  `66caa29`) handles large/signed clocks and explicit millisecond units, rejecting
+  malformed/overflow values. Quoted CAST-string provenance was fixed in `1e01447`.
+  The current legacy-path probe and maintained tests confirm those fixes; this
+  batch adds an exact legacy quoted-CAST regression. The separate upstream R03
+  interval-flush persistence failure remains open.
 - **C06 / C17 — October 27:** all column/field schema mutations on MySQL tables
   with registered inline storage reject before metadata writes, with fresh checks
   on retry. Physical registration/rendering also reject MySQL rather than running

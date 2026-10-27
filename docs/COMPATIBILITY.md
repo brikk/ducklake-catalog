@@ -56,6 +56,32 @@ registration into encrypted catalogs is rejected.
 - Read the [COMMIT outcome contract](COMMIT-OUTCOME-CONTRACT.md) before adopting
   0.13.0-SNAPSHOT. An uncertain commit is not permission to retry or delete output.
 
+## Legacy inline reads
+
+Ordinary legacy `readInlinedData` / `readInlinedDataDecoded` reads apply qualified
+scalar **initial** defaults to root column IDs absent from an older physical inline
+schema on DuckDB, native/direct-Java Quack and PostgreSQL. Defaults and types come
+from catalog metadata at the requested snapshot. Later INSERT defaults and caller
+DTO values cannot replace them; stored SQL NULLs stay NULL. This reuses the checked
+1.1 literal projection/decoder, without evaluating SQL expressions or changing
+present-column/nested evolution behavior. Synthesized raw defaults use its typed
+text/byte representations; existing raw payloads keep their JDBC representation.
+
+Non-NULL whole-container defaults, malformed/unknown histories and unsupported
+types fail explicitly. MySQL missing-column default projection also rejects; its
+qualified schema-evolution/producer work remains separate. Existing-column MySQL
+reads remain available.
+
+With final-1.1 opt-in disabled, empty ordinary projections preserve cardinality:
+one empty value list per live row, with the same snapshot filtering. Use
+`countInlinedRows` when only the count is needed. Opt-in ordinary list reads retain
+their existing empty-projection rejection; the decoded page API supports
+identity-only pages.
+
+**Legacy CDC keeps its documented NULL-fill contract** for fields absent from a
+source schema, and empty payload projections preserve CDC identity. The final-1.1
+CDC tier retains its separate qualified initial-default behavior.
+
 ## DuckDB 2.0 / DuckLake 1.1
 
 The [conservative final-1.1 reader](READING-1.1.md) requires an owned read session
