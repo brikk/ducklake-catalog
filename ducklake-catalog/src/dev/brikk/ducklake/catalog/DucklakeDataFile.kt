@@ -173,6 +173,9 @@ data class ExpireSnapshotsResult(
  * begin_snapshots of the rows it holds) and [partialMax] (= MAX). The merged file physically
  * carries a per-row `_ducklake_internal_snapshot_id` column so a read at S keeps rows whose value
  * is `<= S`; these bounds are persisted onto the `ducklake_data_file` row.
+ * It must also embed each row's original absolute `_ducklake_internal_row_id`. Registration uses
+ * NULL `row_id_start`; output order, gaps and partitioning cannot be described by a source minimum.
+ * The caller is responsible for materializing both internal columns in every output file.
  */
 data class PartialMergedFile(
     val fragment: DucklakeWriteFragment,

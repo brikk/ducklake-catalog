@@ -24,7 +24,6 @@ For authorized upstream work and the next RC checkpoint, use the separate
 
 | ID | Work / closure criterion |
 |---|---|
-| C12 | Per-output partial-rewrite origins or required embedded IDs; no overlapping fallback row-ID ranges. |
 | C13 | Migrate callers off weak legacy materialization boundaries without silently removing shipped APIs. |
 | C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
 | C24 | Consistent typed initialization errors for CREATE and file writes. |
@@ -63,6 +62,15 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C12 — reconciled and verified:** `0b6c31b` already changed both rewrite paths
+  to NULL `row_id_start` with required original embedded row IDs. The new exact
+  multi-output regression passes on local/PostgreSQL 1.0 lakes: four reordered,
+  noncontiguous outputs across two partitions preserve row IDs, original snapshot
+  visibility, subsequent DELETE behavior and the next INSERT's allocator. All 19
+  focused lineage/rewrite cases and lint pass. Trino's writer supplies both internal
+  columns; Doris has no rewrite caller. `PartialMergedFile` now repeats the existing
+  contract explicitly. No runtime implementation change was needed.
+  [Scope and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#c12-partial-rewrite-lineage-reconciliation).
 - **C07 — logical-type pruning:** FLOAT32/FLOAT64 bounds compare at declared binary
   precision, including equivalent decimal spellings and signed zero. TIME/TIME_NS
   `24:00:00` has an end-of-day key distinct from midnight; malformed clocks and

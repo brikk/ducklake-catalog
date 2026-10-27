@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Read milestone closed October 25; C07 logical-type pruning correction verified.** This is the current status and next-work
+**Read milestone closed October 25; C07 verified and C12 reconciled/closed.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -313,8 +313,36 @@ existing public comparable key types and stored statistics text; no new wire/API
 shape or data representation was introduced. Conservative 1.1 min/max pruning,
 UF-04 bucket behavior and broader historical-type qualification retain their own
 boundaries. The accepted consumer bundle remains `6730bb8`; this source correction
-is not a new connector adoption or deployment. C12 remains a current-code
-reproduction candidate; no further batch is started here.
+is not a new connector adoption or deployment. C12 was subsequently verified and
+closed below.
+
+### C12 partial-rewrite lineage reconciliation
+
+The original overlap finding predates `0b6c31b`. Current partial rewrites use
+`InsertMode.REWRITE`, register every output with NULL `row_id_start`, preserve the
+existing allocator and require embedded original absolute row IDs in addition to
+insert-snapshot IDs. A common source minimum no longer supplies a fallback range.
+
+**Verified complete:** `TestPartialRewriteMultiOutputLineage` exercises the real API
+on local and PostgreSQL 1.0 lakes. Two source snapshots and two partitions become
+four output Parquet files with reordered, noncontiguous original row IDs. Native
+DuckDB verifies current rows, both historical snapshots, partition filtering,
+subsequent DELETE and next INSERT row-ID allocation. All four output descriptors
+have NULL starts; source metadata is retired and the gross row count is preserved.
+The two new cases plus existing rewrite/history/eligibility controls total **19
+passing tests**, zero failures/errors/skips, and lint passes.
+
+Trino `3385429`'s `DucklakeRewriteDataFilesProcedure.GroupWriter` reads the lineage
+virtual column and writes it into every output, plus snapshot tags in partial mode.
+Doris `4efd9bc` has no rewrite caller. Both clean consumer sources were inspected;
+this is not a fresh connector execution/adoption claim. The `PartialMergedFile`
+KDoc now repeats its enclosing API's embedded-ID requirement. Registration consumes
+metadata fragments; callers remain responsible for materializing those columns.
+
+No runtime source changed. The final `9dd4073` full-check evidence is reused for
+unchanged code; this closeout adds targeted evidence rather than repeating that
+full suite. Evidence: `/tmp/opencode/catalog-c12-verification.log` and
+`catalog-c12-verification-xml/`. C12 is closed; C13 is the next authorized batch.
 
 ### Accepted October 25 integration baseline
 
@@ -486,7 +514,8 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | C07 pruning | Fixed and fully verified above: float binary precision and end-of-day TIME keys. Conservative 1.1 min/max policy and bucket/historical-type work remain separate |
 | C09 missing-table classification | Fixed and fully verified October 26: actual legacy DuckDB/Quack silent-empty reproductions now propagate, while legitimate absence and existing owned-session behavior remain covered |
 | C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |
-| C12 lineage / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |
+| C12 lineage | Reconciled to existing `0b6c31b` fix and closed with actual multi-output partitioned rewrite verification above |
+| C22 paths | R05 ownership evidence exists; broader legacy path-namespace/caller findings remain open |
 | C11 nested removals / C19 sorted renames | Fixed and fully verified October 27; structural admission and versioned parsed sort-reference updates with explicit unsupported-expression refusals |
 | C06 MySQL implicit-DDL atomicity / C17 inline DDL rendering | Safe-refusal fix verified October 27: affected operations reject before metadata mutation; full inline evolution still requires a preparation/publication protocol and qualified backend rendering |
 | Remaining C/H/B/R/N/Q and UF backlog | Retained in [BACKLOG](BACKLOG.md) and [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md); not a completed whole-project audit |
