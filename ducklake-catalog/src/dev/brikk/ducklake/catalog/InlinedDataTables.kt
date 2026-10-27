@@ -31,8 +31,10 @@ import org.jooq.SQLDialect
  *    nested types, `uint64`, `int128`, `uint128`, `date`, every `timestamp*` → `VARCHAR`;
  *    `varchar` / `blob` / `json` → `BYTEA`; `float64` → `DOUBLE PRECISION`; `int8` → `SMALLINT`;
  *    `uint8` / `uint16` → `INTEGER`; `uint32` → `BIGINT`; `float32` → `REAL`.
- *  - DuckDB (and any other backend, like upstream's base manager): DuckDB type names, nested as
+ *  - DuckDB: DuckDB type names, nested as
  *    `STRUCT(a T, …)`, `T[]`, `MAP(K, V)`.
+ *  - MySQL: physical inline DDL is refused until it has a safe preparation/publication protocol
+ *    and qualified backend rendering. Its implicit commits cannot be rolled back with metadata.
  */
 internal object InlinedDataTables {
     data class MetadataColumns(val rowId: String, val beginSnapshot: String, val endSnapshot: String)
@@ -92,6 +94,15 @@ internal object InlinedDataTables {
 
     fun tableName(tableId: Long, schemaVersion: Long): String = "ducklake_inlined_data_${tableId}_$schemaVersion"
 
+    fun requireTransactionalDdl(dialect: SQLDialect) {
+        if (dialect.family() == SQLDialect.MYSQL) {
+            throw DucklakeInvalidOperationException(
+                "MySQL inline schema changes are unsupported: physical table DDL implicitly commits; " +
+                    "a safe table-preparation/publication protocol is required",
+            )
+        }
+    }
+
     /**
      * Upstream `CanInlineColumns`: no reserved system column names, identifiers within the backend's
      * limit, and no type the backend cannot inline (`geometry` anywhere; `variant` outside DuckDB).
@@ -112,6 +123,7 @@ internal object InlinedDataTables {
 
     /** Upstream `InlinedTableDdlSql`: `CREATE TABLE IF NOT EXISTS <name>(row_id BIGINT, begin_snapshot BIGINT, end_snapshot BIGINT, <cols>)`. */
     fun createTableSql(name: String, columns: List<InlinedTypeNode>, dialect: SQLDialect, version: String = "1.0"): String {
+        requireTransactionalDdl(dialect)
         val names = metadataColumns(version)
         val columnDefs = columns.joinToString(", ") { "${quote(it.name)} ${physicalType(it, dialect)}" }
         val userColumns = if (columnDefs.isEmpty()) "" else ", $columnDefs"
@@ -121,6 +133,7 @@ internal object InlinedDataTables {
 
     /** Upstream `GetColumnType` for the backend behind [dialect]. */
     fun physicalType(node: InlinedTypeNode, dialect: SQLDialect): String {
+        requireTransactionalDdl(dialect)
         val nested = node.type == "struct" || node.type == "list" || node.type == "map"
         if (dialect == SQLDialect.POSTGRES) {
             if (nested || node.type in POSTGRES_TEXT_TYPES) {

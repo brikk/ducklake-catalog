@@ -11,9 +11,10 @@ For authorized upstream work and the next RC checkpoint, use the separate
 
 ## Confirmed follow-up priorities
 
-- **C06 — MySQL atomicity:** physical inline CREATE can implicitly commit metadata.
-  Reproduce injected failure/snapshot collision before designing safe refusal or
-  coordinated table preparation. Quoting fixes alone do not solve this.
+- **MySQL inline evolution:** C06/C17 corruption prevention is complete through
+  safe refusal (below). Supporting these operations later requires coordinated
+  physical-table preparation/publication and qualified backend type/identifier
+  rendering; it remains part of the separately scoped writer work.
 - **Native correctness / RC:** UF-01–04 investigations are complete but native
   failures remain gates; UF-05–09 are not implemented. Keep 1.1 writes disabled.
 - **Consumer adoption:** preserve COMMIT classifications and retain uncertain output;
@@ -28,7 +29,6 @@ For authorized upstream work and the next RC checkpoint, use the separate
 | C12 | Per-output partial-rewrite origins or required embedded IDs; no overlapping fallback row-ID ranges. |
 | C13 | Migrate callers off weak legacy materialization boundaries without silently removing shipped APIs. |
 | C16 | Large/signed interval parsing and literal CAST-string provenance. |
-| C17 | Real MySQL inline DDL type/identifier rendering or safe refusal; coordinate with C06. |
 | C21 | Empty inline projections preserve cardinality or reject explicitly. |
 | C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
 | C24 | Consistent typed initialization errors for CREATE and file writes. |
@@ -67,6 +67,16 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C06 / C17 — October 27:** all column/field schema mutations on MySQL tables
+  with registered inline storage reject before metadata writes, with fresh checks
+  on retry. Physical registration/rendering also reject MySQL rather than running
+  implicitly committing or DuckDB-dialect DDL. Empty registrations are guarded;
+  metadata-only rollback/retry and existing-field no-ops remain supported. Actual
+  MySQL regressions cover default/ANSI_QUOTES modes, injected failure, competing
+  snapshots, new inline registrations and server-side mutation traps. Full 1,069
+  maintained + 86 direct-Java / 17,602-record checks pass. This closes the original
+  safe-refusal option; full MySQL inline evolution is still deferred.
+  [Scope and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#october-27-correctness-follow-up--c06-and-c17).
 - **C11 / C19 — October 27:** nested removals preserve valid type trees and cannot
   bypass root dependency checks; supported DuckDB sort expressions are rewritten by
   parsed column reference and versioned on rename. Actual DuckDB INSERT and historical
@@ -80,7 +90,7 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
   direct-Java / 17,602-record run pass. MySQL view/tag metadata targets are explicitly
   quoted. [Scope, limits and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#october-26-local-correctness-views-namespaces-partitions-and-diagnostics).
   This repairs existing 0.4/1.0 mutations and 1.1 view reads; it does not enable 1.1
-  writes or close C06/C17. C11/C19 were addressed subsequently above. Driver/pool logs
+  writes. C06/C17 and C11/C19 were addressed subsequently above. Driver/pool logs
   are outside catalog-owned URL rendering.
 - **C09 and direct schema/table identifier reads — October 26:** precise expected-table
   error classification replaces the legacy silent-empty fallback; ASCII-only/binary

@@ -3312,6 +3312,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     private fun registerInlinedTable(ctx: DSLContext, tx: DucklakeWriteTransaction, tableId: Long) {
+        // Backstop for future mutation entry points: never run implicitly committing DDL here.
+        InlinedDataTables.requireTransactionalDdl(dialect)
         // Columns as they stand AFTER this transaction: rows added here begin at the new snapshot,
         // rows dropped here end at it.
         val columns = activeColumnRows(ctx, tableId, tx.getNewSnapshotId())
@@ -4540,9 +4542,19 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .toMap()
     }
 
+    /** Fresh per attempt, before any column/sort/stat mutation; registration can change on retry. */
+    private fun executeColumnSchemaChange(operation: String, tableId: Long, action: WriteTransactionAction) {
+        executeWriteTransaction(operation) { tx ->
+            if (dialect == SQLDialect.MYSQL && hasInlinedTables(tx.dsl(), tableId)) {
+                InlinedDataTables.requireTransactionalDdl(dialect)
+            }
+            action.execute(tx)
+        }
+    }
+
     override fun addColumn(tableId: Long, column: TableColumnSpec) {
         InlinedDataTables.requireNonSystemColumn(column.name)
-        executeWriteTransaction("add column to table $tableId") { tx ->
+        executeColumnSchemaChange("add column to table $tableId", tableId) { tx ->
             tx.recordChange(WriteChange.AlteredTable(tableId))
             tx.namespaces.requireColumnAvailable(tableId, null, column.name)
             CatalogNamespaces.requireDistinctColumns(listOf(column))
@@ -4553,7 +4565,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun dropColumn(tableId: Long, columnId: Long) {
         val col = DUCKLAKE_COLUMN.`as`("col")
-        executeWriteTransaction("drop column from table $tableId") { tx ->
+        executeColumnSchemaChange("drop column from table $tableId", tableId) { tx ->
             val ctx = tx.dsl()
             val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())
             if (columns.none { it.columnId == columnId }) {
@@ -4581,7 +4593,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun renameColumn(tableId: Long, columnId: Long, newName: String) {
-        executeWriteTransaction("rename column in table $tableId") { tx ->
+        executeColumnSchemaChange("rename column in table $tableId", tableId) { tx ->
             val columns = CatalogColumnTree(activeColumnRows(tx.dsl(), tableId, tx.getCurrentSnapshotId()))
             val current = columns.column(columnId)
             if (current.parentColumn == null) {
@@ -4690,7 +4702,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun setColumnType(tableId: Long, columnId: Long, newColumnType: String) {
-        executeWriteTransaction("set column type in table $tableId") { tx ->
+        executeColumnSchemaChange("set column type in table $tableId", tableId) { tx ->
             // TOP-LEVEL column only (nested fields go through setFieldType). Same column_id / name /
             // order / nullability / defaults / parent, new type.
             val canonicalType = DucklakeTypeNames.canonical(newColumnType)
@@ -4752,7 +4764,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun setFieldType(tableId: Long, fieldPath: List<String>, newColumnType: String) {
-        executeWriteTransaction("set field type ${fieldPath.joinToString(".")} in table $tableId") { tx ->
+        executeColumnSchemaChange("set field type ${fieldPath.joinToString(".")} in table $tableId", tableId) { tx ->
             val ctx = tx.dsl()
             // Resolve the target CHILD column_id by walking parent_column down the path (same helper
             // as dropField); the replacement keeps parent_column and defaults intact.
@@ -4777,7 +4789,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 return
             }
         }
-        executeWriteTransaction("add field ${(parentPath + field.name).joinToString(".")} to table $tableId") { tx ->
+        executeColumnSchemaChange("add field ${(parentPath + field.name).joinToString(".")} to table $tableId", tableId) { tx ->
             val columns = activeColumnRows(tx.dsl(), tableId, tx.getCurrentSnapshotId())
             val parentId = resolveColumnIdByPath(columns, parentPath)
             val parent = columns.first { it.columnId == parentId }
@@ -4797,7 +4809,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun dropField(tableId: Long, fieldPath: List<String>) {
         val col = DUCKLAKE_COLUMN.`as`("col")
-        executeWriteTransaction("drop field ${fieldPath.joinToString(".")} from table $tableId") { tx ->
+        executeColumnSchemaChange("drop field ${fieldPath.joinToString(".")} from table $tableId", tableId) { tx ->
             if (fieldPath.size < 2) throw DucklakeInvalidOperationException("dropField requires a nested STRUCT field path")
             val ctx = tx.dsl()
             val columns = activeColumnRows(ctx, tableId, tx.getCurrentSnapshotId())

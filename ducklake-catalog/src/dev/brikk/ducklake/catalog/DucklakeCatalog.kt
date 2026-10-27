@@ -718,6 +718,8 @@ interface DucklakeCatalog : AutoCloseable {
     /**
      * Add a column to a table. Creates a new ducklake_column row with a new column_id.
      * Increments schema version. Creates a new snapshot atomically.
+     * Column/field schema changes on MySQL tables with registered inline storage reject before
+     * mutation: creating the next physical inline table cannot participate in the transaction.
      */
     fun addColumn(tableId: Long, column: TableColumnSpec)
 
@@ -727,6 +729,7 @@ interface DucklakeCatalog : AutoCloseable {
      * transitive descendant row (nested struct/list/map children at any depth), so no active row is
      * left with a dangling `parent_column`. Fails if the column is not active at the current
      * snapshot. Increments schema version. Creates a new snapshot atomically.
+     * Subject to the MySQL inline-storage restriction documented on [addColumn].
      */
     fun dropColumn(tableId: Long, columnId: Long)
 
@@ -736,6 +739,7 @@ interface DucklakeCatalog : AutoCloseable {
      * Supported DuckDB sort expressions are versioned with rewritten column references; unknown
      * dialects/syntax refuse before mutation. Nested renames of a sort-dependent root also refuse.
      * Increments schema version. Creates a new snapshot atomically.
+     * Subject to the MySQL inline-storage restriction documented on [addColumn].
      */
     fun renameColumn(tableId: Long, columnId: Long, newName: String)
 
@@ -746,6 +750,7 @@ interface DucklakeCatalog : AutoCloseable {
      * nullability, and default are preserved. Increments schema version; creates a new snapshot
      * atomically. Widening-compatibility is validated by the caller (connector) before this runs —
      * the catalog records the change as given. Nested (struct-field) type changes are not supported.
+     * Subject to the MySQL inline-storage restriction documented on [addColumn].
      */
     fun setColumnType(tableId: Long, columnId: Long, newColumnType: String)
 
@@ -759,6 +764,7 @@ interface DucklakeCatalog : AutoCloseable {
      * name / parent_column / nullability but the updated [newColumnType] (a DuckLake type string);
      * the "no default" sentinel is preserved. Increments schema version; creates a new snapshot
      * atomically. Widening-compatibility is validated by the caller (connector) before this runs.
+     * Subject to the MySQL inline-storage restriction documented on [addColumn].
      */
     fun setFieldType(tableId: Long, fieldPath: List<String>, newColumnType: String)
 
@@ -771,6 +777,7 @@ interface DucklakeCatalog : AutoCloseable {
      * `parent_column` = the struct's column_id and a fresh column_id; the struct row is unchanged.
      * Increments schema version, creates a new snapshot atomically. When [ignoreExisting] is true and
      * the struct already has an active field of that name, this is a no-op (no snapshot).
+     * Mutations are subject to the MySQL inline-storage restriction documented on [addColumn].
      */
     fun addField(tableId: Long, parentPath: List<String>, field: TableColumnSpec, ignoreExisting: Boolean)
 
@@ -782,6 +789,7 @@ interface DucklakeCatalog : AutoCloseable {
      * Refuses the last STRUCT field, required LIST/MAP children, root-only paths and fields under
      * a partition/sort-dependent root. No snapshot or partial mutation is published on refusal.
      * Increments schema version, creates a new snapshot atomically.
+     * Subject to the MySQL inline-storage restriction documented on [addColumn].
      */
     fun dropField(tableId: Long, fieldPath: List<String>)
 

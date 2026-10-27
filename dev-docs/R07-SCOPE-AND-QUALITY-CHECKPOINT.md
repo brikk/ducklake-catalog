@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Read milestone closed October 25; October 27 C11/C19 corrections verified.** This is the current status and next-work
+**Read milestone closed October 25; October 27 C06/C17 safeguards verified.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -137,8 +137,8 @@ fix and restoration of the established qualified field-error message.
 
 Evidence prefix: `/tmp/opencode/catalog-local-correctness-*` (initial red, focused
 iterations, final targeted check, full log and full XML). C10/C18/C23 are closed for
-the documented scopes. C11/C19 were handled by the subsequent batch below; C06 MySQL
-atomicity and other backlog items remain separate. No connector source, immutable
+the documented scopes. C11/C19 and the C06/C17 safe-refusal boundary were handled by
+the subsequent batches below. No connector source, immutable
 bundle, upstream/corpus pin, test golden/exclusion or 1.1 write guard changed. Consumers adopt these library-source
 corrections in a later coordinated dependency update; no new integration bundle or
 connector deployment is claimed here.
@@ -181,6 +181,58 @@ This is a library-source correction; no connector bundle, upstream dependency or
 corpus pin was changed, and 1.1 writes remain guarded. C11/C19 corruption prevention
 is complete within the explicit interpretation limits above; unsupported sort syntax
 remains a refusal, not a claim of a general SQL rewriting engine.
+
+### October 27 correctness follow-up — C06 and C17
+
+The next bounded batch addresses MySQL inline-schema mutations through **safe
+refusal**, the closure option recorded in the original C06/C17 findings.
+
+- **Reproduced on current code:** an injected pre-publication failure with
+  `ANSI_QUOTES,STRICT_TRANS_TABLES` leaves a dropped column's future `end_snapshot`
+  and the new physical inline table committed. A controlled competing commit makes
+  the failed DROP visible. Default MySQL SQL mode instead reaches invalid DuckDB
+  identifier rendering; enabling ANSI quotes only exposes the atomicity defect.
+- **Admission:** all seven column/field schema mutation entry points check for
+  inline registrations on the owned transaction before column, sort or statistics
+  writes. The check runs anew on retries. Empty/flushed registered tables also
+  require physical schema evolution and reject. Existing-field IF-NOT-EXISTS
+  remains a no-op; tables without registrations keep metadata-only mutations.
+- **DDL backstop:** physical inline registration and the DDL/type renderer reject
+  MySQL explicitly. MySQL cannot silently inherit DuckDB quoting or physical types,
+  including when a later mutation entry point misses the early check. Returning
+  `canInline=false` alone would incorrectly publish metadata against old inline storage.
+- **Boundary:** qualified MySQL inline evolution still needs a coordinated physical
+  table-preparation/publication protocol and backend rendering. Moving CREATE after
+  metadata commit would introduce a missing-table window. These safeguards repair
+  existing 0.4/1.0 APIs; M01 producer/scanner acceptance and W01–W06 remain separate.
+- **Verification complete:** 61 focused tests and lint pass. The final forced full
+  check passes **1,069 maintained tests** (920 catalog / 51 SLT / 98 replay), **86
+  separate direct-Java tests**, and **17,602 corpus records**. Zero JUnit failures/
+  errors/skips; existing 100 file / 12 record corpus exclusions are unchanged. Lint,
+  frozen compatibility/wire controls and Java17 checks pass (7,839 classes / 17
+  artifacts). Full run: 32m17s, once on final code.
+  Authored 1.0 metadata/inline fixtures exercise both
+  real MySQL SQL modes, injected failure, snapshot races, registration appearing on
+  retry, and server-side mutation traps. A metadata-only control proves rollback and
+  snapshot-PK retry still work. Initial trigger setup lacked MySQL's binary-log
+  privilege; the disposable server's trigger setting was corrected and those cases
+  rerun red on actual metadata mutation. Renderer test argument order was also
+  corrected before its independent red rerun. Logs/XML: `/tmp/opencode/catalog-c06-c17-*`.
+
+C06/C17 are closed for corruption prevention and explicit rejection of unsupported
+DDL. Full MySQL inline evolution remains future writer work. Public signatures and
+wire shapes are unchanged; the documented behavioral correction is an earlier,
+typed refusal. Connector qualification still selects immutable `6730bb8`; this
+library-source fix does not constitute new consumer adoption or deployment.
+
+Final command (same pinned inputs and existing exclusions):
+
+```sh
+GRADLE_USER_HOME=/tmp/opencode/catalog-r07-gradle-isolated mise exec -- ./gradlew \
+  check :ducklake-catalog:quackPreviewTest --rerun-tasks -Dducklake.corpus.dirs=all \
+  -Pducklake.preview.cli=/tmp/opencode/catalog-final11-r01-cli/duckdb \
+  --no-daemon --no-configuration-cache
+```
 
 ### Accepted October 25 integration baseline
 
@@ -352,7 +404,7 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |
 | C12 lineage / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |
 | C11 nested removals / C19 sorted renames | Fixed and fully verified October 27; structural admission and versioned parsed sort-reference updates with explicit unsupported-expression refusals |
-| C06 MySQL implicit-DDL atomicity / C17 inline DDL rendering | Relevant prerequisites for future write work, not a reason to reimplement approved read-only routes |
+| C06 MySQL implicit-DDL atomicity / C17 inline DDL rendering | Safe-refusal fix verified October 27: affected operations reject before metadata mutation; full inline evolution still requires a preparation/publication protocol and qualified backend rendering |
 | Remaining C/H/B/R/N/Q and UF backlog | Retained in [BACKLOG](BACKLOG.md) and [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md); not a completed whole-project audit |
 
 Priority is severity and reachability, not age. A proven older wrong-row defect in
@@ -450,8 +502,9 @@ remain open for the specific external/rollout requirements they still contain.
    aggregate pools, retention/leases, genuine 0.4/fleet coverage and versioned API/
    packaging/publication decisions. These need their own bounded assignments.
 5. **W01–W06:** all six write steps remain pending. A separately scoped write phase
-   starts with writer contracts and applicable older writer defects (including C06
-   MySQL atomicity), then metadata/mutation/maintenance/migration and write acceptance.
+    starts with writer contracts and applicable older writer defects, including a safe
+    MySQL inline preparation/publication protocol to replace C06/C17 refusal, then
+    metadata/mutation/maintenance/migration and write acceptance.
 
 Reopen a completed read requirement only for a concrete failure in its declared
 scope or an explicitly approved scope change. Reuse evidence for unchanged code;

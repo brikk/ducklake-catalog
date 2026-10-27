@@ -39,8 +39,13 @@ registration into encrypted catalogs is rejected.
 ## Limits and safe operation
 
 - A backend smoke test does not establish every operation/type combination.
-  In particular, MySQL implicit DDL commits require care around physical inline
-  table creation; generic rollback errors are not proof that DDL effects vanished.
+  MySQL column/field add, drop, rename and type changes reject with
+  `DucklakeInvalidOperationException` before metadata mutation when the table has
+  registered inline storage, including empty or previously flushed inline tables.
+  MySQL physical inline DDL implicitly commits; supporting these changes requires
+  a safe table-preparation/publication protocol and qualified MySQL type rendering.
+  Tables without inline registrations retain their metadata-only mutation path.
+  An existing-field `addField(..., ignoreExisting=true)` remains a no-op.
 - Use snapshot-aware materialization APIs. Deprecated flush/delete/rewrite
   overloads have weaker planning-boundary protection; deprecation is not a safety
   guarantee. Consumers must provide complete payloads and preserve row lineage.
