@@ -78,6 +78,7 @@ class TestConcurrentDeleteVsAlterTable {
     @Test
     @Throws(Exception::class)
     fun deleteRacingAlterTableConflicts() {
+        val readSnapshot = catalog.currentSnapshotId
         val loserFragment = DucklakeDeleteFragment(
             sharedDataFileId,
             "test_data/delete_vs_alter_loser.parquet",
@@ -90,7 +91,7 @@ class TestConcurrentDeleteVsAlterTable {
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(
             catalog,
             Runnable { catalog.dropColumn(tableId, nameColumnId) },
-            Runnable { catalog.commitDelete(tableId, listOf(loserFragment)) },
+            Runnable { catalog.commitDelete(tableId, listOf(loserFragment), readSnapshot) },
         )
 
         assertThat(result.loserException)

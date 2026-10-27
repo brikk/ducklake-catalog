@@ -87,6 +87,7 @@ class TestConcurrentDeleteVsDelete {
     @Test
     @Throws(Exception::class)
     fun duelingDeletesOnSameDataFileConflict() {
+        val readSnapshot = catalog.currentSnapshotId
         val winnerFragment = DucklakeDeleteFragment(
             sharedDataFileId,
             "test_data/delete_vs_delete_winner.parquet",
@@ -106,8 +107,8 @@ class TestConcurrentDeleteVsDelete {
 
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(
             catalog,
-            Runnable { catalog.commitDelete(tableId, listOf(winnerFragment)) },
-            Runnable { catalog.commitDelete(tableId, listOf(loserFragment)) },
+            Runnable { catalog.commitDelete(tableId, listOf(winnerFragment), readSnapshot) },
+            Runnable { catalog.commitDelete(tableId, listOf(loserFragment), readSnapshot) },
         )
 
         assertThat(result.loserException)

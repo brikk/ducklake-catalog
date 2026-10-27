@@ -78,6 +78,7 @@ class TestConcurrentDeleteVsDropTable {
     @Test
     @Throws(Exception::class)
     fun deleteRacingDropTableConflicts() {
+        val readSnapshot = catalog.currentSnapshotId
         val loserFragment = DucklakeDeleteFragment(
             sharedDataFileId,
             "test_data/delete_vs_drop_table_loser.parquet",
@@ -90,7 +91,7 @@ class TestConcurrentDeleteVsDropTable {
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(
             catalog,
             Runnable { catalog.dropTable("test_schema", "simple_table") },
-            Runnable { catalog.commitDelete(tableId, listOf(loserFragment)) },
+            Runnable { catalog.commitDelete(tableId, listOf(loserFragment), readSnapshot) },
         )
 
         assertThat(result.loserException)

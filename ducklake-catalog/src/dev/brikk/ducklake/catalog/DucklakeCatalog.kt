@@ -610,21 +610,13 @@ interface DucklakeCatalog : AutoCloseable {
     fun truncateTable(schemaName: String, tableName: String)
 
     /**
-     * Flush a table's inlined rows into data files. Registers [fragments] (the materialized
-     * data file(s) the connector wrote from the inlined rows) AND end-snapshots every live
-     * inlined row, atomically in one snapshot. The caller must have written [fragments] to
-     * contain exactly the live inlined rows. No schema-version bump (a data move). Recorded as
-     * `flushed_inlined`. Conflicts (via the conflict matrix) with any intervening commit that
-     * dropped/altered the table or changed its inlined data, so a concurrent change aborts
-     * rather than duplicating or dropping rows.
-     *
-     * A flush is an identity-preserving STORAGE MOVE, not a re-insert: [preservedRowIdStart] is
-     * the minimum original DuckLake `row_id` of the flushed rows (from [readInlinedRowIds]) and
-     * becomes the registered file's `row_id_start`; the per-row original ids are carried in the
-     * file's embedded `_ducklake_internal_row_id` column by the caller. The table's
-     * `record_count` and `next_row_id` are left UNCHANGED (the rows were already counted and their
-     * ids already allocated when inlined). Mirrors upstream `flush_row_id_start`.
+     * Legacy live-row flush, retained for linking compatibility. Unsupported since 0.13:
+     * without the caller's read snapshot it can retire rows inserted after materialization.
+     * [JdbcDucklakeCatalog] rejects before mutation, including empty payloads.
+     * Use the four-argument [flushInlinedDataWithSnapshots] with original row/snapshot tags,
+     * per-file origins, complete delete coverage and the snapshot captured BEFORE materialization.
      */
+    @Deprecated("Use flushInlinedDataWithSnapshots with the caller's readSnapshotId")
     fun flushInlinedData(tableId: Long, fragments: List<DucklakeWriteFragment>, preservedRowIdStart: Long)
 
     /**
@@ -661,22 +653,21 @@ interface DucklakeCatalog : AutoCloseable {
         readSnapshotId: Long,
     )
 
-    /** Compatibility overload from the unreleased 0.8 snapshot; it cannot drain file deletes safely. */
+    /** Linking-only 0.8 overload; since 0.13 it rejects rather than inventing a materialization snapshot. */
     @Deprecated("Pass existingFileDeletes and the caller's readSnapshotId")
-    fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>) =
-        flushInlinedDataWithSnapshots(tableId, files, emptyList(), currentSnapshotId)
+    fun flushInlinedDataWithSnapshots(tableId: Long, files: List<FlushedInlinedFile>): Unit =
+        throw DucklakeInvalidOperationException("flushInlinedDataWithSnapshots requires the caller's readSnapshotId and existingFileDeletes")
 
     /**
-     * Compatibility overload from 0.7.1. A single row-id start is only correct for one output file;
-     * callers flushing several schema-version files must use [flushInlinedDataWithSnapshots] and
-     * provide each [FlushedInlinedFile.rowIdStart].
+     * Linking-only 0.7.1 overload; since 0.13 it rejects rather than inventing a materialization
+     * snapshot. Use the four-argument overload and each [FlushedInlinedFile.rowIdStart].
      */
     @Deprecated("Use per-file FlushedInlinedFile.rowIdStart")
     fun flushInlinedDataWithSnapshots(
         tableId: Long,
         files: List<FlushedInlinedFile>,
         preservedRowIdStart: Long,
-    ) = flushInlinedDataWithSnapshots(tableId, files.map { it.copy(rowIdStart = preservedRowIdStart) })
+    ): Unit = throw DucklakeInvalidOperationException("flushInlinedDataWithSnapshots requires the caller's readSnapshotId and per-file rowIdStart")
 
     /**
      * Rename a table within its schema. End-snapshots the current `ducklake_table` row and
@@ -846,9 +837,9 @@ interface DucklakeCatalog : AutoCloseable {
     fun commitDelete(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>, readSnapshotId: Long)
 
     /**
-     * Legacy form of [commitDelete] without a read snapshot: the newer-delete guard degrades to the
-     * commit-time base snapshot, so a concurrent delete committed between the caller's read and the
-     * first commit attempt is NOT detected (its rows resurrect). Retained for binary compatibility.
+     * Linking-only legacy form. Since 0.13, [JdbcDucklakeCatalog] rejects before mutation because
+     * a commit-time snapshot cannot detect deletes committed after the caller materialized its files.
+     * Supply the actual planning snapshot to the three-argument [commitDelete].
      */
     @Deprecated("Pass the planning read snapshot so concurrent deletes on the same data file are detected")
     fun commitDelete(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>)
@@ -866,7 +857,8 @@ interface DucklakeCatalog : AutoCloseable {
     )
 
     /**
-     * Legacy form of [commitMerge] without a read snapshot — see the deprecated [commitDelete].
+     * Linking-only legacy form; since 0.13 it rejects in [JdbcDucklakeCatalog], as does the
+     * snapshotless [commitDelete]. Supply the actual planning snapshot to the four-argument overload.
      */
     @Deprecated("Pass the planning read snapshot so concurrent deletes on the same data file are detected")
     fun commitMerge(

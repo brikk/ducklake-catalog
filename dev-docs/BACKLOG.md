@@ -24,7 +24,6 @@ For authorized upstream work and the next RC checkpoint, use the separate
 
 | ID | Work / closure criterion |
 |---|---|
-| C13 | Migrate callers off weak legacy materialization boundaries without silently removing shipped APIs. |
 | C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
 | C24 | Consistent typed initialization errors for CREATE and file writes. |
 
@@ -62,6 +61,16 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C13 — materialization snapshot boundary:** the five snapshotless flush/DELETE/
+  MERGE forms now refuse before mutation in 0.13, retaining their JVM signatures.
+  Explicit planning-snapshot APIs preserve the read-to-commit conflict window.
+  Trino already uses those APIs; Doris has no mutation callers. Native lost-insert
+  regressions, five-route stale-delete/merge cases, rematerialized flush controls,
+  concurrency/rollback and descriptor checks pass. Full 1,123 maintained + 86
+  direct-Java / 17,602-record checks pass. The ordinary rewrite API's concurrent
+  native inlined-delete limitation remains a separate documented boundary.
+  [Migration contract](../docs/MATERIALIZATION-SNAPSHOTS.md) and
+  [evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#c13-materialization-boundary-correction).
 - **C12 — reconciled and verified:** `0b6c31b` already changed both rewrite paths
   to NULL `row_id_start` with required original embedded row IDs. The new exact
   multi-output regression passes on local/PostgreSQL 1.0 lakes: four reordered,

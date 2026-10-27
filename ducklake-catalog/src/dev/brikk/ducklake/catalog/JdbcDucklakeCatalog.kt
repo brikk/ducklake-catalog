@@ -4019,28 +4019,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
+    @Deprecated("Use flushInlinedDataWithSnapshots with the caller's readSnapshotId")
     override fun flushInlinedData(tableId: Long, fragments: List<DucklakeWriteFragment>, preservedRowIdStart: Long) {
-        requireFileWritesSupported()
-        executeWriteTransaction("flush inlined data for table $tableId", registersFiles = true) { tx ->
-            val ctx = tx.dsl()
-            val newSnapshotId = tx.getNewSnapshotId()
-
-            // Register the data file(s) the caller materialized from the inlined rows, then
-            // end-snapshot the live inlined rows — atomically. The conflict matrix
-            // (checkFlushedInlinedData) aborts if an intervening commit changed this table's
-            // inlined data or schema, so the read-then-write can't duplicate or drop rows.
-            //
-            // flushRowIdStart makes this an identity-preserving move: the file is registered at the
-            // original min row-id (the per-row ids are embedded in the file), and record_count /
-            // next_row_id are NOT advanced (the rows were already counted + allocated when inlined).
-            if (fragments.isNotEmpty()) {
-                applyInsertFragments(tx, tableId, fragments, InsertMode.FLUSH, preservedRowIdStart)
-            }
-            endSnapshotLiveInlinedRows(ctx, tableId, newSnapshotId, "flush")
-
-            // Data move, not schema — no schema-version bump.
-            tx.recordChange(WriteChange.FlushedInlinedData(tableId))
-        }
+        throw DucklakeInvalidOperationException("flushInlinedData requires a materialization snapshot; use flushInlinedDataWithSnapshots with readSnapshotId")
     }
 
     override fun flushInlinedDataWithSnapshots(
@@ -5233,17 +5214,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     @Deprecated("Pass the planning read snapshot so concurrent deletes on the same data file are detected")
     override fun commitDelete(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>) {
-        commitDeleteInternal(tableId, deleteFragments, readSnapshotId = null)
+        throw DucklakeInvalidOperationException("commitDelete requires the caller's readSnapshotId")
     }
 
-    private fun commitDeleteInternal(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>, readSnapshotId: Long?) {
+    private fun commitDeleteInternal(tableId: Long, deleteFragments: List<DucklakeDeleteFragment>, readSnapshotId: Long) {
         requireFileWritesSupported()
         if (deleteFragments.isEmpty()) {
             return
         }
 
         executeWriteTransaction("delete from table $tableId", registersFiles = true) { tx ->
-            applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId ?: tx.getCurrentSnapshotId())
+            applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId)
             tx.recordChange(WriteChange.DeletedFromTable(tableId, referencedDataFileIds(deleteFragments)))
         }
     }
@@ -5263,14 +5244,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         deleteFragments: List<DucklakeDeleteFragment>,
         insertFragments: List<DucklakeWriteFragment>,
     ) {
-        commitMergeInternal(tableId, deleteFragments, insertFragments, readSnapshotId = null)
+        throw DucklakeInvalidOperationException("commitMerge requires the caller's readSnapshotId")
     }
 
     private fun commitMergeInternal(
         tableId: Long,
         deleteFragments: List<DucklakeDeleteFragment>,
         insertFragments: List<DucklakeWriteFragment>,
-        readSnapshotId: Long?,
+        readSnapshotId: Long,
     ) {
         requireFileWritesSupported()
         if (deleteFragments.isEmpty() && insertFragments.isEmpty()) {
@@ -5279,7 +5260,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         executeWriteTransaction("merge into table $tableId", registersFiles = true) { tx ->
             if (deleteFragments.isNotEmpty()) {
-                applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId ?: tx.getCurrentSnapshotId())
+                applyDeleteFragments(tx, tableId, deleteFragments, readSnapshotId)
                 tx.recordChange(WriteChange.DeletedFromTable(tableId, referencedDataFileIds(deleteFragments)))
             }
             if (insertFragments.isNotEmpty()) {

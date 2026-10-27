@@ -177,6 +177,7 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
     @Throws(Exception::class)
     fun endSnapshotsSourceDeleteFileAndPreservesLiveCount() {
         val (_, idC) = insertFile(10L, 1024L, 200L, 209L)
+        val deleteReadSnapshot = catalog.currentSnapshotId
 
         // Delete 3 of C's rows (the merged file will hold the 7 survivors).
         catalog.commitDelete(
@@ -191,6 +192,7 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
                     /* newDeleteCount */ 3L,
                 ),
             ),
+            deleteReadSnapshot,
         )
         assertThat(activeDeleteFileCount(idC)).`as`("delete file active before compaction").isEqualTo(1L)
 
@@ -237,7 +239,7 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
 
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(
             catalog,
-            Runnable { catalog.commitDelete(tableId, listOf(winnerDelete)) },
+            Runnable { catalog.commitDelete(tableId, listOf(winnerDelete), readSnapshot) },
             Runnable { catalog.rewriteDataFiles(tableId, setOf(idD), listOf(merged), readSnapshot) },
         )
 
@@ -374,7 +376,7 @@ class TestJdbcDucklakeCatalogRewriteDataFiles {
 
         val result = ConcurrentWriterHarness.runWinnerWhileLoserParked(
             catalog,
-            Runnable { catalog.commitDelete(tableId, listOf(winnerDelete)) },
+            Runnable { catalog.commitDelete(tableId, listOf(winnerDelete), readSnapshot) },
             Runnable { catalog.rewriteDataFilesPartial(tableId, setOf(idG), listOf(merged), readSnapshot) },
         )
         assertThat(result.loserException)

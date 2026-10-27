@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Read milestone closed October 25; C07 verified and C12 reconciled/closed.** This is the current status and next-work
+**Read milestone closed October 25; C12 verified/closed and C13 safeguards verified.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -339,10 +339,57 @@ this is not a fresh connector execution/adoption claim. The `PartialMergedFile`
 KDoc now repeats its enclosing API's embedded-ID requirement. Registration consumes
 metadata fragments; callers remain responsible for materializing those columns.
 
-No runtime source changed. The final `9dd4073` full-check evidence is reused for
+Only tests and KDoc/documentation changed. The final `9dd4073` full-check evidence is reused for
 unchanged code; this closeout adds targeted evidence rather than repeating that
 full suite. Evidence: `/tmp/opencode/catalog-c12-verification.log` and
-`catalog-c12-verification-xml/`. C12 is closed; C13 is the next authorized batch.
+`catalog-c12-verification-xml/`. C12 was closed in `5141ad6`; C13 follows below.
+
+### C13 materialization-boundary correction
+
+After C12 closeout, current-code regressions reproduced actual row loss through all
+three snapshotless flush forms on local/PostgreSQL lakes: an INSERT committed after
+materializing two rows disappeared when the old flush retired/drained three rows.
+Snapshotless DELETE/MERGE also published stale cumulative replacements on all five
+metadata routes. **16 of 19 targeted cases failed**; the two snapshot-aware controls
+and the retained-descriptor control already passed.
+
+The 0.13 behavioral cutover is explicit: snapshotless flush, both compatibility
+snapshot-flush forms, and snapshotless DELETE/MERGE reject before mutation with
+`DucklakeInvalidOperationException`. Existing method signatures remain, including
+`void` on interface defaults. Private DELETE/MERGE paths now require a non-null
+planning snapshot; they cannot substitute the commit-time base. Empty payloads
+through these old forms also refuse.
+
+The [consumer migration contract](../docs/MATERIALIZATION-SNAPSHOTS.md) describes
+how to capture the snapshot before materialization, preserve historical flush
+payloads and replan stale output. Clean Trino `3385429` already calls the explicit
+snapshot overloads for all these operations; clean Doris `4efd9bc` has no mutation
+callers. No consumer source change or new artifact adoption is needed for this
+catalog-source correction. Coordinated qualification remains required when updating
+their selected dependency bundle.
+
+Tests formerly pinning successful weak legacy behavior explicitly change with the
+documented 0.13 contract. Valid-write/concurrency/rollback controls now pass their
+captured planning snapshots. Existing per-file overlapping-range validation is
+tested directly through the supported flush API. No golden/exclusion is relaxed.
+
+**Verification complete:** 89 focused tests and lint pass with zero failures/errors/
+skips. New regressions check all five rejecting forms,
+preserved rows/history, no mutation attempts or snapshot publication, unchanged JVM
+descriptors, and successful rematerialized snapshot-aware flushes. The final forced
+full check passes **1,123 maintained tests** (974 catalog / 51 SLT / 98 replay),
+**86 separate direct-Java tests**, and **17,602 corpus records**. Zero JUnit failures/
+errors/skips; existing 100 file / 12 record corpus exclusions are unchanged. Lint,
+frozen compatibility/wire controls and Java17 checks pass (7,840 classes / 17
+artifacts). Full run: 34m17s, once on final code, including the new C12 multi-output
+tests, using the same full-check command/pins recorded above. Evidence:
+`/tmp/opencode/catalog-c13-*` (red/focused/full logs and archived XML).
+
+C13's snapshotless-mutation finding is closed through explicit refusal and the
+documented migration to existing APIs. The ordinary rewrite API's concurrent
+native inlined-delete limitation remains separate; no broader writer or 1.1 write
+acceptance is implied. Connector artifacts and their immutable qualification bundle
+remain independently versioned. No further correctness batch was started.
 
 ### Accepted October 25 integration baseline
 
@@ -515,6 +562,7 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | C09 missing-table classification | Fixed and fully verified October 26: actual legacy DuckDB/Quack silent-empty reproductions now propagate, while legitimate absence and existing owned-session behavior remain covered |
 | C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |
 | C12 lineage | Reconciled to existing `0b6c31b` fix and closed with actual multi-output partitioned rewrite verification above |
+| C13 legacy materialization boundary | Fixed and verified above: snapshotless mutation APIs retain linking signatures but explicitly reject in 0.13; existing snapshot-aware replacements and owned caller usage documented |
 | C22 paths | R05 ownership evidence exists; broader legacy path-namespace/caller findings remain open |
 | C11 nested removals / C19 sorted renames | Fixed and fully verified October 27; structural admission and versioned parsed sort-reference updates with explicit unsupported-expression refusals |
 | C06 MySQL implicit-DDL atomicity / C17 inline DDL rendering | Safe-refusal fix verified October 27: affected operations reject before metadata mutation; full inline evolution still requires a preparation/publication protocol and qualified backend rendering |

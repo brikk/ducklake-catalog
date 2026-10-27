@@ -14,6 +14,7 @@
 package dev.brikk.ducklake.catalog
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -121,9 +122,6 @@ class TestJdbcDucklakeCatalogCoverageInlined {
         val schema = catalog.listSchemas(catalog.currentSnapshotId).single { it.schemaId == t.schemaId }
         return Files.createDirectories(isolated.dataDir.toAbsolutePath().resolve(schema.path).resolve(t.path))
     }
-
-    private fun changesOf(snapshotId: Long): String =
-        catalog.listSnapshotChanges().single { it.snapshotId == snapshotId }.changesMade!!
 
     // ---------------------------------------------------------------- inlined history fixture
 
@@ -371,7 +369,8 @@ class TestJdbcDucklakeCatalogCoverageInlined {
     }
 
     @Test
-    fun flushInlinedDataMovesTheRowsToAFileWithoutChangingWhatDuckDbReads() {
+    @Suppress("DEPRECATION")
+    fun snapshotlessLiveRowFlushRejectsWithoutChangingWhatDuckDbReads() {
         duckExec(
             "CREATE TABLE lake.$SCHEMA.fl2 (id INTEGER, v VARCHAR)",
             "INSERT INTO lake.$SCHEMA.fl2 VALUES (10, 'x'), (20, 'y'), (30, 'z')",
@@ -396,33 +395,23 @@ class TestJdbcDucklakeCatalogCoverageInlined {
                 DucklakeFileColumnStats(cols.getValue("v").columnId, 24L, 3L, 0L, "x", "z", false),
             ),
         )
-        catalog.flushInlinedData(t.tableId, listOf(fragment), rowIds.min())
-        val flushed = catalog.currentSnapshotId
-        assertThat(flushed).isEqualTo(inlined + 1)
-
-        val file = catalog.getDataFiles(t.tableId, flushed).single()
-        assertThat(file.path).isEqualTo("flushed.parquet")
-        assertThat(file.beginSnapshot).`as`("2-arg flush registers at the flush snapshot (not back-dated)").isEqualTo(flushed)
-        assertThat(file.rowIdStart).`as`("identity-preserving: registered at the original min row id").isEqualTo(rowIds.min())
-        assertThat(file.recordCount).isEqualTo(3L)
-        assertThat(file.partialMax).isNull()
-        assertThat(catalog.getInlinedDataInfos(t.tableId, flushed).single().hasLiveRows).isFalse()
-        assertThat(catalog.countInlinedRows(t.tableId, sv, flushed)).isZero()
-        assertThat(catalog.countInlinedRows(t.tableId, sv, inlined)).`as`("rows end-snapshotted, not deleted").isEqualTo(3L)
-        assertThat(pg("SELECT DISTINCT end_snapshot FROM ducklake_inlined_data_${t.tableId}_$sv")).containsExactly(listOf(flushed.toString()))
-        assertThat(catalog.getTableStats(t.tableId)!!.recordCount).`as`("gross count unchanged — a move, not an insert").isEqualTo(3L)
+        assertThatThrownBy { catalog.flushInlinedData(t.tableId, listOf(fragment), rowIds.min()) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("readSnapshotId")
+        assertThat(catalog.currentSnapshotId).isEqualTo(inlined)
+        assertThat(catalog.getDataFiles(t.tableId, inlined)).isEmpty()
+        assertThat(catalog.getInlinedDataInfos(t.tableId, inlined).single().hasLiveRows).isTrue()
+        assertThat(catalog.countInlinedRows(t.tableId, sv, inlined)).isEqualTo(3L)
+        assertThat(pg("SELECT DISTINCT end_snapshot FROM ducklake_inlined_data_${t.tableId}_$sv")).containsExactly(listOf(null))
+        assertThat(catalog.getTableStats(t.tableId)!!.recordCount).isEqualTo(3L)
         assertThat(pg("SELECT next_row_id FROM ducklake_table_stats WHERE table_id = ${t.tableId}").single()[0]).isEqualTo(nextRowIdBefore)
-        assertThat(catalog.getLiveRowCount(t.tableId, flushed)).isEqualTo(3L)
-        assertThat(catalog.getSnapshot(flushed)!!.schemaVersion).`as`("no schema-version bump").isEqualTo(catalog.getSnapshot(inlined)!!.schemaVersion)
-        assertThat(changesOf(flushed)).isEqualTo("inline_flush:${t.tableId}")
+        assertThat(catalog.getLiveRowCount(t.tableId, inlined)).isEqualTo(3L)
 
-        // Oracle: DuckDB reads identical rows (now from the file), the same rowids, and sees the file.
+        // The private output was never registered; original inline rows and history remain intact.
         assertThat(duck("SELECT id, v FROM lake.$SCHEMA.fl2 ORDER BY id")).isEqualTo(duckBefore)
         assertThat(duck("SELECT id, v FROM lake.$SCHEMA.fl2 AT (VERSION => $inlined) ORDER BY id")).isEqualTo(duckBefore)
         assertThat(duckColumn("SELECT rowid FROM lake.$SCHEMA.fl2 ORDER BY rowid").map { it!!.toLong() }).isEqualTo(rowIds)
         assertThat(duck("SELECT file_count, delete_file_count FROM ducklake_table_info('lake') WHERE table_name = 'fl2'"))
-            .containsExactly(listOf("1", "0"))
-        assertThat(duckColumn("SELECT data_file FROM ducklake_list_files('lake', 'fl2', schema => '$SCHEMA')").single())
-            .endsWith("flushed.parquet")
+            .containsExactly(listOf("0", "0"))
+        assertThat(duckColumn("SELECT data_file FROM ducklake_list_files('lake', 'fl2', schema => '$SCHEMA')")).isEmpty()
     }
 }

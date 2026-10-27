@@ -46,9 +46,10 @@ registration into encrypted catalogs is rejected.
   a safe table-preparation/publication protocol and qualified MySQL type rendering.
   Tables without inline registrations retain their metadata-only mutation path.
   An existing-field `addField(..., ignoreExisting=true)` remains a no-op.
-- Use snapshot-aware materialization APIs. Deprecated flush/delete/rewrite
-  overloads have weaker planning-boundary protection; deprecation is not a safety
-  guarantee. Consumers must provide complete payloads and preserve row lineage.
+- Use snapshot-aware materialization APIs. In 0.13, snapshotless flush/DELETE/MERGE
+  forms explicitly reject before mutation while retaining their linking signatures.
+  Follow the [materialization-snapshot migration](MATERIALIZATION-SNAPSHOTS.md);
+  consumers must capture the read boundary before preparing complete, lineage-preserving output.
 - Prefer bounded cleanup pages and exact acknowledgements. Metadata read sessions
   are not ownership leases or protection against physical deletion after planning.
   Enforce traversal budgets, age/reference checks and writer coordination before

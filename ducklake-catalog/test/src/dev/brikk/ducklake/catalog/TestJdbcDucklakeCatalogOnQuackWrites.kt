@@ -110,7 +110,7 @@ class TestJdbcDucklakeCatalogOnQuackWrites {
 
         // Delete against file a: UPDATE ducklake_table_stats + INSERT delete file.
         val fileA = c.getDataFiles(tableId, snap).single { it.path == "w/a.parquet" }
-        c.commitDelete(tableId, listOf(DucklakeDeleteFragment(fileA.dataFileId, "w/a-del.parquet", 1L, 50L, 0L, 1L)))
+        c.commitDelete(tableId, listOf(DucklakeDeleteFragment(fileA.dataFileId, "w/a-del.parquet", 1L, 50L, 0L, 1L)), snap)
         snap = c.currentSnapshotId
         assertThat(c.getLiveRowCount(tableId, snap)).isEqualTo(3L)
         assertThat(c.getDataFiles(tableId, snap).single { it.path == "w/a.parquet" }.deleteFilePath).isEqualTo("w/a-del.parquet")
@@ -223,7 +223,7 @@ class TestJdbcDucklakeCatalogOnQuackWrites {
         c.beforeSnapshotInsertAction = Runnable { throw IllegalStateException("simulated crash before snapshot insert") }
         try {
             assertThatThrownBy {
-                c.commitDelete(tableId, listOf(DucklakeDeleteFragment(fileA.dataFileId, "rb/a-del.parquet", 1L, 50L, 0L, 1L)))
+                c.commitDelete(tableId, listOf(DucklakeDeleteFragment(fileA.dataFileId, "rb/a-del.parquet", 1L, 50L, 0L, 1L)), before)
             }.hasRootCauseMessage("simulated crash before snapshot insert")
         }
         finally {

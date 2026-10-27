@@ -371,7 +371,7 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
                     newRowStart,
                 ),
             )
-        assertLegacyGlobalStartRejected(table.tableId, flushFiles, oldRowStart)
+        assertOverlappingStartsRejected(table.tableId, flushFiles, oldRowStart)
         catalog.flushInlinedDataWithSnapshots(
             table.tableId,
             flushFiles,
@@ -381,10 +381,9 @@ class TestJdbcDucklakeCatalogUpstreamFileShapesInterop {
         assertVersionedFlush(table, versions, oldSnapshot, droppedSnapshot, oldRowStart, newRowStart)
     }
 
-    @Suppress("DEPRECATION")
-    private fun assertLegacyGlobalStartRejected(tableId: Long, files: List<FlushedInlinedFile>, rowIdStart: Long) {
+    private fun assertOverlappingStartsRejected(tableId: Long, files: List<FlushedInlinedFile>, rowIdStart: Long) {
         val before = catalog.currentSnapshotId
-        assertThatThrownBy { catalog.flushInlinedDataWithSnapshots(tableId, files, rowIdStart) }
+        assertThatThrownBy { catalog.flushInlinedDataWithSnapshots(tableId, files.map { it.copy(rowIdStart = rowIdStart) }, emptyList(), before) }
             .isInstanceOf(IllegalArgumentException::class.java)
             .hasMessageContaining("row-id ranges overlap")
         assertThat(catalog.currentSnapshotId).isEqualTo(before)

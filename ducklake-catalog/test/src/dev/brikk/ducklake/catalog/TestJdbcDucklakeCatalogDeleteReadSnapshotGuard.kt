@@ -164,12 +164,14 @@ class TestJdbcDucklakeCatalogDeleteReadSnapshotGuard {
 
     @Test
     @Suppress("DEPRECATION")
-    fun legacyOverloadStillCommits() {
+    fun legacyOverloadRejectsInsteadOfInventingAReadSnapshot() {
         val read = catalog.currentSnapshotId
         catalog.commitDelete(tableId, listOf(fragment(fileB, "legacy_first", 1)), read)
-        // No read snapshot -> guard degrades to the commit-time base: the concurrent delete is
-        // NOT detected. This pins the (documented) legacy behaviour, not a desirable one.
-        catalog.commitDelete(tableId, listOf(fragment(fileB, "legacy_second", 2)))
-        assertThat(activeDeletePath(fileB)).isEqualTo("test_data/guard_legacy_second.parquet")
+        val before = catalog.currentSnapshotId
+        // 0.13 retains the descriptor but explicitly retires the unsafe legacy behavior.
+        assertThatThrownBy { catalog.commitDelete(tableId, listOf(fragment(fileB, "legacy_second", 2))) }
+            .isInstanceOf(DucklakeInvalidOperationException::class.java).hasMessageContaining("readSnapshotId")
+        assertThat(catalog.currentSnapshotId).isEqualTo(before)
+        assertThat(activeDeletePath(fileB)).isEqualTo("test_data/guard_legacy_first.parquet")
     }
 }
