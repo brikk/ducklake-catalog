@@ -17,6 +17,8 @@ package dev.brikk.ducklake.catalog
  * Describes a range predicate on a column for data file pruning.
  * Values are string representations — the catalog performs typed comparison
  * (numeric, date, etc.) internally based on the column's type.
+ * FLOAT/DOUBLE bounds use the column's binary precision. Unparseable or non-finite
+ * bounds cannot prove exclusion; TIME 24:00:00 is distinct from midnight.
  *
  * @param columnId the column to filter on
  * @param minValue the lower bound (inclusive), or null for unbounded

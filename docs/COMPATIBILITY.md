@@ -56,6 +56,20 @@ registration into encrypted catalogs is rejected.
 - Read the [COMMIT outcome contract](COMMIT-OUTCOME-CONTRACT.md) before adopting
   0.13.0-SNAPSHOT. An uncertain commit is not permission to retry or delete output.
 
+## Statistics and pruning
+
+Legacy min/max pruning interprets FLOAT/DOUBLE statistics and predicate bounds at
+the declared binary precision. Equivalent decimal spellings compare equally;
+adjacent values remain distinct. Non-finite, malformed or binary-overflowing float
+bounds remain unknown, and the existing `contains_nan` checks still apply.
+Integer/decimal comparisons retain arbitrary-precision decimal keys.
+
+TIME/TIME_NS `24:00:00` has an end-of-day statistics key above the last tick before
+midnight. It is not normalized to `00:00:00`; malformed clocks fail open. The shared
+bound accumulator and numeric swapped-bound detection use the same typed comparison.
+This is a statistics correction, not a new Java value representation for TIME 24:00
+or permission to enable min/max pruning in the conservative final-1.1 tier.
+
 ## Legacy inline reads
 
 Ordinary legacy `readInlinedData` / `readInlinedDataDecoded` reads apply qualified

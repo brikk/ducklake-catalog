@@ -24,7 +24,6 @@ For authorized upstream work and the next RC checkpoint, use the separate
 
 | ID | Work / closure criterion |
 |---|---|
-| C07 | Logical-type pruning: float32 equality and end-of-day TIME must not lose matching rows. UF-04's bucket work is separate. |
 | C12 | Per-output partial-rewrite origins or required embedded IDs; no overlapping fallback row-ID ranges. |
 | C13 | Migrate callers off weak legacy materialization boundaries without silently removing shipped APIs. |
 | C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
@@ -64,6 +63,16 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C07 — logical-type pruning:** FLOAT32/FLOAT64 bounds compare at declared binary
+  precision, including equivalent decimal spellings and signed zero. TIME/TIME_NS
+  `24:00:00` has an end-of-day key distinct from midnight; malformed clocks and
+  non-finite/overflowing floats remain unknown. Shared bound merging and numeric
+  swapped-bound checks use the corrected comparator. Five-route API tests agree
+  with DuckDB logical comparisons and retain selectivity; native local/PostgreSQL
+  Parquet cases retain matching rows. Full 1,102 maintained + 86 direct-Java /
+  17,602-record checks pass. UF-04 bucket behavior and broader historical-type
+  qualifications remain separate.
+  [Scope and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#c07-logical-type-pruning-correction).
 - **C08 / C21 — legacy ordinary-read corrections:** missing root IDs now use the
   existing checked initial-default projection on DuckDB/Quack/PostgreSQL, with fresh
   target metadata and preserved stored NULLs. MySQL missing-column evolution and

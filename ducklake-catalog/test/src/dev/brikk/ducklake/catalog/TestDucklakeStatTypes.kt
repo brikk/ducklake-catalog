@@ -26,6 +26,41 @@ import java.math.BigDecimal
  */
 internal class TestDucklakeStatTypes {
     @Test
+    fun floatingBoundsUseLogicalPrecisionIncludingSwapDetection() {
+        assertThat(DucklakeStatTypes.compareOrNull("0.1", "0.10000000149011612", "float32")).isZero()
+        assertThat(DucklakeStatTypes.compareOrNull("0.1", "0.1000000000000000055511151231257827", "float64")).isZero()
+        assertThat(DucklakeStatTypes.numericStatsSwapped("float32", "0.10000000149011612", "0.1")).isFalse()
+        assertThat(DucklakeStatTypes.compareOrNull("0.1", "0.10000001", "float32")).isNegative()
+        assertThat(DucklakeStatTypes.compareOrNull("-0.0", "0.0", "float32")).isZero()
+    }
+
+    @Test
+    fun nonfiniteAndOverflowingFloatStatisticsStayUnknown() {
+        for (type in listOf("float32", "float64")) {
+            for (text in listOf("NaN", "Infinity", "-Infinity", "1e1000", "junk")) {
+                assertThat(DucklakeStatTypes.parseStat(type, text)).describedAs("$type $text").isNull()
+            }
+        }
+        assertThat(DucklakeStatTypes.parseStat("float32", "1e40")).isNull()
+        assertThat(DucklakeStatTypes.parseStat("decimal(38,0)", "170141183460469231731687303715884105727"))
+            .isEqualTo(BigDecimal("170141183460469231731687303715884105727"))
+    }
+
+    @Test
+    fun endOfDayStatisticsHaveTheirOwnKeyAndMalformedClocksFailOpen() {
+        assertThat(DucklakeStatTypes.parseTemporal("24:00:00")).isEqualByComparingTo("86400000000000")
+        assertThat(DucklakeStatTypes.compareOrNull("24:00:00.000000000", "24:00", "time_ns")).isZero()
+        for (text in listOf("24:00:00.000001", "24:01:00", "25:00:00", "23:60:00")) {
+            assertThat(DucklakeStatTypes.parseStat("time", text)).describedAs(text).isNull()
+        }
+        val bounds = DucklakeStatTypes.BoundsAccumulator("time")
+        bounds.merge("24:00:00", "24:00:00")
+        bounds.merge("23:00:00", "23:00:00")
+        assertThat(bounds.min).isEqualTo("23:00:00")
+        assertThat(bounds.max).isEqualTo("24:00:00")
+    }
+
+    @Test
     fun numericTypesAreRecognized() {
         for (type in NUMERIC_TYPES) {
             assertThat(DucklakeStatTypes.isNumericType(type)).`as`(type).isTrue()

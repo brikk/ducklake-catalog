@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Read milestone closed October 25; legacy C08/C21 corrections verified and C16 reconciled.** This is the current status and next-work
+**Read milestone closed October 25; C07 logical-type pruning correction verified.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -273,9 +273,48 @@ decoder (`fa9a04d` / `1e01447`), including outside the 1.1 opt-in path.
 
 C08/C21 are closed within these explicit read/representation boundaries; C16 is
 closed by reconciliation of existing implementation and current evidence. C07
-pruning is the next bounded current-code reproduction candidate. Public signatures
+pruning was addressed by the subsequent batch below. Public signatures
 and wire shapes are unchanged. The immutable connector qualification bundle remains
 `6730bb8`; later library fixes await coordinated consumer adoption.
+
+### C07 logical-type pruning correction
+
+After pushing `fad3bd8`, the owner authorized C07. All **15 targeted cases failed**
+against unchanged production code: five-route FLOAT32 and TIME pruning, two native
+Parquet-file cases (local/PostgreSQL), and three comparator/unknown-value controls.
+DuckDB's independent typed comparisons retain values the library was pruning.
+
+- Float statistics and predicates now round to the declared FLOAT32/FLOAT64 binary
+  precision before using the existing comparable decimal key. Equivalent decimal
+  spellings compare equally, including signed zero/subnormal cases; adjacent values
+  remain distinguishable. NaN, infinity, malformed text and binary overflow remain
+  unknown. Integer/decimal key precision is retained.
+- TIME/TIME_NS `24:00:00` uses the existing nanosecond key at the end of the day,
+  distinct from midnight. Strict parsing prevents Java's SMART clock normalization;
+  malformed/unhandled clocks become unknown. This does not introduce a new inline
+  temporal representation or close broader temporal-edge support.
+- Numeric swapped-bound detection and bound merging share the corrected comparator.
+  Existing NaN/missing/swapped-stat protections and conservative 1.1 pruning remain
+  covered. Tests require selective exclusion of genuinely nonmatching point files,
+  rather than accepting a blanket retain-all implementation.
+- **Verification complete:** 98 focused tests and lint pass, with zero failures/
+  errors/skips. Actual API tests compare five metadata routes with
+  DuckDB logical comparisons. Separate native local/PostgreSQL lakes use real
+  Parquet files and independently confirm the matching query row. The final forced
+  full check passes **1,102 maintained tests** (953 catalog / 51 SLT / 98 replay),
+  **86 separate direct-Java tests** and **17,602 corpus records**. Zero JUnit
+  failures/errors/skips; existing 100 file / 12 record corpus exclusions remain
+  unchanged. Lint, frozen compatibility/wire controls and Java17 checks pass
+  (7,840 classes / 17 artifacts). Full run: 33m49s, once on final code, using the
+  same full-check command and pins recorded above. Evidence: `/tmp/opencode/catalog-c07-*`.
+
+C07's two original correctness defects are closed. The comparison still uses the
+existing public comparable key types and stored statistics text; no new wire/API
+shape or data representation was introduced. Conservative 1.1 min/max pruning,
+UF-04 bucket behavior and broader historical-type qualification retain their own
+boundaries. The accepted consumer bundle remains `6730bb8`; this source correction
+is not a new connector adoption or deployment. C12 remains a current-code
+reproduction candidate; no further batch is started here.
 
 ### Accepted October 25 integration baseline
 
@@ -444,7 +483,7 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | Trino timezone partition false negatives | Older correctness defect; fix `9913cd6`, with continuing final-round regression evidence. Do not reopen as unfinished 1.1 format work |
 | C08 defaults / C21 empty projection | Legacy ordinary paths corrected and fully verified above; documented legacy CDC NULL-fill preserved, unsupported defaults/MySQL evolution explicit |
 | C16 interval / quoted CAST decoding | Reconciled as already fixed in shared decoders; current legacy-path evidence and exact quoted-CAST regression pass. Upstream interval-flush persistence remains separate |
-| C07 pruning | Older candidate, not newly verified here; conservative 1.1 min/max pruning avoids that optimization. Dedicated current-code reproduction remains older-backlog work |
+| C07 pruning | Fixed and fully verified above: float binary precision and end-of-day TIME keys. Conservative 1.1 min/max policy and bucket/historical-type work remain separate |
 | C09 missing-table classification | Fixed and fully verified October 26: actual legacy DuckDB/Quack silent-empty reproductions now propagate, while legitimate absence and existing owned-session behavior remain covered |
 | C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |
 | C12 lineage / C22 paths | Relevant scoped R07 lineage and R05 ownership evidence exists; broader legacy/mutation findings are not silently closed |

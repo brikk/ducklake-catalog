@@ -21,6 +21,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeFormatterBuilder
+import java.time.format.ResolverStyle
 import java.time.temporal.ChronoField
 import java.util.Locale
 
@@ -34,7 +35,7 @@ import java.util.Locale
  * classes: `"12" < "8"`, and in a mixed lake DuckDB writes timestamps as `2024-01-01 00:00:00`
  * while other engines write `2024-01-01T00:00:00` (`' ' < 'T'`), so a lexical merge picks the
  * wrong extreme. This object is the one place the per-type rule lives:
- *  - [ComparisonClass.NUMERIC] → [BigDecimal];
+ *  - [ComparisonClass.NUMERIC] → [BigDecimal], after declared binary-precision rounding for floats;
  *  - [ComparisonClass.TEMPORAL] → a normalised epoch key (see [parseTemporal]) that accepts both
  *    DuckDB's and ISO-8601's spellings;
  *  - [ComparisonClass.BOOLEAN] → `false < true`;
@@ -123,7 +124,7 @@ object DucklakeStatTypes {
         }
         return try {
             when (comparisonClass(canonicalType)) {
-                ComparisonClass.NUMERIC -> BigDecimal(value)
+                ComparisonClass.NUMERIC -> parseNumeric(canonicalType, value)
                 ComparisonClass.TEMPORAL -> parseTemporal(value)
                 ComparisonClass.BOOLEAN -> parseBoolean(value)
                 ComparisonClass.TEXT -> CodePointString(value)
@@ -134,6 +135,18 @@ object DucklakeStatTypes {
             // Unparseable: signal "unknown" so the caller skips pruning on this value.
             null
         }
+    }
+
+    /** Different decimal spellings of the same FLOAT/DOUBLE must compare as the same logical value. */
+    private fun parseNumeric(type: String?, value: String): BigDecimal? {
+        val decimal = BigDecimal(value)
+        val binary = when (type?.let(::normalize)) {
+            "float32" -> decimal.toFloat().toDouble()
+            "float64" -> decimal.toDouble()
+            else -> return decimal
+        }
+        // NaN/Infinity remain unknown; finite text overflowing its binary type must also fail open.
+        return if (binary.isFinite()) BigDecimal.valueOf(binary) else null
     }
 
     /**
@@ -207,19 +220,7 @@ object DucklakeStatTypes {
         if (minValue == null || maxValue == null || !isNumericType(canonicalType)) {
             return false
         }
-        val min = try {
-            BigDecimal(minValue)
-        }
-        catch (e: NumberFormatException) {
-            return false
-        }
-        val max = try {
-            BigDecimal(maxValue)
-        }
-        catch (e: NumberFormatException) {
-            return false
-        }
-        return min > max
+        return compareOrNull(minValue, maxValue, canonicalType)?.let { it > 0 } ?: false
     }
 
     /**
@@ -304,7 +305,9 @@ object DucklakeStatTypes {
         .optionalStart().appendLiteral(':').appendValue(ChronoField.SECOND_OF_MINUTE, 2).optionalEnd()
         .optionalStart().appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true).optionalEnd()
         .toFormatter(Locale.ROOT)
+        .withResolverStyle(ResolverStyle.STRICT)
 
+    private val END_OF_DAY = Regex("24:00(?::00(?:\\.0{1,9})?)?")
     private val OFFSET_REGEX = Regex("([+-]\\d{2}(?::?\\d{2})?|Z)$")
     private val NANOS_PER_SECOND = BigDecimal(1_000_000_000L)
     private val NANOS_PER_DAY = BigDecimal(86_400L * 1_000_000_000L)
@@ -317,6 +320,8 @@ object DucklakeStatTypes {
      * `Value::ToString` spellings (`2024-01-01 00:00:00`, `2024-01-01 00:00:00.123456+00`,
      * `12:34:56`, `infinity`) and ISO-8601's (`2024-01-01T00:00:00`, `...Z`, `...+02:00`). Zone
      * offsets are applied, so `timestamptz` values written with different offsets compare correctly.
+     * A time-only 24:00:00 uses the end-of-day nanosecond key, not a wrapped LocalTime.
+     * Other clocks use strict parsing; unsupported spellings become unknown through [parseStat].
      * Values within one column are always the same kind, so mixing kinds is not a concern.
      *
      * @throws RuntimeException for anything it does not understand (BC dates, textual months, ...).
@@ -356,8 +361,9 @@ object DucklakeStatTypes {
         body.length > 10 && body[4] == '-' && body[7] == '-' && (body[10] == ' ' || body[10] == 'T')
 
     private fun timeOfDayNanos(body: String, offsetSeconds: Long): BigDecimal {
-        val t = LocalTime.parse(body, TIME_FORMATTER)
-        return BigDecimal(t.toNanoOfDay()).subtract(BigDecimal(offsetSeconds).multiply(NANOS_PER_SECOND))
+        // DuckDB permits exactly 24:00:00; LocalTime's SMART resolver silently rolls it to midnight.
+        val nanos = if (END_OF_DAY.matches(body)) NANOS_PER_DAY else BigDecimal(LocalTime.parse(body, TIME_FORMATTER).toNanoOfDay())
+        return nanos.subtract(BigDecimal(offsetSeconds).multiply(NANOS_PER_SECOND))
     }
 
     /** Date + time separated by ' ' (DuckDB) or 'T' (ISO), interpreted at [offsetSeconds]. */
