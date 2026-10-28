@@ -13,7 +13,8 @@ source-confirmed delivery gaps, deferred capabilities, qualification and optiona
 hardening. Missing engine/production evidence is not itself proof of a bug.
 
 The latest repair batch is complete and fully verified; exact commits, scope and
-checks are in [the archived evidence](archive/FIX-PRIORITY-FINDINGS-2026-10-28.md).
+checks are in [the harness repair evidence](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md);
+the [earlier priority repairs](archive/FIX-PRIORITY-FINDINGS-2026-10-28.md) remain archived separately.
 The active defect queue excludes completed repairs.
 
 ## Integration boundary

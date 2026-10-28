@@ -1,10 +1,11 @@
 # Triaged work queue
 
-Remaining work after current-code triage and the
-[verified priority repairs](archive/FIX-PRIORITY-FINDINGS-2026-10-28.md). The
+Remaining work after current-code triage and the verified
+[priority](archive/FIX-PRIORITY-FINDINGS-2026-10-28.md) and
+[harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **19 reproduced defects** below, plus **3 source-confirmed delivery-control
+There are **16 reproduced defects** below, plus **3 source-confirmed delivery-control
 gaps**. Missing features or missing evidence are not counted as reproduced bugs.
 
 **Namespace:** `review R04` below is a September residual ID, not
@@ -20,9 +21,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| H02 | P1 | Wrong BIGINT, VARCHAR-as-Boolean and incorrect query arity pass goldens; preserve SQL types/shape and compare exactly where required. |
-| H03 | P1 | NULL/empty text tokens and row separators collide in live-vs-live equality; compare structured nullable rows. |
-| H04 | P1 | Timeout drops an earlier failure and abandons a worker; preserve outcomes and isolate/terminate worker ownership. |
 | H05 | P1 | An always-rejecting engine produces passes with zero engine queries and no engine skips; report actual coverage. |
 | review R04 | P2 | Legacy PostgreSQL readSession swallows an isolation-setting fault and sees a new snapshot mid-session; strict opt-in mode already rejects the fault. |
 | N13 | P2 | Catalog CREATE bypasses require_commit_message while native CREATE rejects; honor the policy or refuse unsupported message-required writes. |

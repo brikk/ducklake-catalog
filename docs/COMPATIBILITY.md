@@ -115,6 +115,59 @@ identity-only pages.
 source schema, and empty payload projections preserve CDC identity. The final-1.1
 CDC tier retains its separate qualified initial-default behavior.
 
+## Replay comparison and watchdog integrity
+
+The 0.13 replay driver carries JDBC SQL types and column count into golden
+validation, including empty SELECT and hash results. Integers and DECIMAL use
+exact numeric equality (equivalent scales/spellings remain accepted); only SQL
+FLOAT/DOUBLE use floating tolerance. Boolean aliases require SQL BOOLEAN metadata,
+not a VARCHAR value that happens to spell `true` or `false`. Expected and actual
+ordinary-query row widths must match the declaration before sorting or hashing.
+Upstream label letters are placeholders: the first occurrence records actual width
+alongside its hash, and later occurrences must preserve it (including empty results).
+Labels still ignore ordinary golden text, as upstream specifies. VALUESORT keeps
+each actual cell's original SQL type; ROWSORT compares cell boundaries, not joined
+delimiter strings. Original corpus goldens and exclusions are not changed.
+
+JDBC's genuine NOTHING/no-result command is represented separately, not as an empty
+SELECT with lost metadata. It accepts an empty expectation (or zero-value hash)
+with the existing single-letter command placeholder; nonempty goldens and wider
+ordinary declarations fail. No native column type/schema is invented for this
+non-tabular JDBC result. Execution remains direct and single-shot: preparing again
+to obtain metadata can rebind side-effecting table functions and alter lake state.
+
+`GoldenComparator.compare(query, rows)` keeps its descriptor, with conservative
+declared-letter behavior: exact I, tolerant R, literal T, no guessed Boolean type.
+Use the new `compare(query, rows, sqlTypes)` overload for typed coercions and empty
+result arity. The old row-only entry point cannot infer an empty result's metadata.
+SQL NULL and empty-value golden tokens (and upstream hash serialization) remain
+golden-format conventions, not an injective encoding of live data. Boolean hash
+canonicalization is a separately tracked defect; this change does not claim it fixed.
+
+Engine mirrors compare **multisets of structured nullable rows**, not golden tokens
+or delimiter-joined rows. SQL NULL, literal `NULL`, empty text, literal `(empty)`,
+embedded separators, column boundaries and duplicate counts remain distinct. Typed
+geometry normalization remains the only live-value normalization; mirror equality
+has no numeric tolerance. The row-only engine API cannot report an empty result's
+column metadata; no stronger engine-side empty-schema guarantee is claimed.
+
+A file watchdog timeout freezes completed outcomes, interrupts its worker and
+waits up to one second for termination. Timeout remains a file-skip, but earlier
+failures, passes and record-skips remain counted. Later files and later `run` calls
+on that runner are BLOCKED, even after a cooperative worker exits: its engine or
+metadata backend may already have changed. Caller interruption also cancels and
+quarantines the runner, restores the caller's interrupt flag and propagates the
+interruption. A crash retains its completed prefix as well.
+
+This is conservative quarantine, not forcibly killable native execution. A worker
+ignoring interruption can remain active with its owned oracle/resources until it
+returns or the JVM exits. The runner does not close an engine under such a worker;
+the caller still owns engine lifecycle and must not reuse/close shared engine or
+rewriter state via another runner while it is active. Recoverable continuation
+requires genuinely isolated processes/backends, not merely another ReplayDriver.
+Public constructor, engine and FileResult descriptors are unchanged; no sibling
+source changes are required, and no connector artifact adoption is implied.
+
 ## Replay temporary-directory ownership
 
 In 0.13, `DuckDbOracle(testDirRoot = parent)` creates a fresh owned child under the
