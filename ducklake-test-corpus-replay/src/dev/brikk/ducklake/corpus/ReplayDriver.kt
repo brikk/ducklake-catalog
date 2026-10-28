@@ -68,7 +68,11 @@ class ReplayDriver(
         val ALWAYS_FAIL_ERROR_MESSAGES: Set<String> = setOf("differs from original result!", "INTERNAL")
     }
 
-    fun replay(file: SltFile): FileResult {
+    fun replay(file: SltFile): FileResult = replay(file, ReplayProgress())
+
+    internal fun replay(file: SltFile, progress: ReplayProgress): FileResult {
+        this.progress = progress
+        progress.checkActive()
         val unsupported = findUnsupported(file.records)
         if (unsupported != null) {
             return FileResult(
@@ -78,7 +82,6 @@ class ReplayDriver(
             )
         }
         return DuckDbOracle(repoRoot = repoRoot).use { oracle ->
-            val outcomes = mutableListOf<RecordOutcome>()
             labelResults.clear()
             rewrittenAttachments.clear()
             attachDataPaths.clear()
@@ -87,10 +90,12 @@ class ReplayDriver(
             engineConnected = false
             engineAlias = null
             engineTarget = null
-            val halted = executeAll(file.records, oracle, emptyMap(), outcomes)
-            FileResult(file.path, fileSkipReason = halted, outcomes = outcomes)
+            val halted = executeAll(file.records, oracle, emptyMap(), progress)
+            FileResult(file.path, fileSkipReason = halted, outcomes = progress.snapshot())
         }
     }
+
+    private var progress = ReplayProgress()
 
     /** Result hash per label (upstream `hash_label_map`), per replayed file. */
     private data class LabeledResult(val hash: String, val columns: Int)
@@ -220,9 +225,10 @@ class ReplayDriver(
         records: List<SltRecord>,
         oracle: DuckDbOracle,
         bindings: Map<String, String>,
-        outcomes: MutableList<RecordOutcome>,
+        outcomes: ReplayProgress,
     ): String? {
         for (record in records) {
+            progress.checkActive()
             when (record) {
                 is SltRequire -> {
                     val miss = oracle.require(record.requirement)
@@ -255,7 +261,7 @@ class ReplayDriver(
         record: SltConditional,
         oracle: DuckDbOracle,
         bindings: Map<String, String>,
-        outcomes: MutableList<RecordOutcome>,
+        outcomes: ReplayProgress,
     ): String? {
         val cond = evalCondition(record.engine, bindings)
         val run = if (record.skipIf) !cond else cond
@@ -305,9 +311,11 @@ class ReplayDriver(
     ): RecordOutcome {
         val substituted = substituteAll(record.sql, bindings, oracle)
         val (sql, pendingAttachment) = interceptAttach(substituted)
+        progress.checkActive()
         val conn = oracle.connection(record.connection)
         return try {
             conn.createStatement().use { it.execute(sql) }
+            progress.checkActive()
             if (pendingAttachment != null && !engineConnected) {
                 engine?.connect(pendingAttachment)
                 engineConnected = true
@@ -386,6 +394,7 @@ class ReplayDriver(
         } else {
             GoldenComparator.shapeMismatch(record, actual.rows, actual.types)?.let { return RecordOutcome.Fail(record, it.detail) }
         }
+        progress.checkActive()
         val label = record.label
         val outcome =
             if (label != null) {
@@ -397,6 +406,7 @@ class ReplayDriver(
             return outcome
         }
         mirrorsThisFile++
+        progress.checkActive()
         return mirrorOutcome(engine, record, sql, actual, oracle.connection(record.connection))
     }
 

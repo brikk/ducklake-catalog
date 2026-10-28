@@ -4,6 +4,9 @@ import dev.brikk.ducklake.slt.SltFile
 import dev.brikk.ducklake.slt.SltParser
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.io.path.extension
 import kotlin.io.path.readText
 import kotlin.io.path.relativeTo
@@ -23,12 +26,12 @@ class CorpusRunner(
     /** See [ReplayDriver]'s `metadataRewriter` — the backend axis. */
     private val metadataRewriter: ((String) -> String)? = null,
     /**
-     * Per-file watchdog: a file whose replay exceeds this budget is abandoned
-     * (its worker thread is daemon and stays blocked; the oracle's resources
-     * leak until JVM exit) and reported as a TIMEOUT file-skip. Protects a run
-     * from pathological hangs — e.g. multi-connection transaction tests that
-     * deadlock on PostgreSQL row locks (see [PostgresAxisSkips]). Zero or
-     * negative disables the watchdog.
+     * Per-file watchdog: timeout freezes completed outcomes, interrupts the worker and waits a
+     * bounded grace period. Timeout remains a file-skip, NOT permission to erase earlier failures.
+     * No later file (or subsequent run on this runner) may reuse shared engine/backend callbacks
+     * after a timeout. A driver ignoring interruption may remain active until JVM exit; this is
+     * quarantine, not a claim that arbitrary native/backend operations can be forcibly stopped.
+     * Zero or negative disables the watchdog.
      */
     private val fileTimeoutSeconds: Long = DEFAULT_FILE_TIMEOUT_SECONDS,
 ) {
@@ -36,7 +39,12 @@ class CorpusRunner(
     companion object {
         const val DEFAULT_FILE_TIMEOUT_SECONDS: Long = 300
         val CORPUS_EXTENSIONS: Set<String> = setOf("test", "test_slow")
+        private const val WORKER_GRACE_MILLIS = 1000L
     }
+
+    private var quarantineReason: String? = null
+    // Keep ownership of an unresponsive worker; never close/reuse its shared engine under it.
+    private var timedOutWorker: Thread? = null
 
     /** Upstream runs both `.test` and `.test_slow` files (the latter carry the `<FILE>:` goldens). */
     fun discover(subdir: String? = null): List<Path> {
@@ -50,51 +58,71 @@ class CorpusRunner(
         }
     }
 
-    fun run(files: List<Path>): CorpusReport {
+    @Synchronized fun run(files: List<Path>): CorpusReport {
         val results = mutableListOf<FileResult>()
         for (file in files) {
             val rel = file.relativeTo(corpusRoot).toString()
+            val blocked = quarantineReason
             val curated = skipList[rel]
-            if (curated != null) {
-                results += FileResult(rel, "skip-list: $curated", emptyList())
-                continue
+            results += when {
+                blocked != null -> {
+                    val worker = if (timedOutWorker?.isAlive == true) "worker still active" else "worker stopped"
+                    FileResult(rel, "BLOCKED: $blocked; $worker", emptyList())
+                }
+                curated != null -> FileResult(rel, "skip-list: $curated", emptyList())
+                else -> replayGuarded(rel, SltParser.parse(rel, file.readText()))
             }
-            val parsed = SltParser.parse(rel, file.readText())
-            results += replayGuarded(rel, parsed)
         }
         return CorpusReport(results)
     }
 
     private fun replayGuarded(rel: String, parsed: SltFile): FileResult {
-        // Fresh driver per file: an abandoned (timed-out) worker thread must never
-        // touch the state of a later file's replay.
+        // Per-file mutable driver state, plus a frozen progress prefix on timeout/crash. The
+        // engine/rewriter are still shared; quarantine prevents their reuse after cancellation.
         // corpusRoot = <repo>/test/sql → repo root two levels up (for `data/` refs).
         val driver = ReplayDriver(engine, repoRoot = corpusRoot.parent?.parent, metadataRewriter = metadataRewriter)
+        val progress = ReplayProgress()
         val body = {
-            runCatching { driver.replay(parsed) }
+            runCatching { driver.replay(parsed, progress) }
                 .getOrElse { e ->
-                    FileResult(rel, "CRASH: ${e.message?.lineSequence()?.firstOrNull() ?: e}", emptyList())
+                    FileResult(rel, "CRASH: ${e.message?.lineSequence()?.firstOrNull() ?: e}", progress.snapshot())
                 }
         }
         if (fileTimeoutSeconds <= 0) {
             return body()
         }
-        val future = java.util.concurrent.CompletableFuture.supplyAsync(body) { runnable ->
-            Thread(runnable, "corpus-replay-$rel").apply { isDaemon = true }.start()
-        }
+        val future = FutureTask(body)
+        val worker = Thread(future, "corpus-replay-$rel").apply { isDaemon = true; start() }
         return try {
-            future.get(fileTimeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)
+            future.get(fileTimeoutSeconds, TimeUnit.SECONDS)
         }
-        catch (_: java.util.concurrent.TimeoutException) {
-            FileResult(rel, "TIMEOUT: replay exceeded ${fileTimeoutSeconds}s (worker abandoned — likely a " +
-                    "backend lock hang; candidate for the axis skip list)", emptyList())
+        catch (_: TimeoutException) {
+            val outcomes = progress.freeze()
+            quarantineReason = "corpus halted after timeout in $rel; shared engine/backend state is quarantined"
+            cancelWorker(future, worker)
+            val state = if (worker.isAlive) "worker still active (quarantined)" else "worker stopped"
+            FileResult(rel, "TIMEOUT: replay exceeded ${fileTimeoutSeconds}s; $state; remaining files blocked", outcomes)
         }
+        catch (e: InterruptedException) {
+            progress.freeze()
+            quarantineReason = "corpus interrupted in $rel; shared engine/backend state is quarantined"
+            cancelWorker(future, worker)
+            Thread.currentThread().interrupt()
+            throw e
+        }
+    }
+
+    private fun cancelWorker(future: FutureTask<FileResult>, worker: Thread) {
+        timedOutWorker = worker
+        future.cancel(true)
+        try { worker.join(WORKER_GRACE_MILLIS) }
+        catch (_: InterruptedException) { Thread.currentThread().interrupt() }
     }
 }
 
 /**
  * Aggregate over [FileResult]s. Record counts ([failures], [totalPassed], [totalRecordSkips]) span
- * EVERY file that executed records — including files an unmet `require` halted mid-way
+ * EVERY file that executed records — including files a requirement, crash or timeout halted mid-way
  * ([haltedFiles]); a failure recorded before such a skip is still a failure, as upstream.
  */
 class CorpusReport(val files: List<FileResult>) {
@@ -105,7 +133,7 @@ class CorpusReport(val files: List<FileResult>) {
     /** Files with a skip reason — whole-file skips AND mid-file halts (see [haltedFiles]). */
     val skippedFiles: List<FileResult> get() = files.filter { it.fileSkipReason != null }
 
-    /** Files that executed some records before an unmet `require` skipped the remainder. */
+    /** Files that executed some records before a requirement, crash or timeout halted the remainder. */
     val haltedFiles: List<FileResult> get() = files.filter { it.haltedMidFile }
 
     /** Every record failure, whether its file ran to the end or was halted afterwards. */
@@ -124,8 +152,13 @@ class CorpusReport(val files: List<FileResult>) {
         sb.appendLine(
             "  ran ${ranFiles.size} (records: $totalPassed passed, ${failures.size} failed, $totalRecordSkips skipped)",
         )
-        if (haltedFiles.isNotEmpty()) {
-            sb.appendLine("  halted mid-file by an unmet require ${haltedFiles.size} (records above include theirs)")
+        val requireHalts = haltedFiles.count { it.fileSkipReason!!.startsWith("require ") }
+        if (requireHalts > 0) {
+            sb.appendLine("  halted mid-file by an unmet require $requireHalts (records above include theirs)")
+        }
+        val otherHalts = haltedFiles.size - requireHalts
+        if (otherHalts > 0) {
+            sb.appendLine("  halted mid-file by crash/timeout $otherHalts (records above include theirs)")
         }
         sb.appendLine("  file-skips ${skippedFiles.size}:")
         skippedFiles

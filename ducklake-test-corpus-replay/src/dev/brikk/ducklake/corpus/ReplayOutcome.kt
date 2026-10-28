@@ -21,8 +21,8 @@ sealed interface RecordOutcome {
  * One corpus file's replay. Three shapes:
  *  - ran to the end: [fileSkipReason] null, [outcomes] = every record;
  *  - skipped before anything ran (skip-list, unsupported construct, unmet `require` at the top,
- *    crash/timeout): [fileSkipReason] set, [outcomes] empty;
- *  - halted MID-FILE by an unmet `require` (upstream `SKIP_TEST` while streaming the file,
+ *    or crash/timeout before any record completed): [fileSkipReason] set, [outcomes] empty;
+ *  - halted MID-FILE by a crash, timeout or unmet `require` (upstream `SKIP_TEST` while streaming the file,
  *    `sqllogic_test_runner.cpp:1084-1091`): [fileSkipReason] set AND [outcomes] holds the records
  *    executed before it — their failures are real failures ([failuresBeforeSkip]), exactly as
  *    upstream's already-recorded `REQUIRE`s stay failed when the rest of the file is skipped.
@@ -37,7 +37,7 @@ data class FileResult(
     val failed: List<RecordOutcome.Fail> get() = outcomes.filterIsInstance<RecordOutcome.Fail>()
     val skipped: List<RecordOutcome.Skip> get() = outcomes.filterIsInstance<RecordOutcome.Skip>()
 
-    /** True when records ran and then an unmet `require` skipped the rest of the file. */
+    /** True when completed records precede a requirement halt, crash or timeout. */
     val haltedMidFile: Boolean get() = fileSkipReason != null && outcomes.isNotEmpty()
 
     /** Failures recorded before a mid-file skip (empty unless [haltedMidFile]). */
