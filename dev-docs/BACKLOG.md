@@ -1,14 +1,14 @@
 # Triaged work queue
 
-Remaining work, classified against `662a84a` on October 28. The
-[74-item triage report](archive/TRIAGE-2026-10-28.md) records source locations,
-fresh negative witnesses, resolved/non-bug dispositions and qualification limits.
-There are **22 reproduced defects** below, plus **3 source-confirmed delivery-control
+Remaining work after current-code triage and the
+[verified priority repairs](archive/FIX-PRIORITY-FINDINGS-2026-10-28.md). The
+[74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
+against `662a84a`; completed repairs are not repeated in this queue.
+There are **19 reproduced defects** below, plus **3 source-confirmed delivery-control
 gaps**. Missing features or missing evidence are not counted as reproduced bugs.
-This triage made no fixes. Completed findings remain in the archive.
 
-**Namespace:** `review R01` / `review R04` below are September residual IDs, not
-the similarly numbered 1.1 read requirements. No sibling implementation is assigned
+**Namespace:** `review R04` below is a September residual ID, not
+the similarly numbered 1.1 read requirement. No sibling implementation is assigned
 or edited by this queue.
 
 ## Confirmed defects
@@ -20,9 +20,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| N18 | P1 | Ordinary rewrite accepts output planned before a native inline DELETE and resurrects the deleted row; guard the planning-to-commit window. |
-| review R01 | P1 | Historical type row order changes ANALYZE precision: native MAX becomes wrong while scanned rows remain correct; select current logical types deterministically. |
-| H01 | P1 | Oracle close deletes the supplied parent and traverses a directory symlink; own a child and avoid following links. |
 | H02 | P1 | Wrong BIGINT, VARCHAR-as-Boolean and incorrect query arity pass goldens; preserve SQL types/shape and compare exactly where required. |
 | H03 | P1 | NULL/empty text tokens and row separators collide in live-vs-live equality; compare structured nullable rows. |
 | H04 | P1 | Timeout drops an earlier failure and abandons a worker; preserve outcomes and isolate/terminate worker ownership. |

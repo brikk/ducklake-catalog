@@ -37,6 +37,7 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reproduction and execution reports
 
+- [Priority repairs: N18, review R01 and H01](FIX-PRIORITY-FINDINGS-2026-10-28.md)
 - [Expired-snapshot conflict history](FIX-expired-snapshot-conflict-history-2026-10-09.md)
 - [C05 ANALYZE publication](FIX-C05-ANALYZE-PUBLICATION-2026-10-15.md)
 - [October 14 follow-ups](UPSTREAM-FOLLOWUPS-RESULTS-2026-10-14.md)

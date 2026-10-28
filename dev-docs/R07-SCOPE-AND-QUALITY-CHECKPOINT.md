@@ -12,15 +12,20 @@ The [October 28 triage](archive/TRIAGE-2026-10-28.md) separates reproduced defec
 source-confirmed delivery gaps, deferred capabilities, qualification and optional
 hardening. Missing engine/production evidence is not itself proof of a bug.
 
+The latest repair batch is complete and fully verified; exact commits, scope and
+checks are in [the archived evidence](archive/FIX-PRIORITY-FINDINGS-2026-10-28.md).
+The active defect queue excludes completed repairs.
+
 ## Integration boundary
 
 The accepted limited-read connector bundle remains catalog `6730bb8`, Trino
-`3385429` and Doris `4efd9bc`. Newer catalog fixes through `fb53459` have passed
-catalog qualification and are pushed, but still need coordinated consumer adoption;
-do not claim those connector artifacts were rebuilt or rerun on the newer catalog.
+`3385429` and Doris `4efd9bc`. Subsequent library fixes have passed qualification,
+but still need coordinated consumer adoption; do not claim those connector artifacts
+were rebuilt or rerun on the newer library. Latest verified code revisions are in
+the repair evidence above.
 Exact accepted artifact hashes and verification scopes are in the archived report.
 
-Current sibling source heads are Trino `fca7277` and Doris `9b44463`. Their October28
+The October28 source audit saw Trino `fca7277` and Doris `9b44463`. Their
 483/484 and API24 released-lane checks did not adopt the newer catalog candidate.
 Doris's successful matching API24 FE/BE/restart qualification used catalog 0.12.0 /
 JDBC1.5.6, not the R07 candidate. Preserve that success without treating it as new
@@ -69,11 +74,8 @@ physical objects remain retained; a metadata transaction is not a physical-file 
 - **Writer safety boundaries:** full MySQL inline evolution requires coordinated
   preparation/publication and qualified type/identifier rendering to replace the
   current refusal. Shared writer watermarks/history reclamation need a safe design.
-  Ordinary rewrites' concurrent native inline-delete limitation is now reproduced
-  as data resurrection (N18); it is a confirmed defect, not merely missing evidence.
-  Review R01 historical type selection during ANALYZE is likewise a reproduced
-  wrong-native-MAX defect. Both are in [the defect queue](BACKLOG.md), separate from
-  the [materialization contract](../docs/MATERIALIZATION-SNAPSHOTS.md)'s completed migration.
+  The [materialization contract](../docs/MATERIALIZATION-SNAPSHOTS.md) continues to
+  define planning-snapshot, complete-payload and embedded-lineage obligations.
 
 Each capability/qualification item needs its own bounded assignment. Remaining
 defects and delivery controls have current evidence in [BACKLOG.md](BACKLOG.md);
