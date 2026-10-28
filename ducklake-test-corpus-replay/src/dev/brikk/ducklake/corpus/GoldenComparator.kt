@@ -4,6 +4,7 @@ import dev.brikk.ducklake.slt.SltQuery
 import dev.brikk.ducklake.slt.SortMode
 import org.duckdb.DuckDBArray
 import org.duckdb.DuckDBStruct
+import java.math.BigDecimal
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.LocalDate
@@ -23,6 +24,9 @@ import java.time.ZoneOffset
  *  - empty string renders as `(empty)`; embedded NUL bytes as `\0`
  *  - booleans render `true`/`false` here (upstream renders `1`/`0`); either side may write
  *    `true`/`false` (any case) or `1`/`0` for a boolean column, whatever the type letter
+ *    (only retained SQL BOOLEAN metadata permits coercion; VARCHAR lookalikes are text)
+ *  - integer/decimal comparisons are exact, without Double conversion; only SQL FLOAT/DOUBLE
+ *    results use the floating tolerance. JDBC arity is checked even for empty/hash/label results
  *  - everything else reproduces DuckDB's own `::VARCHAR` rendering from the JDBC objects:
  *    DOUBLE/FLOAT and the temporal infinities via [DuckDbText], nested types via
  *    [renderNested] (quoting rules of the nested→VARCHAR casts); engine adapters use the same
@@ -260,7 +264,27 @@ object GoldenComparator {
     fun isHashGolden(query: SltQuery): Boolean =
         query.expected.size == 1 && HASHING.matches(query.expected[0].trim())
 
-    fun compare(query: SltQuery, actual: List<List<String?>>): Comparison {
+    /** Untyped callers get conservative declared-letter semantics, never text-inferred Boolean types. */
+    fun compare(query: SltQuery, actual: List<List<String?>>): Comparison = compareResult(query, actual, null)
+
+    /** JDBC SQL types retain arity even for empty results and select the permitted coercions. */
+    fun compare(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>): Comparison =
+        compareResult(query, actual, sqlTypes)
+
+    internal fun shapeMismatch(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>?): Comparison.Mismatch? {
+        // Upstream labels seed a hash from the first result; their letter string is a placeholder,
+        // not a width assertion. The driver separately retains/checks the label's actual width.
+        val columns = if (query.label == null) query.types.length
+            else sqlTypes?.size ?: actual.firstOrNull()?.size ?: query.types.length
+        if (sqlTypes != null && sqlTypes.size != columns) {
+            return Comparison.Mismatch("column count: declared $columns, JDBC returned ${sqlTypes.size}")
+        }
+        val ragged = actual.indexOfFirst { it.size != columns }
+        return if (ragged < 0) null else Comparison.Mismatch("column count: declared $columns, row ${ragged + 1} has ${actual[ragged].size}")
+    }
+
+    private fun compareResult(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>?): Comparison {
+        shapeMismatch(query, actual, sqlTypes)?.let { return it }
         if (isHashGolden(query)) {
             val expectedHash = query.expected[0].trim()
             val hash = resultHash(query, actual)
@@ -270,7 +294,7 @@ object GoldenComparator {
                 Comparison.Mismatch("result hash: expected '$expectedHash', got '$hash'")
             }
         }
-        val colCount = query.types.length
+        val colCount = sqlTypes?.size ?: query.types.length
         val actualRows = actual.map { row -> row.map(::toGoldenCell) }
 
         // Cells verbatim, as upstream (`StringUtil::Split(values[i], "\t")`, `result_helper.cpp:198`).
@@ -283,43 +307,61 @@ object GoldenComparator {
             expectedRows = query.expected.chunked(colCount)
         }
 
+        if (expectedRows.any { it.size != colCount }) {
+            return Comparison.Mismatch("expected column count does not match declaration ($colCount)")
+        }
+
         val a = sortRows(actualRows, query.sortMode)
         val e = sortRows(expectedRows, query.sortMode)
 
         if (a.size != e.size) {
             return Comparison.Mismatch("row count: expected ${e.size}, got ${a.size}\n${diffPreview(e, a)}")
         }
-        for (i in a.indices) {
-            if (!rowsEqual(e[i], a[i], query.types)) {
-                return Comparison.Mismatch("row ${i + 1}: expected ${e[i]}, got ${a[i]}")
+        // Keep each cell's SQL type attached while VALUESORT moves it across column positions.
+        val sorted = typedCells(query, actualRows, sqlTypes)
+        val expected = e.flatten()
+        for (i in sorted.indices) {
+            if (!cellEqual(expected[i], sorted[i])) {
+                return Comparison.Mismatch("row ${i / colCount + 1}: expected ${e[i / colCount]}, got ${a[i / colCount]}")
             }
         }
         return Comparison.Match
     }
 
+    private fun typedCells(query: SltQuery, actualRows: List<List<String>>, sqlTypes: List<String>?): List<Cell> {
+        val typed = actualRows.map { row -> row.mapIndexed { i, text -> Cell(text, sqlTypes?.get(i), query.types.getOrNull(i) ?: 'T') } }
+        return when (query.sortMode) {
+            SortMode.NOSORT -> typed.flatten()
+            SortMode.ROWSORT -> typed.sortedWith { left, right -> compareRow(left.map { it.text }, right.map { it.text }) }.flatten()
+            SortMode.VALUESORT -> typed.flatten().sortedBy { it.text }
+        }
+    }
+
+    private data class Cell(val text: String, val sqlType: String?, val declared: Char)
+
     private fun sortRows(rows: List<List<String>>, mode: SortMode): List<List<String>> =
         when (mode) {
             SortMode.NOSORT -> rows
-            SortMode.ROWSORT -> rows.sortedBy { it.joinToString("\u0001") }
+            SortMode.ROWSORT -> rows.sortedWith(::compareRow)
             SortMode.VALUESORT -> {
                 val flat = rows.flatten().sorted()
                 if (rows.isEmpty()) rows else flat.chunked(rows[0].size)
             }
         }
 
-    private fun rowsEqual(expected: List<String>, actual: List<String>, types: String): Boolean {
-        if (expected.size != actual.size) return false
-        for (i in expected.indices) {
-            val t = types.getOrNull(i) ?: 'T'
-            if (!cellEqual(expected[i], actual[i], t)) return false
+    private fun compareRow(left: List<String>, right: List<String>): Int {
+        for (i in 0 until minOf(left.size, right.size)) {
+            val order = left[i].compareTo(right[i])
+            if (order != 0) return order
         }
-        return true
+        return left.size.compareTo(right.size)
     }
 
     private const val REGEX_PREFIX = "<REGEX>:"
     private const val NOT_REGEX_PREFIX = "<!REGEX>:"
 
-    private fun cellEqual(expected: String, actual: String, type: Char): Boolean {
+    private fun cellEqual(expected: String, cell: Cell): Boolean {
+        val actual = cell.text
         if (expected == actual) return true
         // Upstream cell-level regex escape hatches (analyzed_plan assertions etc.).
         if (expected.startsWith(REGEX_PREFIX)) {
@@ -328,14 +370,26 @@ object GoldenComparator {
         if (expected.startsWith(NOT_REGEX_PREFIX)) {
             return !Regex(expected.removePrefix(NOT_REGEX_PREFIX), RegexOption.DOT_MATCHES_ALL).matches(actual)
         }
-        // Boolean column (`result_helper.cpp:533-549`): the golden may say true/false (any case)
-        // or 1/0, whatever the declared type letter — upstream keys on the SQL type, not on it.
-        // [renderCell] emits booleans as exactly `true`/`false`, so that text identifies the column.
-        if (actual == "true" || actual == "false") {
-            return booleanValue(expected) == (actual == "true")
+        val type = cell.sqlType?.uppercase()?.substringBefore('(')?.trim()
+        if (type == "BOOLEAN" || type == "BOOL") {
+            return booleanValue(expected)?.let { it == booleanValue(actual) } ?: false
         }
-        return (type == 'R' || type == 'I') && numericEqual(expected, actual)
+        return when {
+            type in EXACT_NUMERIC_TYPES -> exactNumericEqual(expected, actual)
+            type in REAL_TYPES -> numericEqual(expected, actual)
+            type != null -> false
+            cell.declared == 'I' -> exactNumericEqual(expected, actual)
+            cell.declared == 'R' -> numericEqual(expected, actual)
+            else -> false
+        }
     }
+
+    private val EXACT_NUMERIC_TYPES = setOf("TINYINT", "SMALLINT", "INTEGER", "INT", "BIGINT", "HUGEINT", "BIGNUM",
+        "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "DECIMAL", "NUMERIC")
+    private val REAL_TYPES = setOf("FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION")
+
+    private fun exactNumericEqual(expected: String, actual: String): Boolean =
+        runCatching { BigDecimal(expected).compareTo(BigDecimal(actual)) == 0 }.getOrDefault(false)
 
     /** `CompareValues` boolean coercion: `true`/`false` case-insensitively, or exactly `1`/`0`. */
     private fun booleanValue(cell: String): Boolean? =
@@ -346,8 +400,8 @@ object GoldenComparator {
         }
 
     /**
-     * Numeric tolerance: golden files write integers where engines may emit
-     * decimal forms (and vice versa); R columns compare as doubles.
+     * Floating tolerance applies only to retained SQL real types (or an untyped R caller).
+     * Exact integer/decimal comparisons use BigDecimal and never pass through Double.
      */
     private fun numericEqual(expected: String, actual: String): Boolean {
         val de = expected.toDoubleOrNull() ?: return false

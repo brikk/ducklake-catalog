@@ -145,11 +145,13 @@ class TestGoldenComparator {
     fun `booleans accept true false and 1 0 for any type letter`() {
         val actual = listOf(listOf<String?>("true", "false"))
         for (types in listOf("II", "TT", "RR", "IT")) {
-            assertThat(GoldenComparator.compare(query(types, listOf("1\t0")), actual)).isEqualTo(GoldenComparator.Comparison.Match)
-            assertThat(GoldenComparator.compare(query(types, listOf("true\tfalse")), actual)).isEqualTo(GoldenComparator.Comparison.Match)
-            assertThat(GoldenComparator.compare(query(types, listOf("True\tFALSE")), actual)).isEqualTo(GoldenComparator.Comparison.Match)
-            assertThat(GoldenComparator.compare(query(types, listOf("0\t1")), actual)).isInstanceOf(GoldenComparator.Comparison.Mismatch::class.java)
-            assertThat(GoldenComparator.compare(query(types, listOf("1.0\t0")), actual)).isInstanceOf(GoldenComparator.Comparison.Mismatch::class.java)
+            val sqlTypes = listOf("BOOLEAN", "BOOLEAN")
+            assertThat(GoldenComparator.compare(query(types, listOf("1\t0")), actual, sqlTypes)).isEqualTo(GoldenComparator.Comparison.Match)
+            assertThat(GoldenComparator.compare(query(types, listOf("true\tfalse")), actual, sqlTypes)).isEqualTo(GoldenComparator.Comparison.Match)
+            assertThat(GoldenComparator.compare(query(types, listOf("True\tFALSE")), actual, sqlTypes)).isEqualTo(GoldenComparator.Comparison.Match)
+            assertThat(GoldenComparator.compare(query(types, listOf("0\t1")), actual, sqlTypes)).isInstanceOf(GoldenComparator.Comparison.Mismatch::class.java)
+            assertThat(GoldenComparator.compare(query(types, listOf("1.0\t0")), actual, sqlTypes))
+                .isInstanceOf(GoldenComparator.Comparison.Mismatch::class.java)
         }
         // plain integers are still numeric: "1" vs "1.0" under I is a match, as before
         assertThat(GoldenComparator.compare(query("I", listOf("1.0")), listOf(listOf("1")))).isEqualTo(GoldenComparator.Comparison.Match)

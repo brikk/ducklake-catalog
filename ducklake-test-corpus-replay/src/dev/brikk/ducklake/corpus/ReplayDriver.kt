@@ -93,7 +93,8 @@ class ReplayDriver(
     }
 
     /** Result hash per label (upstream `hash_label_map`), per replayed file. */
-    private val labelResults = mutableMapOf<String, String>()
+    private data class LabeledResult(val hash: String, val columns: Int)
+    private val labelResults = mutableMapOf<String, LabeledResult>()
 
     /** Per-file memo of original → rewritten DuckLake connection remainders. */
     private val rewrittenAttachments = mutableMapOf<String, String>()
@@ -378,12 +379,19 @@ class ReplayDriver(
         val actual =
             runCatching { executeQuerySql(oracle.connection(record.connection), sql) }
                 .getOrElse { e -> return RecordOutcome.Fail(record, "query errored: ${firstLine(e)}") }
+        if (actual.noResult) {
+            if (record.label == null && record.types.length != 1) {
+                return RecordOutcome.Fail(record, "non-result column count: a command requires one placeholder type letter")
+            }
+        } else {
+            GoldenComparator.shapeMismatch(record, actual.rows, actual.types)?.let { return RecordOutcome.Fail(record, it.detail) }
+        }
         val label = record.label
         val outcome =
             if (label != null) {
-                labeledOutcome(record, label, actual.rows)
+                labeledOutcome(record, label, actual)
             } else {
-                goldenOutcome(record, oracle, bindings, actual.rows)
+                goldenOutcome(record, oracle, bindings, actual)
             }
         if (outcome !is RecordOutcome.Pass || engine == null || !shouldMirror(record, sql)) {
             return outcome
@@ -392,29 +400,30 @@ class ReplayDriver(
         return mirrorOutcome(engine, record, sql, actual, oracle.connection(record.connection))
     }
 
-    private data class QueryResult(val rows: List<List<String?>>, val types: List<String> = emptyList())
+    private data class QueryResult(val rows: List<List<String?>>, val types: List<String>, val noResult: Boolean = false)
 
-    private fun executeQuerySql(conn: java.sql.Connection, sql: String): QueryResult =
-        conn.createStatement().use { st ->
-            // DML under a `query` directive expects the changed-row count as
-            // the single-cell result — the DuckDB JDBC driver only reports it
-            // via executeUpdate (execute() leaves it at -1).
-            if (DML.containsMatchIn(sql)) {
-                QueryResult(listOf(listOf(st.executeUpdate(sql).toString())))
-            } else {
-                // Generic execute: some corpus `query` records wrap CALL/PRAGMA
-                // shapes the driver refuses via executeQuery.
-                val hasResult = st.execute(sql)
-                when {
-                    hasResult -> st.resultSet.use { rs ->
-                        val types = (1..rs.metaData.columnCount).map { rs.metaData.getColumnTypeName(it) }
-                        QueryResult(GoldenComparator.readRows(rs), types)
-                    }
-                    st.updateCount >= 0 -> QueryResult(listOf(listOf(st.updateCount.toString())))
-                    else -> QueryResult(emptyList())
-                }
+    private fun executeQuerySql(conn: java.sql.Connection, sql: String): QueryResult {
+        // DML under `query` expects the count; execute() leaves it at -1 in DuckDB JDBC.
+        if (DML.containsMatchIn(sql)) {
+            return conn.createStatement().use { st ->
+                QueryResult(listOf(listOf(st.executeUpdate(sql).toString())), listOf("BIGINT"))
             }
         }
+        return conn.createStatement().use { st ->
+            // Keep direct execution: preparing can bind side-effecting table functions twice.
+            // A genuine non-result command is distinct from an empty typed SELECT result set.
+            if (st.execute(sql)) {
+                st.resultSet.use { rs ->
+                    val types = (1..rs.metaData.columnCount).map { rs.metaData.getColumnTypeName(it) }
+                    QueryResult(GoldenComparator.readRows(rs), types)
+                }
+            } else {
+                val count = st.updateCount
+                if (count >= 0) QueryResult(listOf(listOf(count.toString())), listOf("BIGINT"))
+                else QueryResult(emptyList(), emptyList(), noResult = true)
+            }
+        }
+    }
 
     /**
      * Labelled query (`result_helper.cpp:86-87, 250-263`): upstream switches to hash comparison —
@@ -422,14 +431,17 @@ class ReplayDriver(
      * any golden rows written under the query are IGNORED (only an explicit
      * `N values hashing to …` golden is still checked, `:264-269`).
      */
-    private fun labeledOutcome(record: SltQuery, label: String, actual: List<List<String?>>): RecordOutcome {
-        val hash = GoldenComparator.resultHash(record, actual)
-        val stored = labelResults.putIfAbsent(label, hash)
-        if (stored != null && stored != hash) {
-            return RecordOutcome.Fail(record, "labeled result '$label' diverged from first occurrence: $stored vs $hash")
+    private fun labeledOutcome(record: SltQuery, label: String, actual: QueryResult): RecordOutcome {
+        val hash = GoldenComparator.resultHash(record, actual.rows)
+        val stored = labelResults.putIfAbsent(label, LabeledResult(hash, actual.types.size))
+        if (stored != null && stored.columns != actual.types.size) {
+            return RecordOutcome.Fail(record, "labeled result '$label' column count changed: ${stored.columns} vs ${actual.types.size}")
+        }
+        if (stored != null && stored.hash != hash) {
+            return RecordOutcome.Fail(record, "labeled result '$label' diverged from first occurrence: ${stored.hash} vs $hash")
         }
         if (!GoldenComparator.isHashGolden(record)) return RecordOutcome.Pass(record)
-        return when (val cmp = GoldenComparator.compare(record, actual)) {
+        return when (val cmp = GoldenComparator.compare(record, actual.rows, actual.types)) {
             is GoldenComparator.Comparison.Match -> RecordOutcome.Pass(record)
             is GoldenComparator.Comparison.Mismatch -> RecordOutcome.Fail(record, cmp.detail)
             is GoldenComparator.Comparison.Unsupported -> RecordOutcome.Skip(record, cmp.reason)
@@ -440,18 +452,22 @@ class ReplayDriver(
         record: SltQuery,
         oracle: DuckDbOracle,
         bindings: Map<String, String>,
-        actual: List<List<String?>>,
+        actual: QueryResult,
     ): RecordOutcome {
         val effective =
             try {
-                resolveExpected(record, oracle, bindings, actual)
+                resolveExpected(record, oracle, bindings, actual.rows)
             } catch (e: DuckDbOracle.GoldenFileMissing) {
                 // An environment gap (e.g. the `duckdb` submodule the tpch answers live in), not a mismatch.
                 return RecordOutcome.Skip(record, e.message ?: "golden file missing")
             } catch (e: SQLException) {
                 return RecordOutcome.Fail(record, "could not read golden CSV: ${firstLine(e)}")
             }
-        return when (val cmp = GoldenComparator.compare(effective, actual)) {
+        if (actual.noResult && effective.expected.isEmpty()) return RecordOutcome.Pass(record)
+        // No native schema is invented for JDBC's NOTHING return. Only an empty expectation
+        // (or its zero-value hash) may accept it; empty SELECTs always take typed comparison.
+        val comparable = if (actual.noResult) effective.copy(types = "") else effective
+        return when (val cmp = GoldenComparator.compare(comparable, actual.rows, actual.types)) {
             is GoldenComparator.Comparison.Match -> RecordOutcome.Pass(record)
             is GoldenComparator.Comparison.Mismatch -> RecordOutcome.Fail(record, cmp.detail)
             is GoldenComparator.Comparison.Unsupported -> RecordOutcome.Skip(record, cmp.reason)
