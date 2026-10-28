@@ -57,5 +57,9 @@ legacy behavior now assert the documented 0.13 refusal.
 This assessment does not replace coordinated qualification when consumers adopt
 a new catalog artifact; their accepted bundle remains separate. Source/binary/JSON
 shapes and the Java 17 runtime floor are preserved. No 1.1 write support is enabled.
-The ordinary rewrite API's existing concurrent native inlined-delete limitation
-remains documented on that API; this change does not expand its conflict coverage.
+Ordinary rewrites also reject native inlined deletions on a selected source that
+committed after the supplied planning snapshot, before registering output. The lazy
+delete table is rechecked on each attempt with bounded queries; unrelated sources
+and deletions already materialized at the planning snapshot do not conflict. Unknown
+owner/snapshot identities reject. This closes the separately reported stale-rewrite
+boundary without changing the historical/embedded-lineage obligations above.

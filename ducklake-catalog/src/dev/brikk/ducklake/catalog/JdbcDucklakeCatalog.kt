@@ -5285,6 +5285,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         executeWriteTransaction("rewrite data files for table $tableId", registersFiles = true) { tx ->
             assertNoNewerDeleteOnRewriteSources(tx, sourceDataFileIds, readSnapshotId)
+            val inlined = "ducklake_inlined_delete_$tableId"
+            if (dynamicTableExists(tx.dsl(), inlined)) {
+                RewriteInlinedDeleteGuard.check(tx.dsl(), metadata, inlined, sourceDataFileIds, readSnapshotId)
+            }
             val retired = sumActiveSourceStats(tx, tableId, sourceDataFileIds)
 
             // Register the merged file(s): begin = newSnapshotId, ordinary (no partial_max), with

@@ -899,10 +899,11 @@ interface DucklakeCatalog : AutoCloseable {
      * adds a delete file to a source **without** end-snapshotting the data file, so the active-file
      * check alone would NOT catch it — the merged file (built before that delete) would resurrect
      * the deleted rows. We therefore additionally abort non-retryably if any delete file referencing
-     * a source has `begin_snapshot > readSnapshotId` (a deletion newer than the caller's read). v1
-     * limitation: a concurrent DuckDB-written *inlined* delete (dynamic `ducklake_inlined_delete_*`
-     * table) on a source is not covered by this guard (the connector never writes inlined deletes;
-     * same rarity class as the gated partial-puffin deletes).
+     * a source has `begin_snapshot > readSnapshotId` (or a newer `partial_max`), or a native
+     * *inlined* file deletion on a source has `begin_snapshot > readSnapshotId`. The lazy dynamic
+     * delete table is checked in bounded queries before mutation on every attempt. Unknown owner/
+     * snapshot identities reject rather than claim the output is safe. Deletions already included
+     * in the planning snapshot remain supported; the caller must apply them to the output.
      *
      * No-op if [sourceDataFileIds] or [fragments] is empty.
      */
