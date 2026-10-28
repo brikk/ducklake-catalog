@@ -1,8 +1,12 @@
 package dev.brikk.ducklake.corpus
 
 import org.duckdb.DuckDBConnection
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
@@ -22,13 +26,15 @@ import java.util.UUID
  *    `~/.duckdb` afterwards).
  */
 class DuckDbOracle(
+    /** Existing parent for a fresh owned child; the supplied directory is never deleted on close. */
     testDirRoot: Path? = null,
     /** The pinned ducklake repo root; corpus SQL references test data as repo-relative `data/...` paths. */
     private val repoRoot: Path? = null,
 ) : AutoCloseable {
 
     val testDir: Path =
-        (testDirRoot ?: Files.createTempDirectory("corpus-replay")).toAbsolutePath()
+        (if (testDirRoot == null) Files.createTempDirectory("corpus-replay")
+        else Files.createTempDirectory(testDirRoot, "corpus-replay-")).toAbsolutePath()
 
     private val root: DuckDBConnection =
         DriverManager.getConnection("jdbc:duckdb:").unwrap(DuckDBConnection::class.java)
@@ -156,7 +162,20 @@ class DuckDbOracle(
         runCatching { connectionTemplate.close() }
         runCatching { root.close() }
         runCatching {
-            testDir.toFile().deleteRecursively()
+            // walkFileTree does not follow symbolic links by default, including a replaced root.
+            // Only the child allocated by this instance is owned; never fall back to its parent.
+            Files.walkFileTree(testDir, object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    Files.delete(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                    if (exc != null) throw exc
+                    Files.delete(dir)
+                    return FileVisitResult.CONTINUE
+                }
+            })
         }
     }
 }

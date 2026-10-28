@@ -115,6 +115,16 @@ identity-only pages.
 source schema, and empty payload projections preserve CDC identity. The final-1.1
 CDC tier retains its separate qualified initial-default behavior.
 
+## Replay temporary-directory ownership
+
+In 0.13, `DuckDbOracle(testDirRoot = parent)` creates a fresh owned child under the
+existing parent. Use `oracle.testDir` for the actual per-oracle directory; it is
+not the supplied parent. Closing removes only that child without following file
+or directory symlinks, including a child root replaced with a symlink. Parent
+contents and symlink targets remain unowned. The no-argument constructor still
+creates and owns a temporary directory. Constructor descriptors are unchanged;
+the old behavior of deleting a supplied parent is intentionally not retained.
+
 ## DuckDB 2.0 / DuckLake 1.1
 
 The [conservative final-1.1 reader](READING-1.1.md) requires an owned read session
