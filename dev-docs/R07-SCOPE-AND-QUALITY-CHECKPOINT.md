@@ -1,6 +1,6 @@
 # 1.1 scope and code-quality checkpoint
 
-**Read milestone closed October 25; C12 verified/closed and C13 safeguards verified.** This is the current status and next-work
+**Read milestone closed October 25; C22 contract and C24 initialization corrections verified.** This is the current status and next-work
 list. The original requirements remain in [R01–R07 / W01–W06](TODO-DUCKLAKE-1.1-SUPPORT.md).
 Historical reports are evidence, not additional active queues.
 
@@ -389,7 +389,76 @@ C13's snapshotless-mutation finding is closed through explicit refusal and the
 documented migration to existing APIs. The ordinary rewrite API's concurrent
 native inlined-delete limitation remains separate; no broader writer or 1.1 write
 acceptance is implied. Connector artifacts and their immutable qualification bundle
-remain independently versioned. No further correctness batch was started.
+remain independently versioned. The subsequent C22/C24 batch is recorded below.
+
+### C22 path-namespace contract correction
+
+The owner authorized current-code reproduction of C22 and C24 after `3fe5e5f`.
+C22's raw list still combines table-relative retained files with catalog-root-relative
+scheduled files. The new five-route relative-schedule regression demonstrates the
+old documented resolution duplicating `schema/table/`, while bounded retained-file
+pages and age-eligible queue batches retain their distinct bases. The separate
+deprecation assertion failed on the original code.
+
+The chosen original-review closure option is deprecation and an accurate contract,
+not an incompatible normalization of the returned paths. Both JVM owners now warn
+that `listReferencedFilePaths` is unsafe for orphan detection. Its descriptor,
+DTO shape and raw results stay unchanged. The catalog-wide compatibility listing's
+namespace separation remains tested, including a relative scheduled path, but its
+documentation no longer promises an unqualified safe orphan sweep.
+
+Source audits of clean Trino `3385429` and Doris `4efd9bc` find no production orphan
+caller of the deprecated API: both use catalog-wide references and resolve queue
+paths against the root separately. Trino queued cleanup already uses bounded
+candidate/reference APIs. Doris queued cleanup and both orphan implementations
+still use unbounded compatibility listings. That **bounded-maintenance adoption
+remains open**, separately from C22's corrected namespace contract. An age-eligible
+scheduled batch is not all queued ownership and cannot substitute for a full orphan
+known set. No new bulk API or sibling edit was made; no consumer artifact was adopted.
+See [the exact namespace and migration limits](../docs/FILE-REFERENCE-NAMESPACES.md).
+
+### C24 initialization-boundary correction
+
+An isolated detached `3fe5e5f` checkout, with identical regression sources and no
+production edits, reproduces the inconsistent boundary: **57 of 67 tests fail**,
+while the ten missing-column negative controls pass. CREATE exposes generic
+`DucklakeException`, file preflight exposes raw `DataAccessException`, and empty
+snapshot reads can return zero. jOOQ's primitive `long.class` conversion turns
+aggregate SQL NULL into zero, so the previous nullable Kotlin local did not actually
+distinguish an empty catalog from valid snapshot 0.
+
+The shared latest-snapshot query now requests boxed `Long`, preserving SQL NULL.
+Snapshot acquisition inside each write attempt and version/encryption preflight
+queries use the existing narrowly classified initialization guard. File preflight
+also requires a snapshot before accepting empty fragment lists. Missing metadata
+tables and an empty snapshot table therefore report
+`DucklakeCatalogNotInitializedException` with the same redacted bootstrap guidance.
+No metadata/bootstrap DDL is performed. The outer planning guard still includes
+context/layout validation; unrelated missing columns are not initialization errors.
+
+The five-route tests cover CREATE SCHEMA/TABLE, INSERT/add-files, empty payloads,
+missing snapshot/metadata tables, and recovery on the same instance after restoring
+the snapshot. Bare local databases and missing-column negative controls are included.
+Initialization checks do not change legacy native-Quack ATTACH/bootstrap, writable
+version/encryption guards, read-session rejection or COMMIT outcome classification.
+
+**Verification complete:** 226 focused tests and lint pass. The forced full check
+passes **1,196 maintained tests** (1,047 catalog / 51 SLT / 98 replay), **86 separate
+direct-Java tests**, and **17,602 corpus records**. Zero JUnit failures/errors/skips;
+the existing 100 file / 12 record corpus exclusions are unchanged. Lint, frozen
+compatibility/wire controls and Java17 checks pass (7,840 classes / 17 artifacts).
+Full run: 37m35s, once on final production/test code, using the same pinned inputs
+and full-check command recorded above. Source hashes were checked against that run.
+Evidence: `/tmp/opencode/catalog-c22-c24-focused-final{.log,-xml/}`,
+`catalog-c22-c24-full{.log,-xml/}`, `catalog-c22-c24-source-hashes.json` and
+`catalog-c24-baseline-writes-red{.log,-xml/}`, all under `/tmp/opencode/`.
+Failed exploratory/build invocations are not passing verification.
+
+C22's original deprecation/contract option and C24's initialization finding are
+closed within these scopes. Bounded consumer-maintenance adoption remains open as
+described above; no further batch was started. The accepted connector bundle
+remains `6730bb8`; no push, publication, deployment or 1.1 writes are authorized by
+this correction.
 
 ### Accepted October 25 integration baseline
 
@@ -563,7 +632,8 @@ finishing the current limited reads; no permanent compatibility-shim project fol
 | C10 namespaces / C18 partition payloads / C23 diagnostic URLs | Fixed and fully verified in the October 26 local-correctness batch above, alongside view-name matching and MySQL view/tag target quoting |
 | C12 lineage | Reconciled to existing `0b6c31b` fix and closed with actual multi-output partitioned rewrite verification above |
 | C13 legacy materialization boundary | Fixed and verified above: snapshotless mutation APIs retain linking signatures but explicitly reject in 0.13; existing snapshot-aware replacements and owned caller usage documented |
-| C22 paths | R05 ownership evidence exists; broader legacy path-namespace/caller findings remain open |
+| C22 paths | Original deprecation/contract option verified and closed above; known production orphan callers already use separated namespaces. Bounded-maintenance adoption remains open |
+| C24 initialization | CREATE/file-preflight and empty-snapshot correction fully verified and closed above, with boxed NULL preservation and five-route recovery controls |
 | C11 nested removals / C19 sorted renames | Fixed and fully verified October 27; structural admission and versioned parsed sort-reference updates with explicit unsupported-expression refusals |
 | C06 MySQL implicit-DDL atomicity / C17 inline DDL rendering | Safe-refusal fix verified October 27: affected operations reject before metadata mutation; full inline evolution still requires a preparation/publication protocol and qualified backend rendering |
 | Remaining C/H/B/R/N/Q and UF backlog | Retained in [BACKLOG](BACKLOG.md) and [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md); not a completed whole-project audit |

@@ -110,7 +110,10 @@ data class DucklakeDataFile(
 
 /**
  * A raw storage-path reference held by the catalog (relative or absolute per [pathIsRelative]).
- * Used by orphan-file detection to build the "known set" of paths the catalog owns for a table.
+ * Its containing API defines the base directory; this value has no namespace discriminator.
+ * In [DucklakeReferencedFiles.scheduledFiles], relative paths use the catalog root. The deprecated
+ * [DucklakeCatalog.listReferencedFilePaths] mixes catalog-root and table-relative references and
+ * cannot safely serve as an orphan-detection known set.
  */
 data class DucklakeFilePathRef(
     val path: String,

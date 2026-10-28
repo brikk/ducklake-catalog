@@ -141,15 +141,17 @@ interface DucklakeCatalog : AutoCloseable {
     fun hasPartialDeleteFilesRequiringSnapshotFilter(tableId: Long, snapshotId: Long): Boolean
 
     /**
-     * Every storage path the catalog references for this table, regardless of snapshot liveness:
-     * all `ducklake_data_file` and `ducklake_delete_file` rows for the table (including
-     * end-snapshotted ones — those physical files are still owned by the catalog until cleanup),
-     * plus rows already in `ducklake_files_scheduled_for_deletion`. This is the "known set" for
-     * orphan-file detection ([remove_orphan_files]): a file under the table's data path that is
-     * NOT in this set has no catalog row at all and is a candidate orphan. Paths are returned raw
-     * (relative or absolute, per `path_is_relative`); the caller resolves them against the table
-     * data path.
+     * Unbounded compatibility listing with mixed namespaces, NOT an orphan-detection known set.
+     * Data/delete rows for this table include historical rows; their relative paths resolve against
+     * the table directory. ALL scheduled rows are also included, but their relative paths resolve
+     * against the catalog-global `data_path`. Entries carry no discriminator for these namespaces,
+     * so callers cannot safely resolve this list against a common base. Raw results are retained
+     * for compatibility only. See docs/FILE-REFERENCE-NAMESPACES.md.
+     *
+     * Bounded maintenance uses [listRetainedFileReferencePage] and [listScheduledFileBatch]. The
+     * latter lists age-eligible cleanup candidates, not all scheduled ownership for orphan sweeps.
      */
+    @Deprecated("Mixed path namespaces; unsafe for orphan detection. Use bounded retained-reference pages and scheduled cleanup batches for maintenance")
     fun listReferencedFilePaths(tableId: Long): List<DucklakeFilePathRef>
 
     /**
@@ -157,7 +159,8 @@ interface DucklakeCatalog : AutoCloseable {
      * liveness. Unlike [listReferencedFilePaths], this includes dropped-but-unexpired tables and
      * carries each file's full schema-path → table-path → file-path hierarchy, and keeps scheduled
      * paths in their catalog-root namespace instead of mixing them with paths relative to a table
-     * directory. This is the safe known set for catalog-wide orphan sweeps.
+     * directory. Namespace-correct, but unbounded: this compatibility API does not establish
+     * bounded or concurrency-safe orphan collection. See docs/FILE-REFERENCE-NAMESPACES.md.
      */
     fun listAllReferencedFiles(): DucklakeReferencedFiles
 

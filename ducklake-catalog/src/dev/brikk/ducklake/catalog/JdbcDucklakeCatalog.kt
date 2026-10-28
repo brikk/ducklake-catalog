@@ -344,7 +344,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /**
-     * Runs a catalog read and, if it fails because the `ducklake_*` metadata schema does not
+     * Runs a catalog initialization read and, if it fails because the `ducklake_*` metadata schema does not
      * exist (a reachable-but-un-bootstrapped catalog), rethrows a clear
      * [DucklakeCatalogNotInitializedException] instead of the opaque low-level SQL error. Any
      * other failure propagates unchanged.
@@ -356,16 +356,27 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         catch (e: DataAccessException) {
             val sqlException = findSqlException(e)
             if (sqlException != null && isMissingCatalogSchema(sqlException)) {
-                throw DucklakeCatalogNotInitializedException(
-                    "DuckLake catalog at \"$catalogDatabaseUrl\" has no metadata schema " +
-                        "(the ducklake_* tables are missing). Initialize the catalog once before " +
-                        "using it — e.g. attach it from DuckDB: INSTALL ducklake; LOAD ducklake; " +
-                        "ATTACH 'ducklake:<backend-connection>' AS lake (DATA_PATH '<data-path>'); " +
-                        "DETACH lake; — then retry.",
-                    e)
+                throw catalogNotInitialized("has no metadata schema (the ducklake_* tables are missing)", e)
             }
             throw e
         }
+    }
+
+    private fun catalogNotInitialized(detail: String, cause: Throwable? = null) =
+        DucklakeCatalogNotInitializedException(
+            "DuckLake catalog at \"$catalogDatabaseUrl\" $detail. Initialize the catalog once before " +
+                "using it — e.g. attach it from DuckDB: INSTALL ducklake; LOAD ducklake; " +
+                "ATTACH 'ducklake:<backend-connection>' AS lake (DATA_PATH '<data-path>'); " +
+                "DETACH lake; — then retry.",
+            cause,
+        )
+
+    private fun readLatestSnapshotId(ctx: DSLContext): Long = guardInitialized {
+        val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
+        // A primitive long.class conversion turns SQL NULL into zero in jOOQ. Snapshot 0 is valid;
+        // preserve the boxed NULL so an empty catalog cannot masquerade as initialized.
+        val maxId: Long? = ctx.select(DSL.max(snap.SNAPSHOT_ID)).from(snap).fetchOne(0, Long::class.javaObjectType)
+        maxId ?: throw catalogNotInitialized("has no initialized snapshot: ducklake_snapshot has no rows")
     }
 
     /**
@@ -391,16 +402,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override val currentSnapshotId: Long
-        get() = guardInitialized {
-            val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
-            val maxId: Long? = dsl.select(DSL.max(snap.SNAPSHOT_ID))
-                .from(snap)
-                .fetchOne(0, Long::class.java)
-            maxId ?: throw DucklakeCatalogNotInitializedException(
-                    "ducklake_snapshot has no rows: the DuckLake catalog at \"$catalogDatabaseUrl\" was never initialized",
-                    null,
-                )
-        }
+        get() = guardInitialized { readLatestSnapshotId(dsl) }
 
     override fun getSnapshot(snapshotId: Long): DucklakeSnapshot? = guardInitialized {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
@@ -1154,6 +1156,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .fetch().isNotEmpty
     }
 
+    @Deprecated("Mixed path namespaces; unsafe for orphan detection. Use bounded retained-reference pages and scheduled cleanup batches for maintenance")
     override fun listReferencedFilePaths(tableId: Long): List<DucklakeFilePathRef> {
         val refs = mutableListOf<DucklakeFilePathRef>()
         val collect: (String?, Boolean?) -> Unit = { path, isRelative ->
@@ -1170,8 +1173,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         dsl.select(delf.PATH, delf.PATH_IS_RELATIVE).from(delf).where(delf.TABLE_ID.eq(tableId))
             .fetch { collect(it.value1(), it.value2()) }
         // Files already scheduled for deletion (the two-phase pipeline owns these). The schedule
-        // table has no table_id, so we include all of them; cross-table paths can't collide with a
-        // single table's data-path listing anyway.
+        // table has no table_id, so compatibility includes all of them. Relative schedule paths
+        // are catalog-root-relative, NOT table-relative; this mixed list is unsafe for orphan GC.
         val sched = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION.`as`("sched")
         dsl.select(sched.PATH, sched.PATH_IS_RELATIVE).from(sched)
             .fetch { collect(it.value1(), it.value2()) }
@@ -2923,7 +2926,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /** Fresh per attempt: another engine can migrate while this instance remains attached. */
-    private fun requireCatalogWritesSupported(ctx: DSLContext, registersFiles: Boolean = false) {
+    private fun requireCatalogWritesSupported(ctx: DSLContext, registersFiles: Boolean = false) = guardInitialized {
         val version = lockedGlobalMetadataValue(ctx, "version")
         if (version !in DucklakeSpecVersions.WRITABLE) {
             throw DucklakeUnsupportedCatalogVersionException(catalogDatabaseUrl, version)
@@ -2936,6 +2939,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     private fun requireFileWritesSupported() {
         // Reject before borrowing a pooled connection: a one-connection read session owns it.
         requireNotInReadSession("register catalog files")
+        readLatestSnapshotId(pooledDsl)
         requireCatalogWritesSupported(pooledDsl, registersFiles = true)
     }
 
@@ -3186,13 +3190,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     // this is a same-table multi-scan (`WHERE id = (SELECT max(id) FROM
                     // same_table)`), which the Quack RPC optimizer rejects on attached
                     // metadata catalogs. On PG / local DuckDB the helper is a pass-through.
-                    val snapshotRow: DucklakeSnapshotRecord? = metadata.fetchOne(
-                        txDsl,
-                        txDsl.selectFrom(snap)
-                            .where(snap.SNAPSHOT_ID.eq(DSL.select(DSL.max(snap.SNAPSHOT_ID)).from(snap))),
-                    )
-                    if (snapshotRow == null) {
-                        throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
+                    val snapshotRow: DucklakeSnapshotRecord = guardInitialized {
+                        metadata.fetchOne(
+                            txDsl,
+                            txDsl.selectFrom(snap)
+                                .where(snap.SNAPSHOT_ID.eq(DSL.select(DSL.max(snap.SNAPSHOT_ID)).from(snap))),
+                        ) ?: throw catalogNotInitialized("has no initialized snapshot: ducklake_snapshot has no rows")
                     }
                     val currentSnapshotId: Long = snapshotRow.snapshotId
                     baseSnapshotId = currentSnapshotId
@@ -5921,14 +5924,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                         " the first transaction's deletions, so this conflict is not retried.",
                 )
             }
-        }
-
-        private fun readLatestSnapshotId(ctx: DSLContext): Long {
-            val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
-            val maxId: Long? = ctx.select(DSL.max(snap.SNAPSHOT_ID))
-                .from(snap)
-                .fetchOne(0, Long::class.java)
-            return maxId ?: throw DucklakeCatalogCorruptionException("ducklake_snapshot has no rows")
         }
 
         /** A stat bound as stored: NULL when it contains a NUL byte (upstream `StatsToString`). */

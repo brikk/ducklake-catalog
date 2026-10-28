@@ -40,6 +40,15 @@ import java.util.function.Supplier
 
 /** The bounded-cleanup contract runs on every backend, including both native and Java Quack routes. */
 class TestJdbcDucklakeCatalogBoundedCleanup {
+    @Test
+    fun mixedNamespaceLegacyApiIsExplicitlyDeprecatedForBothJvmOwners() {
+        for (owner in listOf(DucklakeCatalog::class.java, JdbcDucklakeCatalog::class.java)) {
+            val method = owner.getMethod("listReferencedFilePaths", java.lang.Long.TYPE)
+            assertThat(method.isAnnotationPresent(Deprecated::class.java))
+                .describedAs("%s must warn callers away from the ambiguous orphan known set", owner.simpleName).isTrue()
+        }
+    }
+
     @Nested
     inner class PostgreSql : Contract(Backend.POSTGRES)
 
@@ -247,6 +256,38 @@ class TestJdbcDucklakeCatalogBoundedCleanup {
                 assertThat(catalog.listRetainedFileReferencePage(kind, Long.MAX_VALUE, 1)).isEmpty()
                 assertThat(catalog.listRetainedFileReferencePage(kind, 0, 1).single().fileId).isEqualTo(3L)
             }
+        }
+
+        @Suppress("DEPRECATION")
+        @Test
+        fun relativeScheduledPathsMustNotBeResolvedAgainstTheTableDirectory() {
+            file(DucklakeFileKind.DATA, 1, path = "retained.parquet")
+            file(DucklakeFileKind.DELETE, 2, path = "retained-delete.parquet")
+            enqueue(3, "schema/table/scheduled.parquet")
+            enqueue(4, "/external/scheduled.parquet", relative = false)
+            val root = "/warehouse/"
+            val tableRoot = root + "schema/table/"
+            fun resolve(path: String, relative: Boolean, parent: String) = if (relative) parent + path else path
+
+            // Preserve the old raw result/descriptor, but demonstrate why its old contract is unsafe.
+            val legacy = catalog.listReferencedFilePaths(20)
+            assertThat(legacy.map { resolve(it.path, it.pathIsRelative, tableRoot) })
+                .contains(tableRoot + "schema/table/scheduled.parquet")
+                .doesNotContain(root + "schema/table/scheduled.parquet")
+
+            // The bounded APIs distinguish table hierarchy from catalog-root queue identities.
+            val retained = DucklakeFileKind.entries.flatMap { kind ->
+                catalog.listRetainedFileReferencePage(kind, null, 1).map { it.pathRef }
+            }
+            val known = retained.map { ref ->
+                val schema = resolve(ref.schemaPath!!, ref.schemaPathIsRelative!!, root)
+                val table = resolve(ref.tablePath!!, ref.tablePathIsRelative!!, schema)
+                resolve(ref.path, ref.pathIsRelative, table)
+            } + catalog.listScheduledFileBatch(cutoff, 2).map { resolve(it.path, it.pathIsRelative, root) }
+            assertThat(known).containsExactlyInAnyOrder(
+                tableRoot + "retained.parquet", tableRoot + "retained-delete.parquet",
+                root + "schema/table/scheduled.parquet", "/external/scheduled.parquet",
+            )
         }
 
         @Test

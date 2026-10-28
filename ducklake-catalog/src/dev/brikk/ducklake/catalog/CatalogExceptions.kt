@@ -44,8 +44,9 @@ open class DucklakePostCommitException(
 
 /**
  * Thrown when the catalog database is reachable but its DuckLake metadata schema
- * (the `ducklake_*` tables, e.g. `ducklake_snapshot`) has not been created yet — i.e.
- * the catalog was never bootstrapped. The connector never issues the schema DDL itself;
+ * (the `ducklake_*` tables, e.g. `ducklake_snapshot`) is missing, or its snapshot table
+ * is empty. Read planning, CREATE and file-registration initialization checks share
+ * this classification. The connector never issues the schema DDL itself;
  * a fresh catalog must be initialized once (e.g. by attaching it from DuckDB) before use.
  * This turns the otherwise-opaque low-level "table does not exist" SQL error into a clear,
  * actionable message. Engine adapters translate it into their own user-facing error type.

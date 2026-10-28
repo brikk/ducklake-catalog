@@ -19,16 +19,21 @@ For authorized upstream work and the next RC checkpoint, use the separate
   failures remain gates; UF-05–09 are not implemented. Keep 1.1 writes disabled.
 - **Consumer adoption:** preserve COMMIT classifications and retain uncertain output;
   connector agents must verify cleanup/error mapping and their CDC/pruning paths.
+- **Bounded maintenance adoption:** neither known connector uses C22's ambiguous
+  per-table listing for orphan detection. Both orphan implementations still use
+  unbounded catalog-wide references; Doris queued cleanup also uses an unbounded
+  listing. Trino queued cleanup uses bounded candidates/reference pages. Keep this
+  follow-on separate from the C22 contract repair; an age-filtered queue batch is
+  not all queued ownership for an orphan sweep. See
+  [namespace and migration limits](../docs/FILE-REFERENCE-NAMESPACES.md).
 
-## Catalog candidates still requiring current-code verification
+## Current catalog checkpoint
 
-| ID | Work / closure criterion |
-|---|---|
-| C22 | Legacy reference API path namespaces and downstream adoption of bounded replacements. |
-| C24 | Consistent typed initialization errors for CREATE and file writes. |
-
-Use the corresponding C heading in the archived review for the original reproduction
-and expected external behavior; these candidates are not all re-proven at HEAD.
+The C22/C24 current-code reproduction and scoped corrections are complete; see
+their completed entries below. Bounded consumer-maintenance adoption remains open
+above. The broader harness/build/residual queues below have not been re-audited or
+closed by this batch. The archived review retains each original finding and its
+expected external behavior.
 
 ## Harness, parser and delivery
 
@@ -61,6 +66,22 @@ watermark/reclamation remains a design boundary. Do not silently mark the rest f
 
 ## Completed / superseded work
 
+- **C24 — initialization errors:** CREATE and file preflight now share the typed
+  initialization boundary with snapshot reads. Boxed SQL NULL is preserved instead
+  of becoming valid snapshot ID 0; empty snapshot tables and missing metadata report
+  `DucklakeCatalogNotInitializedException` before mutation, including empty file
+  payloads. Five-route rejection/recovery tests and unrelated-column negative
+  controls pass. Full 1,196 maintained + 86 direct-Java / 17,602-record checks pass;
+  existing corpus exclusions are unchanged.
+  [Scope and evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#c24-initialization-boundary-correction).
+- **C22 — namespace contract:** the original deprecation/contract closure option is
+  verified. Both JVM owners deprecate the ambiguous per-table listing for orphan
+  detection; raw results and signatures remain compatible. Relative scheduled-path
+  tests cover all five routes. Neither known production orphan caller uses this API;
+  their separate catalog-root resolution is confirmed by source audit. This does
+  **not** close the bounded-maintenance adoption follow-on above or qualify a new
+  connector bundle. [Contract](../docs/FILE-REFERENCE-NAMESPACES.md) and
+  [evidence](R07-SCOPE-AND-QUALITY-CHECKPOINT.md#c22-path-namespace-contract-correction).
 - **C13 — materialization snapshot boundary:** the five snapshotless flush/DELETE/
   MERGE forms now refuse before mutation in 0.13, retaining their JVM signatures.
   Explicit planning-snapshot APIs preserve the read-to-commit conflict window.

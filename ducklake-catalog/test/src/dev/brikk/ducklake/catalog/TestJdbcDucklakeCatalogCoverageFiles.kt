@@ -336,6 +336,7 @@ class TestJdbcDucklakeCatalogCoverageFiles {
     }
 
     @Test
+    @Suppress("DEPRECATION")
     fun listReferencedFilePathsIsTheUnionOfEveryCatalogRowForTheTable() {
         val h = ref()
         val refs = catalog.listReferencedFilePaths(h.tableId)
@@ -362,6 +363,8 @@ class TestJdbcDucklakeCatalogCoverageFiles {
     @Test
     fun allReferencedFilesKeepsTableAndCatalogRootNamespacesSeparate() {
         val h = ref()
+        pgExec("INSERT INTO ducklake_files_scheduled_for_deletion (data_file_id, path, path_is_relative, schedule_start) " +
+            "VALUES (9000000, 'main/ref/relative-scheduled.parquet', true, now())")
         val table = table("ref")
         val all = catalog.listAllReferencedFiles()
         val tableRefs = all.tableFiles.filter { it.tableId == h.tableId }
@@ -384,6 +387,7 @@ class TestJdbcDucklakeCatalogCoverageFiles {
         assertThat(all.scheduledFiles.map { it.path })
             .`as`("scheduled paths are returned separately for resolution against global data_path")
             .containsExactlyInAnyOrderElementsOf(expectedScheduled)
+        assertThat(all.scheduledFiles).contains(DucklakeFilePathRef("main/ref/relative-scheduled.parquet", true))
     }
 
     @Test

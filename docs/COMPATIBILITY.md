@@ -36,6 +36,15 @@ other read/write lakes with native DuckDB 2.0, pass
 default for new lakes is 1.1. Full per-file encryption support is not provided; file
 registration into encrypted catalogs is rejected.
 
+When an initialization query finds missing DuckLake metadata tables or an empty
+`ducklake_snapshot`, read planning, CREATE and file registration report
+`DucklakeCatalogNotInitializedException` with bootstrap guidance. File preflight
+also checks for a snapshot before accepting empty fragment lists. No metadata is
+initialized by these guards. Missing columns, permission/connection failures and
+unsupported catalog versions are not reclassified as initialization failures;
+existing read-session write rejection and uncertain-COMMIT classifications remain
+unchanged. Native Quack's legacy ATTACH/bootstrap remains a separate boundary.
+
 ## Limits and safe operation
 
 - A backend smoke test does not establish every operation/type combination.
@@ -54,6 +63,9 @@ registration into encrypted catalogs is rejected.
   are not ownership leases or protection against physical deletion after planning.
   Enforce traversal budgets, age/reference checks and writer coordination before
   deleting files.
+- Do not use the deprecated per-table `listReferencedFilePaths` for orphan detection:
+  it mixes table-relative and catalog-root-relative paths without a discriminator.
+  See [file-reference namespaces and bounded-maintenance limits](FILE-REFERENCE-NAMESPACES.md).
 - Read the [COMMIT outcome contract](COMMIT-OUTCOME-CONTRACT.md) before adopting
   0.13.0-SNAPSHOT. An uncertain commit is not permission to retry or delete output.
 
