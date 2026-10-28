@@ -27,19 +27,20 @@ Exact gate names, original failure counts and upgrade constraints are in
 [the current checkpoint](R07-SCOPE-AND-QUALITY-CHECKPOINT.md). Existing strict native
 failures remain gates; completed local investigations do not waive them.
 
-## Pending candidates — reproduce before fixing
+## Triaged engine qualification and deferred features
 
-These are not confirmed JVM defects. Native/connector-only failures become strict
-gates and handoffs; connector agents own Trino/Doris code. The artifact checkpoint
-takes precedence over this optional queue. UF-05–09 have not started.
+All formerly listed candidates were assessed in the
+[October 28 triage](archive/TRIAGE-2026-10-28.md). The remaining items below are
+not unexplained JVM defects or automatic porting assignments. The artifact
+checkpoint takes precedence; connector agents own their physical producers/readers.
+Resolved or deliberately safe non-bug dispositions are retained only in the report.
 
-| ID | Scope | Upstream |
-|---|---|---|
-| UF-05 | Sorted compaction across size rotation/repeated rewrites; independently verify row IDs | [#1634](https://github.com/duckdb/ducklake/pull/1634) |
-| UF-06 | One-sided numeric bounds/null information without inventing missing endpoints; preserve conservative unknown-bound semantics | [#1713](https://github.com/duckdb/ducklake/pull/1713) |
-| UF-07 | Rename+flush/lifecycle and old readers; requires safe MySQL inline preparation/publication rather than implicitly committing DDL | [#1737](https://github.com/duckdb/ducklake/pull/1737), [#1722](https://github.com/duckdb/ducklake/pull/1722), [#1764](https://github.com/duckdb/ducklake/pull/1764) |
-| UF-08 | Unflushable intervals/scalar or nested VARIANT; PG TIME_NS precision; reject or qualify a safe storage path | [#1727](https://github.com/duckdb/ducklake/pull/1727), [#1769](https://github.com/duckdb/ducklake/pull/1769), [#1724](https://github.com/duckdb/ducklake/pull/1724) |
-| UF-09 | MAP/hive field mapping, Parquet annotations and encrypted-import refusal; catalog validation/native gates here | [#1767](https://github.com/duckdb/ducklake/pull/1767), [#1700](https://github.com/duckdb/ducklake/pull/1700), [#1729](https://github.com/duckdb/ducklake/pull/1729), [#1726](https://github.com/duckdb/ducklake/pull/1726) |
+| ID | Classification | Remaining scope | Upstream |
+|---|---|---|---|
+| UF-05 | Engine qualification | Exact sorted size-rotation/repeated-rewrite row-ID case; metadata embedded-lineage/multi-output controls already exist | [#1634](https://github.com/duckdb/ducklake/pull/1634) |
+| UF-07 | Deferred writer capability | Full MySQL inline preparation/publication and old-reader interoperability; keep current safe refusal | [#1737](https://github.com/duckdb/ducklake/pull/1737), [#1722](https://github.com/duckdb/ducklake/pull/1722), [#1764](https://github.com/duckdb/ducklake/pull/1764) |
+| UF-08 | Producer gate / future capability | Native interval persistence is the concrete read R03 failure; finite reader/type admission already exists, broader VARIANT storage is separate feature scope | [#1727](https://github.com/duckdb/ducklake/pull/1727), [#1769](https://github.com/duckdb/ducklake/pull/1769), [#1724](https://github.com/duckdb/ducklake/pull/1724) |
+| UF-09 | Engine import qualification | Physical MAP/hive mapping and Parquet annotation cases; catalog mappings, partition admission and encrypted-write refusal already exist | [#1767](https://github.com/duckdb/ducklake/pull/1767), [#1700](https://github.com/duckdb/ducklake/pull/1700), [#1729](https://github.com/duckdb/ducklake/pull/1729), [#1726](https://github.com/duckdb/ducklake/pull/1726) |
 
 Watch without speculative porting: batched inline commits #1762/#1765, compaction
 lookup SQL #1763, SQLite retry #1753 (not a new JVM backend), and later import/

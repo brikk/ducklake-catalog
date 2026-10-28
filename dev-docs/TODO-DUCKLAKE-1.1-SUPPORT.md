@@ -11,6 +11,13 @@ Maintained pins remain DuckDB 2.0.0 / JDBC 2.0.0.0, signed DuckLake `417a9117f5`
 and Quack `f96420ed46`. Reads remain explicit/default-off; all 1.1 writes remain
 disabled. A completed implementation is not blanket format or production acceptance.
 
+**Classification after triage:** R02/R04 are external-artifact acceptance gates;
+R03 includes a reproduced native producer failure; R07 is remaining engine/rollout
+qualification; M01 is native-backend acceptance; W01–W06 are deferred features.
+These are not eleven confirmed JVM bugs. Current reproduced defects are in
+[the triaged queue](BACKLOG.md); evidence and non-bug dispositions are in
+[the triage report](archive/TRIAGE-2026-10-28.md).
+
 ## Remaining read acceptance
 
 - [ ] **R02 — Inline schema evolution.** Map source/target fields by stable IDs,

@@ -8,6 +8,10 @@ Do not restart completed implementation because broader acceptance remains open.
 Active queues: [review backlog](BACKLOG.md), [upstream follow-ups](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md)
 and [1.1 acceptance/writes](TODO-DUCKLAKE-1.1-SUPPORT.md).
 
+The [October 28 triage](archive/TRIAGE-2026-10-28.md) separates reproduced defects,
+source-confirmed delivery gaps, deferred capabilities, qualification and optional
+hardening. Missing engine/production evidence is not itself proof of a bug.
+
 ## Integration boundary
 
 The accepted limited-read connector bundle remains catalog `6730bb8`, Trino
@@ -15,6 +19,12 @@ The accepted limited-read connector bundle remains catalog `6730bb8`, Trino
 catalog qualification and are pushed, but still need coordinated consumer adoption;
 do not claim those connector artifacts were rebuilt or rerun on the newer catalog.
 Exact accepted artifact hashes and verification scopes are in the archived report.
+
+Current sibling source heads are Trino `fca7277` and Doris `9b44463`. Their October28
+483/484 and API24 released-lane checks did not adopt the newer catalog candidate.
+Doris's successful matching API24 FE/BE/restart qualification used catalog 0.12.0 /
+JDBC1.5.6, not the R07 candidate. Preserve that success without treating it as new
+candidate-lane live-engine evidence.
 
 The [general read contract](../docs/READING-1.1.md),
 [backend routes](../docs/READ-BACKENDS.md), [PostgreSQL tier](../docs/READ-POSTGRES-1.1.md)
@@ -38,9 +48,15 @@ physical objects remain retained; a metadata transaction is not a physical-file 
   before deletion. An age-filtered scheduled batch is not all queued ownership;
   young/undated entries must not disappear from an orphan known set. See
   [namespace and migration limits](../docs/FILE-REFERENCE-NAMESPACES.md).
-- **Trino:** remaining view/tag/comment/internal/global resource accounting and
-  driver/worker cancellation evidence.
-- **Doris:** remaining inline/CDC/snapshot/cancellation hooks and engine evidence.
+- **Trino:** the candidate source/report confirms unpaged view/tag/comment paths
+  and incomplete internal/shared-global accounting; these are capability gaps in
+  the broader requested resource guarantee, not just missing test runs or observed
+  OOMs. Whole-query/cross-node budgets and driver/worker cancellation need defined
+  scope plus qualification beyond the already-accepted per-view controls.
+- **Doris:** the candidate still rejects unsupported inline/mixed-history/CDC
+  cases and lacks qualified production inline/cancellation integration. These are
+  explicit feature/acceptance boundaries; the newer API24 released-lane report
+  does not establish candidate hook adoption or prove API24 itself lacks those hooks.
 - **Shared acceptance:** aggregate pools, retention/leases, genuine 0.4/fleet/route
   coverage, versioned API/packaging/publication and enablement decisions. Decide
   the 0.13 public API and retirement of temporary 0.12 candidate/released compilation
@@ -53,11 +69,15 @@ physical objects remain retained; a metadata transaction is not a physical-file 
 - **Writer safety boundaries:** full MySQL inline evolution requires coordinated
   preparation/publication and qualified type/identifier rendering to replace the
   current refusal. Shared writer watermarks/history reclamation need a safe design.
-  Ordinary rewrites' concurrent native inline-delete limitation remains in the
-  [materialization contract](../docs/MATERIALIZATION-SNAPSHOTS.md).
+  Ordinary rewrites' concurrent native inline-delete limitation is now reproduced
+  as data resurrection (N18); it is a confirmed defect, not merely missing evidence.
+  Review R01 historical type selection during ANALYZE is likewise a reproduced
+  wrong-native-MAX defect. Both are in [the defect queue](BACKLOG.md), separate from
+  the [materialization contract](../docs/MATERIALIZATION-SNAPSHOTS.md)'s completed migration.
 
-Each needs its own bounded assignment. Older H/B/R/N/Q findings remain in
-[BACKLOG.md](BACKLOG.md); prioritize demonstrated reachable defects, not age.
+Each capability/qualification item needs its own bounded assignment. Remaining
+defects and delivery controls have current evidence in [BACKLOG.md](BACKLOG.md);
+resolved and optional items are classified in the archive rather than another bug list.
 
 ## External verification linked to each feature
 

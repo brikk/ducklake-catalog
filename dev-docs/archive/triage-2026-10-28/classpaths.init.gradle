@@ -1,0 +1,15 @@
+// Read-only classpath resolver for the archived probes; it does not run publication tasks.
+gradle.projectsEvaluated {
+    def root = rootProject
+    root.tasks.register('triageClasspaths') {
+        doLast {
+            def output = [:]
+            [':ducklake-catalog', ':ducklake-test-corpus-replay'].each { name ->
+                output[name] = root.project(name).sourceSets.main.runtimeClasspath.files.collect { it.absolutePath }
+            }
+            output[':catalog-fixtures'] = root.project(':ducklake-catalog').sourceSets.testFixtures.runtimeClasspath.files.collect { it.absolutePath }
+            output[':postgres-driver'] = root.project(':ducklake-catalog').configurations.testRuntimeClasspath.files.findAll { it.name.startsWith('postgresql-') }.collect { it.absolutePath }
+            println groovy.json.JsonOutput.toJson(output)
+        }
+    }
+}

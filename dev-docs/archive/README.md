@@ -11,6 +11,8 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reviews and original IDs
 
+- [Remaining-backlog triage](TRIAGE-2026-10-28.md): all 74 H/B/N/R/Q/UF IDs classified
+  against current code, with [executable negative witnesses](triage-2026-10-28/README.md).
 - [Catalog review completion](CATALOG-REVIEW-COMPLETION-2026-10-28.md): C01–C24
   complete through `fb53459`; former backlog closure details, not an active queue.
 - [Catalog and limited-read verification checkpoint](R07-SCOPE-AND-QUALITY-CHECKPOINT-2026-10-28.md):
