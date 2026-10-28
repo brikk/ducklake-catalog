@@ -13,10 +13,10 @@ package dev.brikk.ducklake.corpus
  *    [GoldenComparator.renderNested]. GEOMETRY leaves may be WKT or WKB rendered in that BLOB
  *    dialect: the driver retains the oracle's logical result types and normalizes geometry to
  *    WKT before mirroring, including LIST/ARRAY/MAP/STRUCT containers. Ordinary BLOB leaves are
- *    never treated as geometry, and NULL containers/children remain NULL. The driver maps NULL/empty to
- *    `NULL`/`(empty)` ([GoldenComparator.toGoldenCell]) on both sides, joins
- *    each row's cells, sorts the rows, and compares the two sorted string lists
- *    for exact equality — order-insensitive, text-based, with only the typed geometry normalization and no
+ *    never treated as geometry, and NULL containers/children remain NULL. The driver compares
+ *    multisets of structured nullable rows, preserving column boundaries, SQL NULL, empty text
+ *    and duplicate multiplicity. Golden tokens and row delimiters are not used.
+ *    Equality is order-insensitive and text-based, with only typed geometry normalization and no
  *    numeric tolerance (see `ReplayDriver.mirrorOutcome`). The engine is never
  *    compared against sqllogictest golden text; only the oracle is held to it.
  *  - [accepts] is the dialect gate: return false for SQL the engine cannot or

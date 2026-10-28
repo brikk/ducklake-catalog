@@ -525,9 +525,11 @@ class ReplayDriver(
         if (error != null) {
             return RecordOutcome.Fail(record, "engine '${engine.name}' errored: ${firstLine(error)}")
         }
-        val engineRows = result.getOrThrow().map { row -> row.map(GoldenComparator::toGoldenCell) }
-        val oracleRows = actual.rows.map { row -> row.map(GoldenComparator::toGoldenCell) }
-        return if (engineRows.toSortedComparable() == oracleRows.toSortedComparable()) {
+        val engineRows = result.getOrThrow()
+        val oracleRows = actual.rows
+        // A multiset of structured nullable rows preserves NULL, empty text, cell boundaries and
+        // duplicate counts. Golden tokens and delimiter-based serialization are intentionally absent.
+        return if (engineRows.groupingBy { it }.eachCount() == oracleRows.groupingBy { it }.eachCount()) {
             RecordOutcome.Pass(record)
         } else {
             RecordOutcome.Fail(
@@ -538,9 +540,6 @@ class ReplayDriver(
             )
         }
     }
-
-    private fun List<List<String>>.toSortedComparable(): List<String> =
-        map { it.joinToString("\u0001") }.sorted()
 
     private fun trackTransaction(sql: String, connection: String?) {
         when {
