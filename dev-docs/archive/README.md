@@ -37,6 +37,7 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reproduction and execution reports
 
+- [Quack JDBC 0.10.0 / embedded DuckDB quick scan](UPGRADE-QUACK-JDBC-0.10.0-2026-10-28.md)
 - [Harness integrity repairs: H02, H03 and H04](FIX-HARNESS-INTEGRITY-2026-10-28.md)
 - [Priority repairs: N18, review R01 and H01](FIX-PRIORITY-FINDINGS-2026-10-28.md)
 - [Expired-snapshot conflict history](FIX-expired-snapshot-conflict-history-2026-10-09.md)

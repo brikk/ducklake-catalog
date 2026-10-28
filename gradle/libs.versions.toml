@@ -1,7 +1,7 @@
 [versions]
 kotlin = "2.3.10"
 duckdb = "2.0.0.0"
-quack-jdbc = "0.8.0"
+quack-jdbc = "0.10.0"
 jackson = "2.21.2"
 java-uuid-generator = "5.0.0"
 junit = "5.12.2"

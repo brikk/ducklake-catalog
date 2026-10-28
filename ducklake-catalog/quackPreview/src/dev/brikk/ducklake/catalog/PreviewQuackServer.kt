@@ -72,7 +72,7 @@ internal class PreviewQuackServer(
                 check(server.isAlive) { "Preview server exited; inspect server-$reportLabel.log" }
                 try {
                     connection().use { c ->
-                        assertThat(c.metaData.driverVersion).isEqualTo("0.8.0")
+                        assertThat(c.metaData.driverVersion).isEqualTo("0.10.0")
                         val session = c.javaClass.getMethod("session").invoke(c)
                         assertThat(session.javaClass.getMethod("protocolVersion").invoke(session)).isEqualTo(3L)
                         assertThat(sha256(Path.of(c.javaClass.protectionDomain.codeSource.location.toURI()))).isEqualTo(DRIVER_SHA256)
@@ -82,7 +82,7 @@ internal class PreviewQuackServer(
                     }
                     Files.writeString(reports.resolve("provenance-$reportLabel.txt"),
                         "cli=$cli\ncli_sha256=${sha256(cli)}\ncore=$CORE\nversion=$VERSION\n" +
-                            "ducklake=$DUCKLAKE\nquack=$QUACK\nformat=$format\ndriver=0.8.0\n" +
+                            "ducklake=$DUCKLAKE\nquack=$QUACK\nformat=$format\ndriver=0.10.0\n" +
                             "driver_sha256=$DRIVER_SHA256\nprotocol=3\nunsigned=false\n")
                     ready = true
                     return
@@ -199,7 +199,7 @@ internal class PreviewQuackServer(
         val CORE = if (target == "release") "d54cbbe3df" else "2ec7e8401c"
         val QUACK = if (target == "release") "f96420ed46" else "e7a9be3f8c"
         const val DUCKLAKE = "417a9117f5"
-        private const val DRIVER_SHA256 = "320ccd96e978e1b30ff7ba77791dd0062bc6e72bd6d160e389b9e2c52269ac9d"
+        private const val DRIVER_SHA256 = "8088131ef67723a921b5fe50b22f7ba147485830b81cb78d3354ce6ae73f8342"
 
         fun literal(value: String): String = "'" + value.replace("'", "''") + "'"
 

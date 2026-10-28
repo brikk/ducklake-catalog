@@ -11,7 +11,7 @@ covering every platform or driver build.
 
 | URL | Qualified read mode | Boundaries |
 |---|---|---|
-| `jdbc:quack://host:port` | Direct Java Quack, metadata SQL on the remote DuckDB | Java driver 0.8.0; no DuckDB JDBC required in the reading JVM |
+| `jdbc:quack://host:port` | Direct Java Quack, metadata SQL on the remote DuckDB | Java driver 0.10.0; no DuckDB JDBC required in the reading JVM |
 | `jdbc:duckdb:/existing/metadata.db` | Existing local DuckDB file, **database-level READ_ONLY** | File must exist; no memory/protocol URL or catalog creation; coordinate native writers by closing readers |
 | `jdbc:duckdb:quack://host:port?metadata_catalog=name` | Native DuckDB/Quack client, **metadata-only READ_ONLY attachment** | Library never invokes DuckLake bootstrap/version selection/migration on reader open |
 | `jdbc:postgresql://…` | **Guarded stable-ID payload evolution; rich metadata/hierarchy** | STRUCT/LIST/MAP evolution, scalar defaults, native-allowed numeric and unzoned temporal promotions; explicit canonical-value/type boundaries; provenance uses `readBackendProfile()` |
@@ -73,8 +73,10 @@ artifact attestation: the pinned DuckDB JDBC 2.0.0.0 JAR reports `1.0` here. Tes
 independently verify its published Maven Central SHA-256
 `5170daa90a43296705127ef3c80834ba1cd275ec9d765a9f7eee346ab0087186`, core
 `d54cbbe3df` and signed writer DuckLake `417a9117f5`/Quack `f96420ed46`. Direct Java
-Quack still advertises driver `0.8.0`; its no-DuckDB-JDBC qualification stays separate.
-No dependency, corpus, extension or preview pin was upgraded.
+Quack now advertises driver `0.10.0`; its no-DuckDB-JDBC qualification stays separate.
+The [driver-only update scan](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.10.0-2026-10-28.md)
+does not change the embedded JDBC, corpus, extension or preview engine pins, or
+relabel earlier full-suite evidence as having used the new driver.
 
 ## Tested scope and deferred native work
 
