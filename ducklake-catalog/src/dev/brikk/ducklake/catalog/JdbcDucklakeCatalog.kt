@@ -2047,7 +2047,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     /** Track file coverage in the same query as the stats: an omitted row is not an all-NULL column. */
     private fun aggregateFileColumnStats(ctx: DSLContext, tableId: Long, snapshotId: Long): Map<Long, AggregatedColumnStats> {
-        val columnTypes: Map<Long, String> = loadColumnTypes(ctx, tableId)
+        val columnTypes: Map<Long, String> = loadColumnTypes(ctx, tableId, snapshotId)
         val colstats = DUCKLAKE_FILE_COLUMN_STATS.`as`("colstats")
         val file = DUCKLAKE_DATA_FILE.`as`("file")
         val nonemptyFiles = mutableSetOf<Long>()
@@ -6080,30 +6080,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 .toMap()
         }
 
-        // Leaf column_id -> canonical DuckLake type (e.g. "int128", "decimal(38,0)"), read via
-        // the write transaction so freshly-created columns are visible. Column types are stable
-        // per column_id, so no snapshot filtering is needed. Drives numeric-aware stat merging.
+        // The publication view includes this transaction's staged column versions, if any.
+        // A column_id can change type across history; never let physical row order choose it.
         private fun loadColumnTypes(tx: DucklakeWriteTransaction, tableId: Long): Map<Long, String> =
-            loadColumnTypes(tx.dsl(), tableId)
+            loadColumnTypes(tx.dsl(), tableId, tx.getNewSnapshotId())
 
-        /** `column_id -> column_type` for EVERY `ducklake_column` row of the table (all versions, all
-         * nesting levels): per-file stats reference leaf ids, so a root-only map would leave nested
-         * leaves untyped. Type strings of a given column_id do not change comparison class across
-         * versions except via setColumnType, which invalidates the affected bounds itself. */
-        private fun loadColumnTypes(ctx: DSLContext, tableId: Long): Map<Long, String> {
-            val col = DUCKLAKE_COLUMN.`as`("coltype")
-            return ctx.select(col.COLUMN_ID, col.COLUMN_TYPE)
-                .from(col)
-                .where(col.TABLE_ID.eq(tableId))
-                .fetch()
-                .asSequence()
-                .mapNotNull { r ->
-                    val id = r.get(col.COLUMN_ID) ?: return@mapNotNull null
-                    val type = r.get(col.COLUMN_TYPE) ?: return@mapNotNull null
-                    id to type
-                }
-                .toMap()
-        }
+        /** Snapshot-specific types include nested identities without loading retired/future versions. */
+        private fun loadColumnTypes(ctx: DSLContext, tableId: Long, snapshotId: Long): Map<Long, String> =
+            CatalogColumnTypes.load(ctx, tableId, snapshotId)
 
         private fun toDucklakeColumn(r: DucklakeColumnRecord): DucklakeColumn {
             return DucklakeColumn(

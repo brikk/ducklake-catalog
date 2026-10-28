@@ -71,6 +71,12 @@ unchanged. Native Quack's legacy ATTACH/bootstrap remains a separate boundary.
 
 ## Statistics and pruning
 
+ANALYZE, insert and rewrite statistics use the column types visible at their logical
+snapshot, not the physical ordering of historical column rows. Current FLOAT/DOUBLE
+precision must not be replaced by a retired type during bound aggregation.
+Type lookup uses bounded SQL pages/text and refuses duplicate/malformed active
+metadata, type strings above 256 characters or more than 65,536 active identities.
+
 Legacy min/max pruning interprets FLOAT/DOUBLE statistics and predicate bounds at
 the declared binary precision. Equivalent decimal spellings compare equally;
 adjacent values remain distinct. Non-finite, malformed or binary-overflowing float
