@@ -11,6 +11,14 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reviews and original IDs
 
+- [Catalog review completion](CATALOG-REVIEW-COMPLETION-2026-10-28.md): C01–C24
+  complete through `fb53459`; former backlog closure details, not an active queue.
+- [Catalog and limited-read verification checkpoint](R07-SCOPE-AND-QUALITY-CHECKPOINT-2026-10-28.md):
+  completed fixes, exact artifact/test evidence and connector milestone closeout.
+- [1.1 support history](DUCKLAKE-1.1-SUPPORT-HISTORY-2026-10-28.md): original
+  requirements/checklists and dated implementation/qualification results.
+- [Upstream follow-up history](UPSTREAM-FOLLOWUPS-HISTORY-2026-10-28.md): shipping
+  checkpoints and completed investigations removed from the active TODO.
 - [September review](REVIEW-2026-09-05.md): canonical C/H/B/N/R/Q findings.
 - [Original eval tracker](TODO-rectify-from-eval.md): older W/R/C/Q/S/X IDs cited by tests.
 - Old generated navigation notes:

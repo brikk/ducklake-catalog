@@ -96,8 +96,9 @@ models. 1.0 behavior/SQL remain unchanged with the default configuration.
 The first opt-in native test failed with `Unknown inlined metadata layout ... 1.1`
 before implementing the reader. The new negative missing-system-column case also
 reproduced an empty read outside a session; the opt-in tier now refuses unowned
-reads and propagates physical query failures in owned sessions. This contains that
-hazard for the new reader; it does not close the whole legacy C09 finding.
+reads and propagates physical query failures in owned sessions. This was the initial
+opt-in qualification; subsequent completed legacy error-classification fixes are in
+[the archived catalog verification](archive/R07-SCOPE-AND-QUALITY-CHECKPOINT-2026-10-28.md).
 
 The opt-in suite uses **the same exact signed alpha49096 target** as
 [direct-v3 qualification](QUACK-2.0-QUALIFICATION.md): core `2ec7e8401c`, DuckLake

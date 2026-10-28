@@ -9,9 +9,10 @@ live in [the user documentation](../docs/README.md).
 |---|---|
 | [Upstream TODO](TODO-UPSTREAM-FOLLOWUPS-2026-10-13.md) | Active UF IDs and shipping-artifact checkpoint |
 | [DuckDB 2.0 upgrade](UPGRADE-DUCKDB-2.0.0.md) | Shipping pins, read/write support, verification and rollback |
-| [1.1 support TODO](TODO-DUCKLAKE-1.1-SUPPORT.md) | Read-first implementation queue; separate deferred write section |
+| [1.1 support TODO](TODO-DUCKLAKE-1.1-SUPPORT.md) | Remaining read acceptance, native-backend gates and deferred write work |
 | [Upstream 1.1 read tests](UPSTREAM-1.1-READ-TESTS.md) | Pristine upstream JVM mirrors and newer regressions queued by capability |
-| [Review backlog](BACKLOG.md) | Remaining catalog, harness and delivery review candidates; preserves canonical IDs |
+| [Review backlog](BACKLOG.md) | Remaining maintenance, harness/delivery and residual review work |
+| [Coordination checkpoint](R07-SCOPE-AND-QUALITY-CHECKPOINT.md) | Current consumer boundaries, external verification and rollout follow-ups |
 | [1.1 acceptance](DUCKLAKE-1.1-ACCEPTANCE.md) | Artifact qualification, migration/rollback rehearsal and go/no-go gates |
 | [Future consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) | Richer 1.1 metadata envelope/wire design; not yet implemented |
 | [Final-1.1 read results](FINAL-1.1-READ-RESULTS.md) | Conservative direct-Java read tier and explicit unsupported cases; no writes |
