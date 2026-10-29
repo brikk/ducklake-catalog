@@ -1,7 +1,7 @@
 # Read-session statement cancellation and deadlines
 
 Additive development API on `JdbcDucklakeCatalog`; the existing Supplier-only
-`readSession` remains unchanged:
+`readSession` retains its descriptor and has no default statement deadline:
 
 ```kotlin
 val control = DucklakeReadSessionControl(timeoutSeconds = 30)
@@ -35,6 +35,22 @@ The one-connection pool subsequently reads the original snapshot/table. This is
 actual statement interruption, not merely responsive Trino cancellation or an
 oracle query standing in for the library query.
 
+## Required SQL-server transaction setup
+
+PostgreSQL and MySQL read sessions must establish read-only REPEATABLE READ before
+invoking the action, whether `enableFinal11Reads` is on or off. Setup failures,
+including an unsupported setting, propagate rather than silently running under
+weaker isolation. The borrowed connection is released and no owned session DSL is
+installed for the callback. Both the Supplier-only and controlled overload use this
+boundary; nesting reuses the already-established outer session.
+
+DuckDB's native snapshot isolation and existing best-effort unsupported setter
+handling are unchanged. Hikari resets tracked state or discards a broken connection
+on release; this is not a promise of recovery from every transport failure. The
+[review R04 repair evidence](../dev-docs/archive/FIX-REVIEW-R04-READ-SESSION-2026-10-29.md)
+records setup-fault regressions and the separate strict TIME qualification blocker.
+This correction does not extend cancellation deadlines to connection setup.
+
 ## Limits — do not overstate the guarantee
 
 - A true return from `cancel()` means a request was sent, not that the server has
@@ -61,9 +77,11 @@ an explicitly unsupported driver timeout. Connector adoption and blocked SQL
 cancellation must be retested against the new exact candidate, not inferred from
 these library results.
 
-Full maintained verification passes **856 JUnit tests** (707 catalog, 51 SLT,
+The original cancellation-API verification passed **856 JUnit tests** (707 catalog, 51 SLT,
 98 replay) plus **86 separate direct-Java tests**, zero failures/errors/JUnit skips;
 17,602 corpus records and exclusions are unchanged. Lint, frozen ABI/wire and Java
 17 checks pass (7,797 classes across17 artifacts). The four new cancellation tests
 all execute. Log: `/tmp/opencode/catalog-r07-session-cancellation-full.log`
 (22m51s). Strict native gates were not rerun or waived by this verification.
+That historical run predates the later harness stage corrections; it is not a
+claim that the current strict corpus gate, including TIME24:00, is green.

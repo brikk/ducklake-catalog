@@ -23,6 +23,10 @@ maintained corpus checks expose six TIME24:00 conversion failures in JDBC2.0.0.0
 The owner selected keeping those failures visible; no new skip or synthesized value
 is authorized. They remain in the active queue pending separately scoped lossless
 support and qualification. Earlier completed repairs are not reopened by this gate.
+The later [review R04 setup repair](archive/FIX-REVIEW-R04-READ-SESSION-2026-10-29.md)
+passes all1,118 catalog tests and its actualJava17 before/after witnesses. Its full
+invocation still fails solely on the six TIME corpus records, so it also remains
+implemented/pending project qualification rather than a green full-check claim.
 
 ## Integration boundary
 

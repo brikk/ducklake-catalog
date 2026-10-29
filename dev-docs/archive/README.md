@@ -37,6 +37,7 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reproduction and execution reports
 
+- [Review R04: SQL-server read-session setup](FIX-REVIEW-R04-READ-SESSION-2026-10-29.md)
 - [Harness stages: H05, H09 and H08](FIX-HARNESS-STAGES-2026-10-29.md)
 - [Quack JDBC 0.10.0 / embedded DuckDB quick scan](UPGRADE-QUACK-JDBC-0.10.0-2026-10-28.md)
 - [Harness integrity repairs: H02, H03 and H04](FIX-HARNESS-INTEGRITY-2026-10-28.md)

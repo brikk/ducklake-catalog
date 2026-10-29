@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **13 unfixed reproduced defects** and **3 implemented
+There are **16 open findings**: **12 unfixed reproduced defects** and **4 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -22,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| review R04 | P2 | Legacy PostgreSQL readSession swallows an isolation-setting fault and sees a new snapshot mid-session; strict opt-in mode already rejects the fault. |
 | N13 | P2 | Catalog CREATE bypasses require_commit_message while native CREATE rejects; honor the policy or refuse unsupported message-required writes. |
 | N05 | P2 | Expiry accepts mutually exclusive criteria; timestamp-only DuckDB SQL also renders unsupported TIMESTAMPTZ precision. Keep validation/rendering subcases distinct. |
 | N03 | P2 | Valid nested field punctuation produces ambiguous legacy type strings; coordinate an escaping/structured-type contract with consumers. |
@@ -39,7 +38,8 @@ not production incident frequency.
 ## Implemented repairs pending qualification
 
 The [H05 → H09 → H08 implementations](archive/FIX-HARNESS-STAGES-2026-10-29.md)
-pass their focused regressions, but are **not Complete**. H09 exposes six original
+and [review R04 setup repair](archive/FIX-REVIEW-R04-READ-SESSION-2026-10-29.md)
+pass their scoped regressions, but are **not Complete**. H09 exposes six original
 all-types corpus queries whose native TIME24:00 values the pinned JDBC driver cannot
 represent. The owner chose to keep those failures strict, without new skips or
 fabricated values. Full qualification remains blocked; do not redo these implemented
@@ -50,6 +50,7 @@ changes or remove their active entries until the gate is resolved and rerun.
 | H05 | P1 | Measured oracle/mirror counts, skip reasons and positive coverage guard implemented; shared batch qualification remains blocked. |
 | H09 | P2 | Conversion sentinels removed; six TIME24:00 corpus failures now remain visible. Needs separately scoped lossless support and a passing qualification rerun. |
 | H08 | P2 | Oracle SQL expectations separated from adapter setup errors; shared batch qualification remains blocked. |
+| review R04 | P2 | Required PostgreSQL/MySQL read-session setup now fails closed regardless of format opt-in; all catalog regressions pass, but the project TIME24:00 qualification gate remains blocked. |
 
 ## Confirmed delivery-control gaps
 
