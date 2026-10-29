@@ -1023,6 +1023,9 @@ interface DucklakeCatalog : AutoCloseable {
      *    afterwards (on this thread) reflects that instant, so read `currentSnapshotId` first and pass
      *    it to the other reads;
      *  - nested calls reuse the outer session;
+     *  - PostgreSQL / MySQL must establish read-only REPEATABLE READ before [action] is invoked,
+     *    including legacy-format sessions. A failed/unsupported setting propagates; the action
+     *    is not run with weaker isolation. The owned connection is returned on setup failure;
      *  - **writes are refused** inside a session with [DucklakeInvalidOperationException]: a read
      *    session is for planning, and a write's own reads must see the latest state;
      *  - the returned objects are plain values and remain valid after the block.

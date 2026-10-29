@@ -259,7 +259,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         DSL.using(jooqConfiguration.derive(connection))
 
     /**
-     * Statement cancellation/deadline opt-in; the old Supplier-only overload is unchanged.
+     * Statement cancellation/deadline opt-in; Supplier-only callers still have no deadline by default.
      * [control] must be unique to this outer session. Nested reads reuse it; attempting to replace
      * an existing session's control rejects rather than silently ignore a deadline/cancellation.
      */
@@ -288,10 +288,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
         dataSource.connection.use { conn ->
             conn.autoCommit = false
-            // Opt-in SQL-server readers require both settings. Legacy routes remain best effort;
-            // DuckDB rejects other isolation levels and owns its snapshot isolation regardless.
+            // SQL-server read sessions require both settings, independently of the format opt-in.
+            // Never invoke an action under weaker isolation after a failed setup. DuckDB owns its
+            // snapshot isolation regardless and retains best-effort unsupported setter handling.
             // HikariCP resets tracked connection state on return.
-            if (final11ReadRoute in setOf(Final11ReadRoute.POSTGRES, Final11ReadRoute.MYSQL)) {
+            if (dialect == SQLDialect.POSTGRES || dialect == SQLDialect.MYSQL) {
                 conn.isReadOnly = true
                 conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
             } else {
