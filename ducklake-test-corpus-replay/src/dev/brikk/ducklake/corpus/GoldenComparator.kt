@@ -6,6 +6,7 @@ import org.duckdb.DuckDBArray
 import org.duckdb.DuckDBStruct
 import java.math.BigDecimal
 import java.sql.ResultSet
+import java.sql.SQLException
 import java.sql.Timestamp
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -67,15 +68,15 @@ object GoldenComparator {
         while (rs.next()) {
             rows +=
                 (1..cols).map { i ->
-                    try {
+                    runCatching {
                         // Geometry getString preserves typed WKT, including nested leaves. Temporal
                         // getString is Java object text in JDBC 2.0: render its value with session zone.
                         if (geometry[i - 1]) rs.getString(i)?.replace("\u0000", "\\0")
                         else renderCell(rs.getObject(i), zone)
-                    } catch (_: Exception) {
-                        // e.g. the JDBC driver cannot represent TIME '24:00:00'
-                        // as java.time.LocalTime; keep the record comparable.
-                        "<jdbc-unreadable>"
+                    }.getOrElse { failure ->
+                        // A failed getter/renderer is never data that regexes or labels may accept.
+                        throw SQLException("JDBC cell conversion failed at row ${rows.size + 1}, column $i (${types[i - 1]})",
+                            (failure as? SQLException)?.sqlState ?: "22000", failure)
                     }
                 }
         }
