@@ -21,8 +21,11 @@ package dev.brikk.ducklake.corpus
  *    compared against sqllogictest golden text; only the oracle is held to it.
  *  - [accepts] is the dialect gate: return false for SQL the engine cannot or
  *    should not attempt (engine-specific syntax, non-SELECT, unsupported
- *    functions). Rejected queries count as engine-skips in the report, never
- *    failures.
+ *    functions). Rejected queries count in measured mirror skips with reasons, never
+ *    as verified engine passes. Legacy record Pass can still mean oracle-only validation;
+ *    use FileResult.queryCoverage / CorpusReport totals and requireMirrorPasses for conformance.
+ *    Identity-control runs intentionally have zero mirror passes. A thrown acceptance-gate
+ *    error is a failure, not a dialect skip.
  *  - The engine reads the SAME catalog + data path the oracle writes. How it
  *    attaches (JDBC URL, Trino catalog config, Doris FE catalog) is the
  *    adapter's business; [connect] receives the oracle's catalog handle so the

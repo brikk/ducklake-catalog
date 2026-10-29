@@ -68,18 +68,14 @@ class ReplayDriver(
         val ALWAYS_FAIL_ERROR_MESSAGES: Set<String> = setOf("differs from original result!", "INTERNAL")
     }
 
-    fun replay(file: SltFile): FileResult = replay(file, ReplayProgress())
+    fun replay(file: SltFile): FileResult = replay(file, ReplayProgress(engine?.name))
 
     internal fun replay(file: SltFile, progress: ReplayProgress): FileResult {
         this.progress = progress
         progress.checkActive()
         val unsupported = findUnsupported(file.records)
         if (unsupported != null) {
-            return FileResult(
-                file.path,
-                "unsupported construct '${unsupported.directive}' at line ${unsupported.line}",
-                emptyList(),
-            )
+            return progress.fileResult(file.path, "unsupported construct '${unsupported.directive}' at line ${unsupported.line}")
         }
         return DuckDbOracle(repoRoot = repoRoot).use { oracle ->
             labelResults.clear()
@@ -90,8 +86,9 @@ class ReplayDriver(
             engineConnected = false
             engineAlias = null
             engineTarget = null
+            mirrorUnavailableReason = "not-attached"
             val halted = executeAll(file.records, oracle, emptyMap(), progress)
-            FileResult(file.path, fileSkipReason = halted, outcomes = progress.snapshot())
+            progress.fileResult(file.path, halted)
         }
     }
 
@@ -107,6 +104,7 @@ class ReplayDriver(
     /** Per-file memo of original → DATA_PATH (re-attaches often omit options). */
     private val attachDataPaths = mutableMapOf<String, String>()
     private var engineConnected = false
+    private var mirrorUnavailableReason = "not-attached"
 
     /** Alias and (rewritten) metadata target of the lake the engine currently mirrors. */
     private var engineAlias: String? = null
@@ -161,6 +159,7 @@ class ReplayDriver(
             // snapshot; the engine would read latest. Stop mirroring for the
             // rest of the file — divergence is expected, not a bug.
             engineConnected = false
+            mirrorUnavailableReason = "snapshot-pinned"
             return effectiveSql to null
         }
         val alias =
@@ -184,6 +183,7 @@ class ReplayDriver(
         if (engineConnected && d.groupValues[1].equals(engineAlias, ignoreCase = true)) {
             engineConnected = false
             engineAlias = null
+            mirrorUnavailableReason = "detached"
         }
         return true
     }
@@ -199,6 +199,7 @@ class ReplayDriver(
         if (rewrittenTarget != engineTarget) {
             engineConnected = false
             engineAlias = null
+            mirrorUnavailableReason = "multiple-lakes"
         }
         return false
     }
@@ -402,12 +403,23 @@ class ReplayDriver(
             } else {
                 goldenOutcome(record, oracle, bindings, actual)
             }
-        if (outcome !is RecordOutcome.Pass || engine == null || !shouldMirror(record, sql)) {
-            return outcome
+        if (outcome !is RecordOutcome.Pass) return outcome
+        progress.oraclePassed()
+        val mirror = engine ?: return outcome
+        progress.checkActive()
+        val reason = runCatching { mirrorSkipReason(record, sql, mirror) }.getOrElse { e ->
+            progress.checkActive()
+            progress.mirrorGateFailed()
+            return RecordOutcome.Fail(record, "engine '${mirror.name}' acceptance failed: ${firstLine(e)}")
+        }
+        if (reason != null) {
+            progress.mirrorSkipped(reason)
+            return outcome // Legacy Pass is oracle/golden evidence, not engine verification.
         }
         mirrorsThisFile++
         progress.checkActive()
-        return mirrorOutcome(engine, record, sql, actual, oracle.connection(record.connection))
+        progress.mirrorAttempted()
+        return mirrorOutcome(mirror, record, sql, actual, oracle.connection(record.connection)).also(progress::mirrorCompleted)
     }
 
     private data class QueryResult(val rows: List<List<String?>>, val types: List<String>, val noResult: Boolean = false)
@@ -510,12 +522,14 @@ class ReplayDriver(
      * an open oracle transaction (uncommitted state is invisible to the
      * engine by design), past the per-file cap, or SQL the engine rejects.
      */
-    private fun shouldMirror(record: SltQuery, sql: String): Boolean =
-        engineConnected &&
-            record.connection !in openTransactions &&
-            mirrorsThisFile < mirrorCapPerFile &&
-            engine != null &&
-            engine.accepts(sql)
+    private fun mirrorSkipReason(record: SltQuery, sql: String, mirror: ReplayReadEngine): String? =
+        when {
+            !engineConnected -> mirrorUnavailableReason
+            record.connection in openTransactions -> "transaction-open"
+            mirrorsThisFile >= mirrorCapPerFile -> "mirror-cap"
+            !mirror.accepts(sql) -> "dialect-rejected"
+            else -> null
+        }
 
     /** Live-vs-live mirror through the engine. */
     private fun mirrorOutcome(

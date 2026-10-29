@@ -120,6 +120,10 @@ internal class TestCorpusTimeoutIntegrity {
             assertThat(report.files[1].fileSkipReason).startsWith("BLOCKED:")
             assertThat(connects.get()).isEqualTo(1)
             assertThat(queries.get()).isEqualTo(1)
+            assertThat(report.totalMirrorAttempts).isEqualTo(1)
+            assertThat(report.totalMirrorPasses).isZero()
+            assertThat(report.totalPendingMirrors).isEqualTo(1)
+            assertThat(report.unmeasuredFiles).isZero()
             assertThat(closes.get()).isZero() // the caller owns the engine; no concurrent close under a worker
             assertThat(worker.get().isAlive).isFalse()
         } finally {

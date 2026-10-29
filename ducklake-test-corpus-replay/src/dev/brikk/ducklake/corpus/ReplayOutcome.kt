@@ -33,6 +33,20 @@ data class FileResult(
     val fileSkipReason: String?,
     val outcomes: List<RecordOutcome>,
 ) {
+    private var measuredQueryCoverage: ReplayQueryCoverage? = null
+
+    /**
+     * Supplementary runtime evidence, not a constructor/data-component field. Null means unmeasured
+     * (including manually constructed/copied results), never zero verified mirrors. Legacy constructor,
+     * copy, equality and outcome descriptors are retained; consumers must explicitly enforce coverage.
+     */
+    val queryCoverage: ReplayQueryCoverage? get() = measuredQueryCoverage
+
+    internal fun withQueryCoverage(coverage: ReplayQueryCoverage): FileResult = apply {
+        check(measuredQueryCoverage == null) { "Coverage has already been attached" }
+        measuredQueryCoverage = coverage
+    }
+
     val passed: Int get() = outcomes.count { it is RecordOutcome.Pass }
     val failed: List<RecordOutcome.Fail> get() = outcomes.filterIsInstance<RecordOutcome.Fail>()
     val skipped: List<RecordOutcome.Skip> get() = outcomes.filterIsInstance<RecordOutcome.Skip>()

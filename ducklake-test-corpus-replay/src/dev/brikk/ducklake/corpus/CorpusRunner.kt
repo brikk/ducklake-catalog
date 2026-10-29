@@ -67,9 +67,9 @@ class CorpusRunner(
             results += when {
                 blocked != null -> {
                     val worker = if (timedOutWorker?.isAlive == true) "worker still active" else "worker stopped"
-                    FileResult(rel, "BLOCKED: $blocked; $worker", emptyList())
+                    ReplayProgress(engine?.name).fileResult(rel, "BLOCKED: $blocked; $worker")
                 }
-                curated != null -> FileResult(rel, "skip-list: $curated", emptyList())
+                curated != null -> ReplayProgress(engine?.name).fileResult(rel, "skip-list: $curated")
                 else -> replayGuarded(rel, SltParser.parse(rel, file.readText()))
             }
         }
@@ -81,11 +81,11 @@ class CorpusRunner(
         // engine/rewriter are still shared; quarantine prevents their reuse after cancellation.
         // corpusRoot = <repo>/test/sql → repo root two levels up (for `data/` refs).
         val driver = ReplayDriver(engine, repoRoot = corpusRoot.parent?.parent, metadataRewriter = metadataRewriter)
-        val progress = ReplayProgress()
+        val progress = ReplayProgress(engine?.name)
         val body = {
             runCatching { driver.replay(parsed, progress) }
                 .getOrElse { e ->
-                    FileResult(rel, "CRASH: ${e.message?.lineSequence()?.firstOrNull() ?: e}", progress.snapshot())
+                    progress.fileResult(rel, "CRASH: ${e.message?.lineSequence()?.firstOrNull() ?: e}")
                 }
         }
         if (fileTimeoutSeconds <= 0) {
@@ -97,11 +97,11 @@ class CorpusRunner(
             future.get(fileTimeoutSeconds, TimeUnit.SECONDS)
         }
         catch (_: TimeoutException) {
-            val outcomes = progress.freeze()
+            progress.freeze()
             quarantineReason = "corpus halted after timeout in $rel; shared engine/backend state is quarantined"
             cancelWorker(future, worker)
             val state = if (worker.isAlive) "worker still active (quarantined)" else "worker stopped"
-            FileResult(rel, "TIMEOUT: replay exceeded ${fileTimeoutSeconds}s; $state; remaining files blocked", outcomes)
+            progress.fileResult(rel, "TIMEOUT: replay exceeded ${fileTimeoutSeconds}s; $state; remaining files blocked")
         }
         catch (e: InterruptedException) {
             progress.freeze()
@@ -146,12 +146,36 @@ class CorpusReport(val files: List<FileResult>) {
     val totalPassed: Int get() = files.sumOf { it.passed }
     val totalRecordSkips: Int get() = files.sumOf { it.skipped.size }
 
+    private val measured: List<ReplayQueryCoverage> get() = files.mapNotNull { it.queryCoverage }
+    val unmeasuredFiles: Int get() = files.count { it.queryCoverage == null }
+    val totalOracleQueryPasses: Int get() = measured.sumOf { it.oraclePasses }
+    val totalIdentityControlPasses: Int get() = measured.sumOf { it.identityControlPasses }
+    val totalMirrorAttempts: Int get() = measured.sumOf { it.mirrorAttempts }
+    val totalMirrorPasses: Int get() = measured.sumOf { it.mirrorPasses }
+    val totalMirrorFailures: Int get() = measured.sumOf { it.mirrorFailures }
+    val totalMirrorSkips: Int get() = measured.sumOf { it.mirrorSkips }
+    val totalMirrorGateFailures: Int get() = measured.sumOf { it.mirrorGateFailures }
+    val totalPendingMirrors: Int get() = measured.sumOf { it.pendingMirrors }
+
+    /** Conformance callers choose a meaningful positive threshold; oracle/record passes never satisfy it. */
+    fun requireMirrorPasses(minimum: Int) {
+        require(minimum > 0) { "Mirror coverage requires a positive threshold" }
+        check(totalMirrorPasses >= minimum) { "Insufficient verified mirror coverage: need $minimum, got $totalMirrorPasses\n${summary()}" }
+    }
+
     fun summary(maxFailures: Int = 20): String {
         val sb = StringBuilder()
         sb.appendLine("corpus replay: ${files.size} files")
         sb.appendLine(
             "  ran ${ranFiles.size} (records: $totalPassed passed, ${failures.size} failed, $totalRecordSkips skipped)",
         )
+        sb.appendLine("  queries: $totalOracleQueryPasses oracle/golden passes ($totalIdentityControlPasses identity-control)")
+        sb.appendLine("  mirrors: $totalMirrorAttempts attempted, $totalMirrorPasses passed, $totalMirrorFailures failed, $totalMirrorSkips skipped")
+        if (totalMirrorGateFailures > 0 || totalPendingMirrors > 0 || unmeasuredFiles > 0) {
+            sb.appendLine("    $totalMirrorGateFailures gate failures, $totalPendingMirrors pending, $unmeasuredFiles files unmeasured")
+        }
+        measured.flatMap { it.mirrorSkipReasons.entries }.groupBy({ it.key }, { it.value })
+            .toSortedMap().forEach { (reason, counts) -> sb.appendLine("    ${counts.sum()}\t$reason") }
         val requireHalts = haltedFiles.count { it.fileSkipReason!!.startsWith("require ") }
         if (requireHalts > 0) {
             sb.appendLine("  halted mid-file by an unmet require $requireHalts (records above include theirs)")
