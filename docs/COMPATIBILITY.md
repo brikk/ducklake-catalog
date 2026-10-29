@@ -168,6 +168,47 @@ requires genuinely isolated processes/backends, not merely another ReplayDriver.
 Public constructor, engine and FileResult descriptors are unchanged; no sibling
 source changes are required, and no connector artifact adoption is implied.
 
+### Measured replay coverage and failure stages
+
+These stage corrections are implemented but **not fully qualified**: strict corpus
+checks now expose six TIME24:00 conversion failures in the pinned JDBC driver. The
+owner chose to retain those failures, without new skips or fabricated values. See
+[the pending qualification report](../dev-docs/archive/FIX-HARNESS-STAGES-2026-10-29.md).
+
+`FileResult.queryCoverage` is additive, supplementary runtime evidence. It separates
+oracle/golden query passes from actual mirror attempts, passes, failures, explicit
+engine query skips and gate skips (not attached, transaction open, cap or rejected
+dialect). Pending attempts after a timeout/crash and acceptance-gate failures are
+reported separately. `CorpusReport` aggregates those measurements and skip reasons.
+Legacy `passed` / `totalPassed` remain record totals, including setup and oracle-only
+validation; they do **not** establish engine conformance. Gate skips are measured
+mirror skips, not additional legacy record outcomes. A real `ReplayEngineSkip` during
+execution remains a legacy record skip and a measured attempted mirror skip.
+
+Conformance suites must check failures/crashes and call
+`report.requireMirrorPasses(positiveMinimum)` with a meaningful aggregate threshold.
+Identity control remains explicitly labelled and intentionally has no engine passes.
+Existing constructors, data components, copy/equality and engine method descriptors
+are retained. Manually created or data-copied FileResults have null/unmeasured
+coverage rather than fabricated success; aggregate reports expose that count. Copies
+therefore must not be used to carry measured conformance evidence. Catalog wire DTOs
+are unchanged; this is an additive replay diagnostic, not a new catalog wire format.
+Owned connector suites need to adopt the new artifact/threshold separately; their
+existing oracle/record totals are not retrospectively upgraded into mirror evidence.
+
+JDBC getter/renderer failures propagate as contextual conversion errors before a
+query can reach regex comparison, label/hash registration or the engine. The old
+`<jdbc-unreadable>` sentinel is not synthesized; a genuine SQL string with that
+spelling remains ordinary data. No broad regex or repeated error hash can validate
+an unreadable value. Later records still run after a failed query.
+
+Oracle statement expectations are determined before adapter setup. A successful
+`statement error` fails without invoking the adapter; a real expected oracle SQL
+error never invokes it either. After an accepted oracle success, any adapter-connect
+exception is an explicit setup failure, never an expected SQL error or query-only
+engine skip. The driver marks the engine unavailable after setup failure; normal
+successful setup and ordinary oracle error matching are retained.
+
 ## Replay temporary-directory ownership
 
 In 0.13, `DuckDbOracle(testDirRoot = parent)` creates a fresh owned child under the

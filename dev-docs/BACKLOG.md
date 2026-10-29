@@ -5,14 +5,15 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 reproduced defects** below, plus **3 source-confirmed delivery-control
-gaps**. Missing features or missing evidence are not counted as reproduced bugs.
+There are **16 open findings**: **13 unfixed reproduced defects** and **3 implemented
+repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
+Missing features or missing evidence are not counted as reproduced bugs.
 
 **Namespace:** `review R04` below is a September residual ID, not
 the similarly numbered 1.1 read requirement. No sibling implementation is assigned
 or edited by this queue.
 
-## Confirmed defects
+## Unfixed confirmed defects
 
 Each entry has a fresh current-code witness in the report, not just an old checkbox.
 Use desired-behavior regressions before repairing it; do not preserve a bad result
@@ -21,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| H05 | P1 | An always-rejecting engine produces passes with zero engine queries and no engine skips; report actual coverage. |
 | review R04 | P2 | Legacy PostgreSQL readSession swallows an isolation-setting fault and sees a new snapshot mid-session; strict opt-in mode already rejects the fault. |
 | N13 | P2 | Catalog CREATE bypasses require_commit_message while native CREATE rejects; honor the policy or refuse unsupported message-required writes. |
 | N05 | P2 | Expiry accepts mutually exclusive criteria; timestamp-only DuckDB SQL also renders unsupported TIMESTAMPTZ precision. Keep validation/rendering subcases distinct. |
@@ -29,14 +29,27 @@ not production incident frequency.
 | N19 | P2 | Boolean result hashes use true/false rather than upstream 1/0. |
 | H06 | P2 | A tiny huge-loop header exhausts a bounded child JVM before rejection; budget parsing, nesting and expansion. |
 | H07 | P2 | A/B/C attachments, quoted DETACH and failed DETACH corrupt mirror state transitions. |
-| H08 | P2 | An adapter-connect SQLException is accepted as the expected oracle statement error. |
-| H09 | P2 | JDBC conversion exceptions become comparable/hashable failure sentinels. |
 | H11 | P2 | Mixed skipif conjunctions use the wrong per-term skip policy. |
 | H12 | P2 | Truncated loops become runnable loops rather than malformed records. |
 | H13 | P2 | Nested reuse of an iterator name substitutes the inner value instead of upstream outermost-first behavior. |
 | H14 | P2 | DML RETURNING mutates then fails through executeUpdate; support results/counts without a second mutation. |
 | H15 | P2 | Java17 floating rendering differs from native/Java25 for ordinary values; use runtime-independent conversion. |
 | H16 | P2 | Golden substitution discards valid raw expectations. |
+
+## Implemented repairs pending qualification
+
+The [H05 → H09 → H08 implementations](archive/FIX-HARNESS-STAGES-2026-10-29.md)
+pass their focused regressions, but are **not Complete**. H09 exposes six original
+all-types corpus queries whose native TIME24:00 values the pinned JDBC driver cannot
+represent. The owner chose to keep those failures strict, without new skips or
+fabricated values. Full qualification remains blocked; do not redo these implemented
+changes or remove their active entries until the gate is resolved and rerun.
+
+| ID | Priority | Pending boundary |
+|---|---|---|
+| H05 | P1 | Measured oracle/mirror counts, skip reasons and positive coverage guard implemented; shared batch qualification remains blocked. |
+| H09 | P2 | Conversion sentinels removed; six TIME24:00 corpus failures now remain visible. Needs separately scoped lossless support and a passing qualification rerun. |
+| H08 | P2 | Oracle SQL expectations separated from adapter setup errors; shared batch qualification remains blocked. |
 
 ## Confirmed delivery-control gaps
 
@@ -58,6 +71,10 @@ published artifact is broken. Address before relying on the corresponding guaran
   affected engine behavior; missing fleet/cancellation/CDC evidence is not a proved
   connector bug. Current Trino 483/484 and Doris API24 released-lane checks do not
   promote the separate R07 candidate lane.
+  When adopting the new replay artifact, both general connector conformance suites
+  must enforce a meaningful positive `requireMirrorPasses` threshold; legacy
+  record/oracle totals are not verified engine coverage. No sibling edit or rerun
+  is assigned by this library repair batch.
 - **Bounded maintenance:** source audit confirms both orphan listings and Doris
   queued cleanup remain unbounded. This is a real scalability/safety hardening gap,
   not a measured OOM or deletion-loss incident. Preserve root/table namespaces,

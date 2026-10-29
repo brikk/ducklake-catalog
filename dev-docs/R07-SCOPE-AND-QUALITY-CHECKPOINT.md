@@ -12,15 +12,23 @@ The [October 28 triage](archive/TRIAGE-2026-10-28.md) separates reproduced defec
 source-confirmed delivery gaps, deferred capabilities, qualification and optional
 hardening. Missing engine/production evidence is not itself proof of a bug.
 
-The latest repair batch is complete and fully verified; exact commits, scope and
+The earlier verified repair batches are complete; exact commits, scope and
 checks are in [the harness repair evidence](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md);
 the [earlier priority repairs](archive/FIX-PRIORITY-FINDINGS-2026-10-28.md) remain archived separately.
 The active defect queue excludes completed repairs.
 
+The subsequent [H05/H09/H08 stage implementations](archive/FIX-HARNESS-STAGES-2026-10-29.md)
+are **qualification-blocked, not Complete**. Their regressions pass, but strict
+maintained corpus checks expose six TIME24:00 conversion failures in JDBC2.0.0.0.
+The owner selected keeping those failures visible; no new skip or synthesized value
+is authorized. They remain in the active queue pending separately scoped lossless
+support and qualification. Earlier completed repairs are not reopened by this gate.
+
 ## Integration boundary
 
 The accepted limited-read connector bundle remains catalog `6730bb8`, Trino
-`3385429` and Doris `4efd9bc`. Subsequent library fixes have passed qualification,
+`3385429` and Doris `4efd9bc`. Subsequent completed library fixes have passed qualification
+(excluding the pending stage implementations above),
 but still need coordinated consumer adoption; do not claim those connector artifacts
 were rebuilt or rerun on the newer library. Latest verified code revisions are in
 the repair evidence above.
