@@ -314,20 +314,30 @@ class ReplayDriver(
         val (sql, pendingAttachment) = interceptAttach(substituted)
         progress.checkActive()
         val conn = oracle.connection(record.connection)
-        return try {
+        try {
             conn.createStatement().use { it.execute(sql) }
-            progress.checkActive()
-            if (pendingAttachment != null && !engineConnected) {
-                engine?.connect(pendingAttachment)
-                engineConnected = true
-                engineAlias = pendingAlias
-                engineTarget = pendingTarget
-            }
-            trackTransaction(sql, record.connection)
-            statementSucceeded(record)
         } catch (e: SQLException) {
-            statementErrored(record, e, oracle)
+            return statementErrored(record, e, oracle)
         }
+        progress.checkActive()
+        trackTransaction(sql, record.connection)
+        val outcome = statementSucceeded(record)
+        if (outcome !is RecordOutcome.Pass || pendingAttachment == null || engineConnected) return outcome
+        val mirror = engine ?: return outcome
+        // The oracle already succeeded. Adapter exceptions cannot satisfy its SQL error expectation.
+        runCatching { mirror.connect(pendingAttachment) }.getOrElse { failure ->
+            progress.checkActive()
+            engineConnected = false
+            engineAlias = null
+            engineTarget = null
+            mirrorUnavailableReason = "adapter-setup-failed"
+            return RecordOutcome.Fail(record, "engine '${mirror.name}' connect failed: ${firstLine(failure)}")
+        }
+        progress.checkActive()
+        engineConnected = true
+        engineAlias = pendingAlias
+        engineTarget = pendingTarget
+        return outcome
     }
 
     /** `statement ok` and `statement maybe` accept success; `statement error` must fail (any message). */
