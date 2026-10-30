@@ -6,7 +6,7 @@
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in on development code. DuckLake 1.1 writes remain disabled.
 - Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.0**. Stable 0.12.0 retains its historical pins.
-- Optional direct Java Quack JDBC: **0.10.0**; see the [driver update scan](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.10.0-2026-10-28.md).
+- Optional direct Java Quack JDBC: **0.11.0**; see the [driver update verification](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.11.0-2026-10-29.md).
 - Published libraries target **Java 17**. Building the repository requires JDK 25.
 - Applications supply their JDBC drivers and access to the data-file location.
 
@@ -16,7 +16,7 @@
 | MySQL | `jdbc:mysql://host/catalog` | Supply the MySQL JDBC driver; transactional-DDL limits still apply |
 | Local DuckDB | `jdbc:duckdb:/path/catalog.db` | DuckDB JDBC 2.0.0.0 |
 | Native Quack | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC and native Quack/DuckLake extensions |
-| Direct Java Quack | `jdbc:quack://host:9494` | `dev.brikk.duckdb:quack-jdbc:0.10.0`; optional `/existing-server-catalog` |
+| Direct Java Quack | `jdbc:quack://host:9494` | `dev.brikk.duckdb:quack-jdbc:0.11.0`; optional `/existing-server-catalog` |
 
 Pass Quack tokens in `catalogDatabasePassword`, not shared URLs. The direct Java
 route uses ordinary remote JDBC transactions and does not require embedded DuckDB
@@ -236,7 +236,7 @@ The original [shipping qualification](../dev-docs/UPGRADE-DUCKDB-2.0.0.md) cover
 2.0 JDBC/local/native-Quack and Java Quack 0.8.0 routes separately, including protocol
 v3 without embedded DuckDB in the direct Java reader. Default-off final inline reads
 and all 1.1 writes remain guarded. Existing constructors and wire shapes are unchanged.
-The subsequent 0.10.0 driver-only scan is recorded separately above; it does not
+The subsequent 0.10.0 scan and current 0.11.0 verification are recorded separately; they do not
 relabel that earlier full engine/corpus run as having used the newer driver.
 
 Native probes have reproduced CDC, inline-flush, statistics, BLOB, lineage and

@@ -117,7 +117,7 @@ class TestJdbcDucklakeCatalogDirectQuack {
 
         val properties = Properties().apply { setProperty("token", server.getToken()) }
         DriverManager.getConnection(url(), properties).use { connection ->
-            assertThat(connection.metaData.driverVersion).isEqualTo("0.10.0")
+            assertThat(connection.metaData.driverVersion).isEqualTo("0.11.0")
             connection.createStatement().use { statement ->
                 statement.execute("INSERT INTO ducklake_files_scheduled_for_deletion " +
                     "VALUES (700000, 'raw.parquet', true, TIMESTAMPTZ '2020-01-01 00:00:00+00')")

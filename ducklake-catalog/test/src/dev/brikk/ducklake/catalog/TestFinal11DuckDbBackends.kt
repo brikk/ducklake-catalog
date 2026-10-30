@@ -87,7 +87,7 @@ internal class TestFinal11DuckDbBackends {
                     assertThat(caps.accessRoute).isEqualTo(route.label)
                     assertThat(caps.engineVersion).isEqualTo("v2.0.0")
                     assertThat(caps.engineSourceId).isEqualTo("d54cbbe3df")
-                    assertThat(caps.jdbcDriverVersion).isEqualTo(if (route == Final11ReadRoute.JAVA_QUACK) "0.10.0" else "1.0")
+                    assertThat(caps.jdbcDriverVersion).isEqualTo(if (route == Final11ReadRoute.JAVA_QUACK) "0.11.0" else "1.0")
                     assertThat(caps.ducklakeExtensionVersion).isNull() // Metadata server/RO file engine did not load the writer extension.
                     assertThat(caps.quackExtensionVersion).isEqualTo(if (route == Final11ReadRoute.LOCAL_DUCKDB) null else "f96420ed46")
                     assertThat(caps.unsignedExtensionsAllowed).isFalse()
