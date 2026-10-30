@@ -2944,6 +2944,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         requireCatalogWritesSupported(pooledDsl, registersFiles = true)
     }
 
+    /** Snapshot APIs cannot author commit information; never silently bypass the native policy. */
+    private fun requireSnapshotCommitInformationSupported(ctx: DSLContext) {
+        if (lockedGlobalMetadataValue(ctx, "require_commit_message") == "true") {
+            throw DucklakeInvalidOperationException(
+                "Snapshot-producing writes are unsupported when require_commit_message=true: " +
+                    "these catalog APIs cannot supply snapshot author/message information",
+            )
+        }
+    }
+
     private fun lockedGlobalMetadataValue(ctx: DSLContext, key: String): String? {
         val meta = DUCKLAKE_METADATA
         val query = ctx.select(meta.VALUE).from(meta).where(meta.KEY.eq(key)).and(meta.SCOPE.isNull).limit(2)
@@ -3218,6 +3228,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     beforeWriteTransactionAction.run()
 
                     requireCatalogWritesSupported(txDsl, registersFiles)
+                    requireSnapshotCommitInformationSupported(txDsl)
 
                     executeWriteAction(tx, action, transactionStartSnapshotId[0])
 

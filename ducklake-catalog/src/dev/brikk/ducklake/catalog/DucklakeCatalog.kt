@@ -18,6 +18,10 @@ import java.time.Instant
 /**
  * Interface for Ducklake SQL-based catalog operations.
  * Abstracts access to the 28 Ducklake metadata tables.
+ *
+ * Snapshot-producing writes reject catalog-scoped `require_commit_message=true` with
+ * [DucklakeInvalidOperationException]: these APIs cannot supply author/message information.
+ * Non-snapshot maintenance does not acquire this additional requirement.
  */
 interface DucklakeCatalog : AutoCloseable {
     /**

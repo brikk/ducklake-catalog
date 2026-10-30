@@ -18,6 +18,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.Connection
 import java.sql.DriverManager
+import java.sql.ResultSet
+import java.sql.Statement
 import java.security.MessageDigest
 import java.util.Properties
 
@@ -71,14 +73,21 @@ internal class Final11DuckDbBackendFixture(
             val version = if (!initialized && migrate) "1.0" else formatVersion
             s.execute("ATTACH ${q("ducklake:$target")} AS lake(DATA_PATH ${q(data.toString())},METADATA_CATALOG 'meta'," +
                 "DUCKLAKE_VERSION '$version',AUTOMATIC_MIGRATION ${if (initialized && migrate) "TRUE" else "FALSE"})")
-            val rows = if (s.execute(sql)) s.resultSet.use { r -> buildList {
-                while (r.next()) add((1..r.metaData.columnCount).map { r.getString(it) })
-            } } else emptyList()
-            s.execute("DETACH lake")
             initialized = true
-            rows
+            executeAndDetach(c, s, sql)
         } }
     }
+
+    private fun executeAndDetach(c: Connection, s: Statement, sql: String): List<List<String?>> = try {
+        if (s.execute(sql)) nativeResultRows(s.resultSet) else emptyList()
+    } finally {
+        // A failing native statement closes itself; use a fresh statement to release the metadata handle.
+        c.createStatement().use { it.execute("DETACH lake") }
+    }
+
+    private fun nativeResultRows(rows: ResultSet): List<List<String?>> = rows.use { r -> buildList {
+        while (r.next()) add((1..r.metaData.columnCount).map { r.getString(it) })
+    } }
 
     fun metadata(sql: String) {
         metadataConnection().use { c -> c.createStatement().use { it.execute(sql) } }

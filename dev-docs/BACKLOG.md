@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **12 unfixed reproduced defects** and **4 implemented
+There are **16 open findings**: **11 unfixed reproduced defects** and **5 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -22,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| N13 | P2 | Catalog CREATE bypasses require_commit_message while native CREATE rejects; honor the policy or refuse unsupported message-required writes. |
 | N05 | P2 | Expiry accepts mutually exclusive criteria; timestamp-only DuckDB SQL also renders unsupported TIMESTAMPTZ precision. Keep validation/rendering subcases distinct. |
 | N03 | P2 | Valid nested field punctuation produces ambiguous legacy type strings; coordinate an escaping/structured-type contract with consumers. |
 | N19 | P2 | Boolean result hashes use true/false rather than upstream 1/0. |
@@ -44,6 +43,10 @@ all-types corpus queries whose native TIME24:00 values the pinned JDBC driver ca
 represent. The owner chose to keep those failures strict, without new skips or
 fabricated values. Full qualification remains blocked; do not redo these implemented
 changes or remove their active entries until the gate is resolved and rerun.
+The [N13 required-message guard](archive/FIX-N13-COMMIT-MESSAGE-2026-10-30.md)
+also passes its scoped regressions and returns to the same strict baseline on a
+second full run; its first full run's intermittent evolution failure is preserved
+in the evidence, not silently discarded.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -51,6 +54,7 @@ changes or remove their active entries until the gate is resolved and rerun.
 | H09 | P2 | Conversion sentinels removed; six TIME24:00 corpus failures now remain visible. Needs separately scoped lossless support and a passing qualification rerun. |
 | H08 | P2 | Oracle SQL expectations separated from adapter setup errors; shared batch qualification remains blocked. |
 | review R04 | P2 | Required PostgreSQL/MySQL read-session setup now fails closed regardless of format opt-in; all catalog regressions pass, but the project TIME24:00 qualification gate remains blocked. |
+| N13 | P2 | Required-message snapshot writes now refuse before mutation on every attempt; all 22 regressions and 1,140 catalog tests pass. Strict project qualification remains blocked. |
 
 ## Confirmed delivery-control gaps
 
