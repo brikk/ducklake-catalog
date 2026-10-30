@@ -65,7 +65,7 @@ class TestFinal11ReadMetadata {
         assertThat(caps.engineSourceId).isEqualTo("d54cbbe3df")
         assertThat(caps.ducklakeExtensionVersion).isEqualTo("417a9117f5")
         assertThat(caps.quackExtensionVersion).isEqualTo("f96420ed46")
-        assertThat(caps.jdbcDriverVersion).isEqualTo("0.11.0")
+        assertThat(caps.jdbcDriverVersion).isEqualTo("0.11.1")
         assertThat(caps.unsignedExtensionsAllowed).isFalse()
         assertThat(caps.observedColumns).contains(DucklakeMetadataColumn("ducklake_schema", "parent_schema_id", "BIGINT"))
         assertThat(listOf(caps.schemaParentIds, caps.boundExactness, caps.dataFileRowGroups, caps.deleteFileRowGroups)).containsOnly(true)

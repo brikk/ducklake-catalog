@@ -134,7 +134,7 @@ DuckDB **2.0.0** Quack server. For an initialized DuckLake 1.0 metadata catalog:
 |---|---|---|
 | Local DuckDB file | `jdbc:duckdb:/path/catalog.db` | `org.duckdb:duckdb_jdbc:2.0.0.0` |
 | Native Quack client | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC 2.0.0.0, native Quack/DuckLake extensions |
-| Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.11.0` |
+| Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.11.1` |
 
 For both remote routes, pass the token in `catalogDatabasePassword`, not in shared
 URLs. The direct Java route uses ordinary remote JDBC transactions and does not
@@ -145,15 +145,15 @@ metadata through the native extension. No 1.1 migration is enabled by this libra
 Quack serves metadata here; engines still need access to the actual Parquet data location.
 DuckDB 2.0 defaults new lakes to 1.1. For read/write access, initialize them with
 `DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE`; native Quack bootstrap does this
-explicitly. Direct Java Quack 0.11.0 uses protocol v3 on the official 2.0 server.
+explicitly. Direct Java Quack 0.11.1 uses protocol v3 on the official 2.0 server.
 See [compatibility](docs/COMPATIBILITY.md) and [shipping qualification](dev-docs/UPGRADE-DUCKDB-2.0.0.md).
-The [driver update verification](dev-docs/archive/UPGRADE-QUACK-JDBC-0.11.0-2026-10-29.md)
+The [driver update verification](dev-docs/archive/UPGRADE-QUACK-JDBC-0.11.1-2026-10-30.md)
 is separate from the earlier full engine/corpus qualification.
 
 ## Compatibility status
 
 - **Maintained development lane:** DuckLake **1.0**, DuckDB/JDBC **2.0.0 / 2.0.0.0**,
-  with optional direct Java Quack JDBC **0.11.0**. The catalog library targets Java 17;
+  with optional direct Java Quack JDBC **0.11.1**. The catalog library targets Java 17;
   building it requires JDK 25.
 - **DuckLake 1.1 / DuckDB 2.0:** a [limited opt-in read tier](docs/READING-1.1.md)
   is available through direct Java Quack for root-schema catalogs. It is not full

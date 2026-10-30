@@ -87,7 +87,7 @@ class TestDirectQuackPreview {
     fun publishedDriverUsesTheExactSignedV3ServerWithoutDuckDbJdbc() {
         assertThatThrownBy { Class.forName("org.duckdb.DuckDBDriver") }.isInstanceOf(ClassNotFoundException::class.java)
         legacy.connection().use { c ->
-            assertThat(c.metaData.driverVersion).isEqualTo("0.11.0")
+            assertThat(c.metaData.driverVersion).isEqualTo("0.11.1")
             assertThat(PreviewQuackServer.jdbcRows(c, "PRAGMA version").single().take(2))
                 .containsExactly(PreviewQuackServer.VERSION, PreviewQuackServer.CORE)
             assertThat(PreviewQuackServer.jdbcRows(c,

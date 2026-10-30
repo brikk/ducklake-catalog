@@ -7,8 +7,8 @@ JDBC **2.0.0.0**, matching native Quack peers and corpus `417a9117f5`.
 ## DuckDB 2.0 runtime upgrade
 
 - Applications supply their runtime drivers; align separately pinned DuckDB JDBC
-  and native Quack peers with 2.0.0. Direct Java Quack is now **0.11.0** (protocol v3);
-  see the [driver verification](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.11.0-2026-10-29.md).
+  and native Quack peers with 2.0.0. Direct Java Quack is now **0.11.1** (protocol v3);
+  see the [driver verification](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.11.1-2026-10-30.md).
 - New native DuckDB 2.0 lakes default to DuckLake 1.1. For catalog read/write access,
   initialize with `DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE`; the native
   Quack bootstrap does this explicitly. Never change a stored version string.

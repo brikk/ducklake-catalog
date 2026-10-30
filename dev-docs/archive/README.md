@@ -37,6 +37,7 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reproduction and execution reports
 
+- [Java Quack JDBC 0.11.1 adoption](UPGRADE-QUACK-JDBC-0.11.1-2026-10-30.md)
 - [Java Quack JDBC 0.11.0 adoption](UPGRADE-QUACK-JDBC-0.11.0-2026-10-29.md)
 - [Review R04: SQL-server read-session setup](FIX-REVIEW-R04-READ-SESSION-2026-10-29.md)
 - [Harness stages: H05, H09 and H08](FIX-HARNESS-STAGES-2026-10-29.md)
