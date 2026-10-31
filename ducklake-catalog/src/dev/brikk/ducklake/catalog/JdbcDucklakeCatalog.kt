@@ -419,20 +419,21 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         // LIMIT 1` — the LATEST-TIMED snapshot at or before the instant, which differs from the
         // highest-id one only when writers' clocks were not monotonic. snapshot_id DESC breaks ties
         // deterministically. SNAPSHOT_TIME is an OffsetDateTime column; compare at UTC.
-        val at = if (dialect == SQLDialect.DUCKDB) {
-            // jOOQ 3.19 renders TIMESTAMP(6) WITH TIME ZONE for bound OffsetDateTime values;
-            // DuckDB rejects precision on this type (including via direct Java Quack).
-            // Bind ISO-8601 text and use DuckDB's supported type spelling, without dropping UTC.
-            DSL.field("CAST({0} AS TIMESTAMPTZ)", snap.SNAPSHOT_TIME.dataType,
-                DSL.`val`(timestamp.toString())) // Instant includes seconds, even at an exact minute.
-        } else DSL.`val`(timestamp.atOffset(ZoneOffset.UTC))
         dsl.selectFrom(snap)
-            .where(snap.SNAPSHOT_TIME.le(at))
+            .where(snap.SNAPSHOT_TIME.le(snapshotTimestampParameter(timestamp)))
             .orderBy(snap.SNAPSHOT_TIME.desc(), snap.SNAPSHOT_ID.desc())
             .limit(1)
             .fetchOne()
             ?.let { toDucklakeSnapshot(it) }
     }
+
+    private fun snapshotTimestampParameter(timestamp: Instant): Field<OffsetDateTime> = if (dialect == SQLDialect.DUCKDB) {
+        // jOOQ 3.19 renders TIMESTAMP(6) WITH TIME ZONE for bound OffsetDateTime values;
+        // DuckDB rejects precision on this type (including via direct Java Quack).
+        // Bind ISO-8601 text and use DuckDB's supported type spelling, without dropping UTC.
+        DSL.field("CAST({0} AS TIMESTAMPTZ)", DUCKLAKE_SNAPSHOT.SNAPSHOT_TIME.dataType,
+            DSL.`val`(timestamp.toString())) // Instant includes seconds, even at an exact minute.
+    } else DSL.`val`(timestamp.atOffset(ZoneOffset.UTC))
 
     override fun listSnapshots(): List<DucklakeSnapshot> = guardInitialized {
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
@@ -1244,6 +1245,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     override fun listExpirableSnapshots(olderThan: Instant?, versions: Set<Long>?): List<Long> {
+        require(olderThan == null || versions == null) { "olderThan and versions are mutually exclusive" }
         val snap = DUCKLAKE_SNAPSHOT.`as`("snap")
         val maxId: Long = dsl.select(DSL.max(snap.SNAPSHOT_ID)).from(snap)
             .fetchOne(0, Long::class.java) ?: return emptyList()
@@ -1251,7 +1253,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         when {
             versions != null -> cond = cond.and(snap.SNAPSHOT_ID.`in`(versions))
             olderThan != null -> cond = cond.and(
-                snap.SNAPSHOT_TIME.lt(OffsetDateTime.ofInstant(olderThan, ZoneOffset.UTC)))
+                snap.SNAPSHOT_TIME.lt(snapshotTimestampParameter(olderThan)))
         }
         return dsl.select(snap.SNAPSHOT_ID).from(snap).where(cond)
             .orderBy(snap.SNAPSHOT_ID.asc())

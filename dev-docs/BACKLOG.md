@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **11 unfixed reproduced defects** and **5 implemented
+There are **16 open findings**: **10 unfixed reproduced defects** and **6 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -22,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| N05 | P2 | Expiry accepts mutually exclusive criteria; timestamp-only DuckDB SQL also renders unsupported TIMESTAMPTZ precision. Keep validation/rendering subcases distinct. |
 | N03 | P2 | Valid nested field punctuation produces ambiguous legacy type strings; coordinate an escaping/structured-type contract with consumers. |
 | N19 | P2 | Boolean result hashes use true/false rather than upstream 1/0. |
 | H06 | P2 | A tiny huge-loop header exhausts a bounded child JVM before rejection; budget parsing, nesting and expansion. |
@@ -47,6 +46,8 @@ The [N13 required-message guard](archive/FIX-N13-COMMIT-MESSAGE-2026-10-30.md)
 also passes its scoped regressions and returns to the same strict baseline on a
 second full run; its first full run's intermittent evolution failure is preserved
 in the evidence, not silently discarded.
+The [N05 expiry selector repair](archive/FIX-N05-EXPIRY-CRITERIA-2026-10-30.md)
+also passes all scoped checks with the same strict full-project blocker.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -55,6 +56,7 @@ in the evidence, not silently discarded.
 | H08 | P2 | Oracle SQL expectations separated from adapter setup errors; shared batch qualification remains blocked. |
 | review R04 | P2 | Required PostgreSQL/MySQL read-session setup now fails closed regardless of format opt-in; all catalog regressions pass, but the project TIME24:00 qualification gate remains blocked. |
 | N13 | P2 | Required-message snapshot writes now refuse before mutation on every attempt; all 22 regressions and 1,140 catalog tests pass. Strict project qualification remains blocked. |
+| N05 | P2 | Conflicting expiry criteria now reject; DuckDB timestamp selection uses the existing UTC-safe rendering. All 19 regressions and 1,159 catalog tests pass; strict project qualification remains blocked. |
 
 ## Confirmed delivery-control gaps
 

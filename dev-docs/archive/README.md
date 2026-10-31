@@ -37,6 +37,7 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reproduction and execution reports
 
+- [N05: expiry criteria and timestamp SQL](FIX-N05-EXPIRY-CRITERIA-2026-10-30.md)
 - [N13: required snapshot commit information](FIX-N13-COMMIT-MESSAGE-2026-10-30.md)
 - [Java Quack JDBC 0.11.1 adoption](UPGRADE-QUACK-JDBC-0.11.1-2026-10-30.md)
 - [Java Quack JDBC 0.11.0 adoption](UPGRADE-QUACK-JDBC-0.11.0-2026-10-29.md)

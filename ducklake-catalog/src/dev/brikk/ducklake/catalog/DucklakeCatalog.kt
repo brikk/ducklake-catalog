@@ -173,6 +173,7 @@ interface DucklakeCatalog : AutoCloseable {
      * expirable), optionally narrowed to those older than [olderThan] or to an explicit [versions]
      * set. [olderThan] and [versions] are mutually exclusive; pass both null to list all
      * non-latest snapshots. Returned ascending. Read-only (used by both the dry-run and the op).
+     * @throws IllegalArgumentException if both criteria are supplied, even when [versions] is empty.
      */
     fun listExpirableSnapshots(olderThan: java.time.Instant?, versions: Set<Long>?): List<Long>
 
