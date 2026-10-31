@@ -37,6 +37,7 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reproduction and execution reports
 
+- [H07: replay attachment transitions](FIX-H07-ATTACHMENT-STATE-2026-10-31.md)
 - [N05: expiry criteria and timestamp SQL](FIX-N05-EXPIRY-CRITERIA-2026-10-30.md)
 - [N13: required snapshot commit information](FIX-N13-COMMIT-MESSAGE-2026-10-30.md)
 - [Java Quack JDBC 0.11.1 adoption](UPGRADE-QUACK-JDBC-0.11.1-2026-10-30.md)

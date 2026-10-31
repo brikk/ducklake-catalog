@@ -49,15 +49,6 @@ class ReplayDriver(
     companion object {
         const val DEFAULT_MIRROR_CAP: Int = 40
 
-        private val ATTACH_PATTERN =
-            Regex(
-                "ATTACH\\s+(?:OR\\s+REPLACE\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?'ducklake:([^']+)'(?:\\s+AS\\s+(\\w+))?" +
-                    "(?:\\s*\\(([^)]*)\\))?",
-                RegexOption.IGNORE_CASE,
-            )
-        private val DATA_PATH_OPTION = Regex("DATA_PATH\\s+'([^']*)'", RegexOption.IGNORE_CASE)
-        private val SNAPSHOT_PIN = Regex("SNAPSHOT_(VERSION|TIME)", RegexOption.IGNORE_CASE)
-        private val DETACH_PATTERN = Regex("^\\s*DETACH\\s+(?:DATABASE\\s+)?(?:IF\\s+EXISTS\\s+)?([A-Za-z_][A-Za-z0-9_]*)", RegexOption.IGNORE_CASE)
         private val TXN_BEGIN = Regex("^\\s*BEGIN\\b", RegexOption.IGNORE_CASE)
         private val TXN_END = Regex("^\\s*(COMMIT|ROLLBACK|ABORT)\\b", RegexOption.IGNORE_CASE)
         private val DML = Regex("^\\s*(insert|update|delete|merge|truncate)\\b", RegexOption.IGNORE_CASE)
@@ -79,14 +70,9 @@ class ReplayDriver(
         }
         return DuckDbOracle(repoRoot = repoRoot).use { oracle ->
             labelResults.clear()
-            rewrittenAttachments.clear()
-            attachDataPaths.clear()
+            attachments = ReplayAttachmentState(metadataRewriter)
             openTransactions.clear()
             mirrorsThisFile = 0
-            engineConnected = false
-            engineAlias = null
-            engineTarget = null
-            mirrorUnavailableReason = "not-attached"
             val halted = executeAll(file.records, oracle, emptyMap(), progress)
             progress.fileResult(file.path, halted)
         }
@@ -98,19 +84,7 @@ class ReplayDriver(
     private data class LabeledResult(val hash: String, val columns: Int)
     private val labelResults = mutableMapOf<String, LabeledResult>()
 
-    /** Per-file memo of original → rewritten DuckLake connection remainders. */
-    private val rewrittenAttachments = mutableMapOf<String, String>()
-
-    /** Per-file memo of original → DATA_PATH (re-attaches often omit options). */
-    private val attachDataPaths = mutableMapOf<String, String>()
-    private var engineConnected = false
-    private var mirrorUnavailableReason = "not-attached"
-
-    /** Alias and (rewritten) metadata target of the lake the engine currently mirrors. */
-    private var engineAlias: String? = null
-    private var engineTarget: String? = null
-    private var pendingAlias: String? = null
-    private var pendingTarget: String? = null
+    private var attachments = ReplayAttachmentState(metadataRewriter)
 
     /**
      * Connections (by label, null = root) with an open oracle transaction.
@@ -128,81 +102,6 @@ class ReplayDriver(
      * samples the first N mirrors per file.
      */
     private var mirrorsThisFile = 0
-
-    /**
-     * Detects a DuckLake ATTACH, applies the metadata rewrite, and returns the
-     * SQL to execute plus the attachment to announce on success (null when the
-     * statement is not a ducklake ATTACH or the engine is already connected).
-     */
-    private fun interceptAttach(sql: String): Pair<String, OracleAttachment?> {
-        if (interceptDetach(sql)) return sql to null
-        val m = ATTACH_PATTERN.find(sql) ?: return sql to null
-        val options = m.groupValues[3]
-        val dataPath = DATA_PATH_OPTION.find(options)?.groupValues?.get(1)
-        val original = m.groupValues[1]
-        val known = rewrittenAttachments[original]
-        if (known == null && dataPath == null) {
-            // FIRST attach of a lake without DATA_PATH: DuckLake derives a
-            // default from a LOCAL metadata path — a rewritten backend has no
-            // equivalent. Attach as written; the file replays oracle-only.
-            // (RE-attaches without options must keep hitting the rewritten
-            // backend — the memo check above handles them.)
-            return sql to null
-        }
-        val rewritten =
-            known ?: rewrittenAttachments.getOrPut(original) { metadataRewriter?.invoke(original) ?: original }
-        if (dataPath != null) attachDataPaths[original] = dataPath
-        val effectiveSql =
-            if (rewritten == original) sql else sql.replace("'ducklake:$original'", "'ducklake:$rewritten'")
-        if (SNAPSHOT_PIN.containsMatchIn(options)) {
-            // Pinned (time-travel) attach: the oracle now reads an old
-            // snapshot; the engine would read latest. Stop mirroring for the
-            // rest of the file — divergence is expected, not a bug.
-            engineConnected = false
-            mirrorUnavailableReason = "snapshot-pinned"
-            return effectiveSql to null
-        }
-        val alias =
-            m.groupValues[2].ifEmpty {
-                original.substringAfterLast('/').substringBefore('.') // duckdb derives from filename
-            }
-        if (engine == null || !mirrorCanStart(rewritten)) return effectiveSql to null
-        val effectiveDataPath = dataPath ?: attachDataPaths[original] ?: ""
-        pendingAlias = alias
-        pendingTarget = rewritten
-        return effectiveSql to OracleAttachment(rewritten, effectiveDataPath, alias)
-    }
-
-    /**
-     * `DETACH <alias>` of the lake the engine mirrors: a later ATTACH (often re-using the alias for a
-     * DIFFERENT lake) must reconnect the engine rather than mirror against the stale one. Returns
-     * true when [sql] is a DETACH (mirroring state updated as needed).
-     */
-    private fun interceptDetach(sql: String): Boolean {
-        val d = DETACH_PATTERN.find(sql) ?: return false
-        if (engineConnected && d.groupValues[1].equals(engineAlias, ignoreCase = true)) {
-            engineConnected = false
-            engineAlias = null
-            mirrorUnavailableReason = "detached"
-        }
-        return true
-    }
-
-    /**
-     * Whether a new mirror connection may be announced for [rewrittenTarget]. While already
-     * connected, a SECOND, different lake attached alongside the mirrored one stops mirroring for
-     * the rest of the file — the engine knows only the first, so mirrored queries against the new
-     * alias would diverge for the wrong reason.
-     */
-    private fun mirrorCanStart(rewrittenTarget: String): Boolean {
-        if (!engineConnected) return true
-        if (rewrittenTarget != engineTarget) {
-            engineConnected = false
-            engineAlias = null
-            mirrorUnavailableReason = "multiple-lakes"
-        }
-        return false
-    }
 
     private fun findUnsupported(records: List<SltRecord>): SltUnsupported? {
         for (r in records) {
@@ -311,7 +210,8 @@ class ReplayDriver(
         bindings: Map<String, String>,
     ): RecordOutcome {
         val substituted = substituteAll(record.sql, bindings, oracle)
-        val (sql, pendingAttachment) = interceptAttach(substituted)
+        val prepared = attachments.prepare(substituted)
+        val sql = prepared.sql
         progress.checkActive()
         val conn = oracle.connection(record.connection)
         try {
@@ -321,22 +221,18 @@ class ReplayDriver(
         }
         progress.checkActive()
         trackTransaction(sql, record.connection)
+        val pendingAttachment = attachments.succeeded(prepared)
         val outcome = statementSucceeded(record)
-        if (outcome !is RecordOutcome.Pass || pendingAttachment == null || engineConnected) return outcome
+        if (outcome !is RecordOutcome.Pass || pendingAttachment == null) return outcome
         val mirror = engine ?: return outcome
         // The oracle already succeeded. Adapter exceptions cannot satisfy its SQL error expectation.
         runCatching { mirror.connect(pendingAttachment) }.getOrElse { failure ->
             progress.checkActive()
-            engineConnected = false
-            engineAlias = null
-            engineTarget = null
-            mirrorUnavailableReason = "adapter-setup-failed"
+            attachments.connectionFailed()
             return RecordOutcome.Fail(record, "engine '${mirror.name}' connect failed: ${firstLine(failure)}")
         }
         progress.checkActive()
-        engineConnected = true
-        engineAlias = pendingAlias
-        engineTarget = pendingTarget
+        attachments.connectionSucceeded(pendingAttachment)
         return outcome
     }
 
@@ -527,14 +423,14 @@ class ReplayDriver(
     }
 
     /**
-     * Mirror gate: engineConnected is per-file — never mirror against a
+     * Mirror gate: attachment state is per-file — never mirror against a
      * previous file's catalog, a pinned attach, an un-rewritten lake, inside
      * an open oracle transaction (uncommitted state is invisible to the
      * engine by design), past the per-file cap, or SQL the engine rejects.
      */
     private fun mirrorSkipReason(record: SltQuery, sql: String, mirror: ReplayReadEngine): String? =
         when {
-            !engineConnected -> mirrorUnavailableReason
+            !attachments.connected -> attachments.unavailableReason
             record.connection in openTransactions -> "transaction-open"
             mirrorsThisFile >= mirrorCapPerFile -> "mirror-cap"
             !mirror.accepts(sql) -> "dialect-rejected"
