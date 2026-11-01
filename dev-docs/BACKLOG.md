@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **6 unfixed reproduced defects** and **10 implemented
+There are **16 open findings**: **5 unfixed reproduced defects** and **11 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -26,7 +26,6 @@ not production incident frequency.
 | H11 | P2 | Mixed skipif conjunctions use the wrong per-term skip policy. |
 | H12 | P2 | Truncated loops become runnable loops rather than malformed records. |
 | H13 | P2 | Nested reuse of an iterator name substitutes the inner value instead of upstream outermost-first behavior. |
-| H14 | P2 | DML RETURNING mutates then fails through executeUpdate; support results/counts without a second mutation. |
 | H16 | P2 | Golden substitution discards valid raw expectations. |
 
 ## Implemented repairs pending qualification
@@ -56,6 +55,11 @@ its full run also retains only the parked strict baseline.
 The [N19 typed Boolean hash repair](archive/FIX-N19-BOOLEAN-HASHES-2026-11-01.md)
 passes its hash/label/sort/type-provenance checks on Java17/25, with raw/live row
 representations unchanged and the same full-project qualification boundary.
+The [H14 single-execution repair](archive/FIX-H14-DML-RETURNING-2026-11-01.md)
+passes all13 new regressions and the eight existing integrity controls on Java17/25.
+Full replay198/199 retains the same strict TIME baseline. Its full run and an
+unchanged Quack-only repeat additionally expose aborted-transaction failures in
+different direct-Java tests; those failures remain open, not waived as baseline.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -69,6 +73,7 @@ representations unchanged and the same full-project qualification boundary.
 | N03 | P2 | Unsafe nested field names now quote unambiguously; the shared parser preserves names/case. All 18 new regressions and 1,177 catalog tests pass. Consumer adoption and strict project qualification remain pending. |
 | H15 | P2 | Pinned native floating text is now JVM-independent, including FLOAT fallback and signed NaN. Both JVMs pass36 focused tests and100K paired native samples; full replay167/168 retains the parked strict baseline. |
 | N19 | P2 | Scalar Boolean hashes now use retained SQL metadata and native1/0 before sorting; VARCHAR/nested/raw rows and the untyped descriptor remain unchanged. All18 new tests pass; full replay185/186 retains the parked strict baseline. |
+| H14 | P2 | DML query records now consume typed rows or large changed-row counts from one standard JDBC execution. All13 regressions pass on Java17/25; full replay198/199 retains the parked strict baseline. Project qualification also records the separate Quack transaction failures above. |
 
 ## Confirmed delivery-control gaps
 

@@ -51,7 +51,6 @@ class ReplayDriver(
 
         private val TXN_BEGIN = Regex("^\\s*BEGIN\\b", RegexOption.IGNORE_CASE)
         private val TXN_END = Regex("^\\s*(COMMIT|ROLLBACK|ABORT)\\b", RegexOption.IGNORE_CASE)
-        private val DML = Regex("^\\s*(insert|update|delete|merge|truncate)\\b", RegexOption.IGNORE_CASE)
         private const val REGEX_PREFIX = "<REGEX>:"
         private const val NOT_REGEX_PREFIX = "<!REGEX>:"
 
@@ -331,22 +330,17 @@ class ReplayDriver(
     private data class QueryResult(val rows: List<List<String?>>, val types: List<String>, val noResult: Boolean = false)
 
     private fun executeQuerySql(conn: java.sql.Connection, sql: String): QueryResult {
-        // DML under `query` expects the count; execute() leaves it at -1 in DuckDB JDBC.
-        if (DML.containsMatchIn(sql)) {
-            return conn.createStatement().use { st ->
-                QueryResult(listOf(listOf(st.executeUpdate(sql).toString())), listOf("BIGINT"))
-            }
-        }
         return conn.createStatement().use { st ->
             // Keep direct execution: preparing can bind side-effecting table functions twice.
-            // A genuine non-result command is distinct from an empty typed SELECT result set.
+            // The JDBC outcome, not SQL spelling or column aliases, distinguishes RETURNING
+            // (including empty typed results), changed-row counts, and genuine no-result commands.
             if (st.execute(sql)) {
                 st.resultSet.use { rs ->
                     val types = (1..rs.metaData.columnCount).map { rs.metaData.getColumnTypeName(it) }
                     QueryResult(GoldenComparator.readRows(rs), types)
                 }
             } else {
-                val count = st.updateCount
+                val count = st.largeUpdateCount
                 if (count >= 0) QueryResult(listOf(listOf(count.toString())), listOf("BIGINT"))
                 else QueryResult(emptyList(), emptyList(), noResult = true)
             }
