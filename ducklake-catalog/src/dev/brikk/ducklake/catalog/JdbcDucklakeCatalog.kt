@@ -5792,7 +5792,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             "struct" -> {
                 val children = childrenByParent.getOrDefault(column.columnId, emptyList())
                 val fields = children.joinToString(",") { child ->
-                    child.columnName + ":" + resolveColumnType(child, childrenByParent)
+                    DucklakeTypeSignature.fieldName(child.columnName) + ":" + resolveColumnType(child, childrenByParent)
                 }
                 "struct<$fields>"
             }

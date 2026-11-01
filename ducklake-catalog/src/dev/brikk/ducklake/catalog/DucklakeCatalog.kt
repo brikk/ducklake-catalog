@@ -77,6 +77,8 @@ interface DucklakeCatalog : AutoCloseable {
 
     /**
      * Get top-level columns for a table at the given snapshot (nested types resolved into type strings).
+     * Non-ASCII-identifier STRUCT field names are double-quoted, with embedded quotes doubled.
+     * Use [DucklakeTypeSignature.parse] instead of splitting or lowercasing the whole type string.
      */
     fun getTableColumns(tableId: Long, snapshotId: Long): List<DucklakeColumn>
 

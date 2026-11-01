@@ -37,6 +37,7 @@ User contracts: [docs](../../docs/README.md).
 
 ## Reproduction and execution reports
 
+- [N03: nested-type signatures and consumer handoff](FIX-N03-NESTED-TYPES-2026-11-01.md)
 - [Java Quack JDBC 0.12.0 adoption](UPGRADE-QUACK-JDBC-0.12.0-2026-10-31.md)
 - [H07: replay attachment transitions](FIX-H07-ATTACHMENT-STATE-2026-10-31.md)
 - [N05: expiry criteria and timestamp SQL](FIX-N05-EXPIRY-CRITERIA-2026-10-30.md)

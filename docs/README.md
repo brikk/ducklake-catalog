@@ -4,6 +4,7 @@ For dependency examples and configuration, start with the [project README](../RE
 
 - [Compatibility and transport support](COMPATIBILITY.md)
 - [Conservative opt-in 1.1 reads](READING-1.1.md)
+- [Nested-type signatures and quoted field names](NESTED-TYPE-SIGNATURES.md)
 - [0.13.0-SNAPSHOT upgrade guidance](SNAPSHOT-UPGRADE.md)
 - [COMMIT outcomes and producer cleanup](COMMIT-OUTCOME-CONTRACT.md)
 - Release notes: [0.12.0](releases/RELEASE-0.12.0.md),

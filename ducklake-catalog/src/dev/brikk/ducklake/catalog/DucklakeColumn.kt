@@ -17,6 +17,8 @@ import com.fasterxml.jackson.annotation.JsonInclude
 
 /**
  * Represents a column from the ducklake_column table.
+ * [DucklakeCatalog.getTableColumns] resolves nested [columnType] values into catalog signatures;
+ * parent-aware APIs instead retain stored type tags and separate parent/child rows.
  */
 @JvmRecord
 @JacksonSerializedInternalJavaCompatibleClass

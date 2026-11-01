@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **9 unfixed reproduced defects** and **7 implemented
+There are **16 open findings**: **8 unfixed reproduced defects** and **8 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -22,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| N03 | P2 | Valid nested field punctuation produces ambiguous legacy type strings; coordinate an escaping/structured-type contract with consumers. |
 | N19 | P2 | Boolean result hashes use true/false rather than upstream 1/0. |
 | H06 | P2 | A tiny huge-loop header exhausts a bounded child JVM before rejection; budget parsing, nesting and expansion. |
 | H11 | P2 | Mixed skipif conjunctions use the wrong per-term skip policy. |
@@ -49,6 +48,10 @@ The [N05 expiry selector repair](archive/FIX-N05-EXPIRY-CRITERIA-2026-10-30.md)
 also passes all scoped checks with the same strict full-project blocker.
 The [H07 attachment-state repair](archive/FIX-H07-ATTACHMENT-STATE-2026-10-31.md)
 passes its transition/coverage/setup regressions, also pending strict qualification.
+The [N03 nested-type repair](archive/FIX-N03-NESTED-TYPES-2026-11-01.md) passes
+its library regressions and Java17/25 API checks. Its corrected grammar requires
+[coordinated Trino/Doris adoption](HANDOFF-N03-NESTED-TYPES-2026-11-01.md), not a
+silent consumer cutover or a claim that those plugins were verified here.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -59,6 +62,7 @@ passes its transition/coverage/setup regressions, also pending strict qualificat
 | N13 | P2 | Required-message snapshot writes now refuse before mutation on every attempt; all 22 regressions and 1,140 catalog tests pass. Strict project qualification remains blocked. |
 | N05 | P2 | Conflicting expiry criteria now reject; DuckDB timestamp selection uses the existing UTC-safe rendering. All 19 regressions and 1,159 catalog tests pass; strict project qualification remains blocked. |
 | H07 | P2 | Attachment state now follows successful SQL, with persistent multi-lake/pinned gates and quoted DETACH support. All 16 transition regressions pass; full replay is 161/162, blocked only by the strict TIME records. |
+| N03 | P2 | Unsafe nested field names now quote unambiguously; the shared parser preserves names/case. All 18 new regressions and 1,177 catalog tests pass. Consumer adoption and strict project qualification remain pending. |
 
 ## Confirmed delivery-control gaps
 
