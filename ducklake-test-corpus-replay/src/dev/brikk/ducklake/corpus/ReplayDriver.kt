@@ -2,6 +2,8 @@ package dev.brikk.ducklake.corpus
 
 import dev.brikk.ducklake.slt.SltConditional
 import dev.brikk.ducklake.slt.SltFile
+import dev.brikk.ducklake.slt.SltLimitExceeded
+import dev.brikk.ducklake.slt.SltLimits
 import dev.brikk.ducklake.slt.SltLoop
 import dev.brikk.ducklake.slt.SltQuery
 import dev.brikk.ducklake.slt.SltRecord
@@ -63,17 +65,25 @@ class ReplayDriver(
     internal fun replay(file: SltFile, progress: ReplayProgress): FileResult {
         this.progress = progress
         progress.checkActive()
+        // Public model constructors can bypass the parser; validate before recursive scans or IO.
+        try { SltLimits.validate(file) }
+        catch (e: SltLimitExceeded) { return progress.fileResult(file.path, "RESOURCE LIMIT: ${e.message}") }
         val unsupported = findUnsupported(file.records)
         if (unsupported != null) {
             return progress.fileResult(file.path, "unsupported construct '${unsupported.directive}' at line ${unsupported.line}")
         }
-        return DuckDbOracle(repoRoot = repoRoot).use { oracle ->
-            labelResults.clear()
-            attachments = ReplayAttachmentState(metadataRewriter)
-            openTransactions.clear()
-            mirrorsThisFile = 0
-            val halted = executeAll(file.records, oracle, emptyMap(), progress)
-            progress.fileResult(file.path, halted)
+        return try {
+            DuckDbOracle(repoRoot = repoRoot).use { oracle ->
+                labelResults.clear()
+                attachments = ReplayAttachmentState(metadataRewriter)
+                openTransactions.clear()
+                mirrorsThisFile = 0
+                val halted = executeAll(file.records, oracle, emptyMap(), progress)
+                progress.fileResult(file.path, halted)
+            }
+        } catch (e: SltLimitExceeded) {
+            // Dynamic env expansion can exhaust its budget later; keep every completed outcome.
+            progress.fileResult(file.path, "RESOURCE LIMIT: ${e.message}")
         }
     }
 
@@ -162,6 +172,7 @@ class ReplayDriver(
         bindings: Map<String, String>,
         outcomes: ReplayProgress,
     ): String? {
+        oracle.textBudget.inspect(record.engine)
         val cond = evalCondition(record.engine, bindings)
         val run = if (record.skipIf) !cond else cond
         if (run) {
@@ -189,15 +200,16 @@ class ReplayDriver(
     private fun bindLoops(text: String, bindings: Map<String, String>, oracle: DuckDbOracle): String {
         var s = text
         for ((iterator, rawValue) in bindings) {
-            val names = iterator.split(',')
+            val names = SltLimits.commaParts(iterator)
             val value = oracle.substitute(rawValue)
-            val values = if (names.size == 1) listOf(value) else value.split(',')
+            val values = if (names.size == 1) listOf(value) else SltLimits.commaParts(value)
             check(names.size == values.size) {
                 "foreach loop: number of commas in loop iterator ($iterator) does not match number of commas in " +
                     "replacement ($value)"
             }
             for (i in names.indices) {
-                s = s.replace("\${${names[i]}}", values[i]).replace("{${names[i]}}", values[i])
+                s = oracle.textBudget.replace(s, "\${${names[i]}}", values[i])
+                s = oracle.textBudget.replace(s, "{${names[i]}}", values[i])
             }
         }
         return s

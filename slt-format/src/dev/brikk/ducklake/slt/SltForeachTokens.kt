@@ -37,9 +37,20 @@ object SltForeachTokens {
 
     /** Expands the raw value tokens of a `foreach` directive (everything after the iterator name). */
     fun expand(tokens: List<String>): List<String> {
+        return expand(tokens, SltLimits.MAX_LOOP_VALUES, 1)
+    }
+
+    internal fun expand(tokens: List<String>, maxValues: Int, line: Int): List<String> {
+        SltLimits.check(tokens.size.toLong(), SltLimits.MAX_LINES.toLong(), "foreach tokens", line)
+        var chars = 0L
+        for (token in tokens) {
+            chars += token.length
+            SltLimits.check(chars, SltLimits.MAX_SOURCE_CHARS.toLong(), "foreach token characters", line)
+        }
         val result = mutableListOf<String>()
         for (token in tokens) {
-            if (!replace(token, result)) {
+            if (!replace(token, result, maxValues, line)) {
+                SltLimits.check(result.size.toLong() + 1, maxValues.toLong(), "foreach values", line)
                 result += token
             }
         }
@@ -47,7 +58,7 @@ object SltForeachTokens {
     }
 
     /** Upstream `ForEachTokenReplace`: true when [token] was consumed as a collection / exclusion. */
-    private fun replace(token: String, result: MutableList<String>): Boolean {
+    private fun replace(token: String, result: MutableList<String>, maxValues: Int, line: Int): Boolean {
         if (token.isEmpty()) return true
         val name = token.lowercase().trim()
         if (name[0] == '!') {
@@ -55,6 +66,7 @@ object SltForeachTokens {
             return result.remove(token.substring(1))
         }
         val collection = COLLECTIONS[name] ?: return false
+        SltLimits.check(result.size.toLong() + collection.size, maxValues.toLong(), "foreach values", line)
         result += collection
         return true
     }

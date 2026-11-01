@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **5 unfixed reproduced defects** and **11 implemented
+There are **16 open findings**: **4 unfixed reproduced defects** and **12 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -22,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| H06 | P2 | A tiny huge-loop header exhausts a bounded child JVM before rejection; budget parsing, nesting and expansion. |
 | H11 | P2 | Mixed skipif conjunctions use the wrong per-term skip policy. |
 | H12 | P2 | Truncated loops become runnable loops rather than malformed records. |
 | H13 | P2 | Nested reuse of an iterator name substitutes the inner value instead of upstream outermost-first behavior. |
@@ -60,6 +59,14 @@ passes all13 new regressions and the eight existing integrity controls on Java17
 Full replay198/199 retains the same strict TIME baseline. Its full run and an
 unchanged Quack-only repeat additionally expose aborted-transaction failures in
 different direct-Java tests; those failures remain open, not waived as baseline.
+The [H06 resource-budget repair](archive/FIX-H06-RESOURCE-BUDGETS-2026-11-01.md)
+passes all38 new regressions within117 focused checks on each of Java17/25,
+including isolated32MiB/256KiB heap/stack witnesses. Bounded reading/parsing now
+share the replay watchdog; public ASTs, loop products and substitution are bounded
+without truncation. The latest full run passes1,177 catalog,91 direct-Java Quack
+and80 SLT tests; replay207/208 retains exactly the six parked TIME failures, with
+the original corpus totals/exclusions unchanged. The later Quack pass is retained
+alongside, not substituted for or claimed as a fix to, the earlier failures.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -74,6 +81,7 @@ different direct-Java tests; those failures remain open, not waived as baseline.
 | H15 | P2 | Pinned native floating text is now JVM-independent, including FLOAT fallback and signed NaN. Both JVMs pass36 focused tests and100K paired native samples; full replay167/168 retains the parked strict baseline. |
 | N19 | P2 | Scalar Boolean hashes now use retained SQL metadata and native1/0 before sorting; VARCHAR/nested/raw rows and the untyped descriptor remain unchanged. All18 new tests pass; full replay185/186 retains the parked strict baseline. |
 | H14 | P2 | DML query records now consume typed rows or large changed-row counts from one standard JDBC execution. All13 regressions pass on Java17/25; full replay198/199 retains the parked strict baseline. Project qualification also records the separate Quack transaction failures above. |
+| H06 | P2 | Parsing/allocation/nesting/expansion budgets and the preparation watchdog are implemented; all38 new regressions pass on Java17/25. Full replay207/208 retains only the six parked TIME records, with no added exclusions or resource refusals. Strict project qualification remains pending. |
 
 ## Confirmed delivery-control gaps
 

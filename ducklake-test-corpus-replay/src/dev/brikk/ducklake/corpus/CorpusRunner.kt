@@ -1,6 +1,8 @@
 package dev.brikk.ducklake.corpus
 
 import dev.brikk.ducklake.slt.SltFile
+import dev.brikk.ducklake.slt.SltLimitExceeded
+import dev.brikk.ducklake.slt.SltLimits
 import dev.brikk.ducklake.slt.SltParser
 import java.nio.file.Files
 import java.nio.file.Path
@@ -8,7 +10,6 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import kotlin.io.path.extension
-import kotlin.io.path.readText
 import kotlin.io.path.relativeTo
 
 /**
@@ -26,8 +27,9 @@ class CorpusRunner(
     /** See [ReplayDriver]'s `metadataRewriter` — the backend axis. */
     private val metadataRewriter: ((String) -> String)? = null,
     /**
-     * Per-file watchdog: timeout freezes completed outcomes, interrupts the worker and waits a
-     * bounded grace period. Timeout remains a file-skip, NOT permission to erase earlier failures.
+     * Per-file watchdog covers source reading, parsing and replay: timeout freezes completed
+     * outcomes, interrupts the worker and waits a bounded grace period. Timeout remains a file-skip,
+     * NOT permission to erase earlier failures.
      * No later file (or subsequent run on this runner) may reuse shared engine/backend callbacks
      * after a timeout. A driver ignoring interruption may remain active until JVM exit; this is
      * quarantine, not a claim that arbitrary native/backend operations can be forcibly stopped.
@@ -70,22 +72,39 @@ class CorpusRunner(
                     ReplayProgress(engine?.name).fileResult(rel, "BLOCKED: $blocked; $worker")
                 }
                 curated != null -> ReplayProgress(engine?.name).fileResult(rel, "skip-list: $curated")
-                else -> replayGuarded(rel, SltParser.parse(rel, file.readText()))
+                else -> replayGuarded(rel) { SltParser.parse(rel, readSource(file)) }
             }
         }
         return CorpusReport(results)
     }
 
-    private fun replayGuarded(rel: String, parsed: SltFile): FileResult {
+    private fun readSource(file: Path): String = Files.newBufferedReader(file).use { reader ->
+        val out = StringBuilder()
+        val buffer = CharArray(8192)
+        while (true) {
+            if (Thread.currentThread().isInterrupted) throw InterruptedException("SLT source read interrupted")
+            val count = reader.read(buffer)
+            if (count < 0) break
+            if (out.length.toLong() + count > SltLimits.MAX_SOURCE_CHARS) {
+                throw SltLimitExceeded(1, "source characters exceed ${SltLimits.MAX_SOURCE_CHARS}")
+            }
+            out.append(buffer, 0, count)
+        }
+        out.toString()
+    }
+
+    /** Preparation is lazy so file IO and parser work live INSIDE the same quarantined watchdog. */
+    internal fun replayGuarded(rel: String, prepare: () -> SltFile): FileResult {
         // Per-file mutable driver state, plus a frozen progress prefix on timeout/crash. The
         // engine/rewriter are still shared; quarantine prevents their reuse after cancellation.
         // corpusRoot = <repo>/test/sql → repo root two levels up (for `data/` refs).
         val driver = ReplayDriver(engine, repoRoot = corpusRoot.parent?.parent, metadataRewriter = metadataRewriter)
         val progress = ReplayProgress(engine?.name)
         val body = {
-            runCatching { driver.replay(parsed, progress) }
+            runCatching { driver.replay(prepare(), progress) }
                 .getOrElse { e ->
-                    progress.fileResult(rel, "CRASH: ${e.message?.lineSequence()?.firstOrNull() ?: e}")
+                    val kind = if (e is SltLimitExceeded) "RESOURCE LIMIT" else "CRASH"
+                    progress.fileResult(rel, "$kind: ${e.message?.lineSequence()?.firstOrNull() ?: e}")
                 }
         }
         if (fileTimeoutSeconds <= 0) {
@@ -180,7 +199,9 @@ class CorpusReport(val files: List<FileResult>) {
         if (requireHalts > 0) {
             sb.appendLine("  halted mid-file by an unmet require $requireHalts (records above include theirs)")
         }
-        val otherHalts = haltedFiles.size - requireHalts
+        val resourceHalts = haltedFiles.count { it.fileSkipReason!!.startsWith("RESOURCE LIMIT:") }
+        if (resourceHalts > 0) sb.appendLine("  halted mid-file by resource limit $resourceHalts (records above include theirs)")
+        val otherHalts = haltedFiles.size - requireHalts - resourceHalts
         if (otherHalts > 0) {
             sb.appendLine("  halted mid-file by crash/timeout $otherHalts (records above include theirs)")
         }

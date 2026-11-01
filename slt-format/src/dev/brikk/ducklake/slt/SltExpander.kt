@@ -55,6 +55,7 @@ data class ConcreteRecord(
  * Non-SQL records ([SltRequire]) and constructs the parser could not model ([SltUnsupported])
  * are omitted rather than raised — callers that care about the unsupported frontier inspect the
  * parser output directly (skip-don't-throw).
+ * Resource refusals are different: [SltLimitExceeded] aborts expansion without returning a prefix.
  */
 object SltExpander {
 
@@ -69,99 +70,98 @@ object SltExpander {
      *               a per-file copy of this map as expansion proceeds.
      */
     fun expand(file: SltFile, engine: String, env: Map<String, String> = emptyMap()): List<ConcreteRecord> {
-        val out = mutableListOf<ConcreteRecord>()
+        SltLimits.validate(file)
+        return Expansion(file, engine, env).expand()
+    }
+
+    private class Expansion(private val file: SltFile, private val engine: String, env: Map<String, String>) {
+        private val budget = SltExpansionBudget().also { it.environment(env) }
+        private val out = mutableListOf<ConcreteRecord>()
         // Per-file, mutable: `test-env` accumulates here (as the driver's oracle does), visible to
         // all subsequent records. Loop bindings are layered on top per scope (see [walk]).
-        val accumulatedEnv = LinkedHashMap(env)
-        walk(file.path, file.records, engine, accumulatedEnv, emptyMap(), out)
-        return out
-    }
+        private val accumulatedEnv = LinkedHashMap(env)
 
-    private fun walk(
-        path: String,
-        records: List<SltRecord>,
-        engine: String,
-        env: MutableMap<String, String>,
-        bindings: Map<String, String>,
-        out: MutableList<ConcreteRecord>,
-    ) {
-        for (record in records) {
-            when (record) {
-                is SltTestEnv -> env[record.name] = substitute(record.value, env, bindings)
-                is SltStatement -> out += ConcreteRecord(
-                    substitute(record.sql, env, bindings),
-                    if (record.expectError) RecordKind.ERROR else RecordKind.OK,
-                    record.expectedError?.let { substituteEnv(it, env) },
-                    path,
-                    record.line,
-                    mayError = record.mayError,
-                )
-                is SltQuery -> out += ConcreteRecord(
-                    substitute(record.sql, env, bindings),
-                    RecordKind.QUERY,
-                    null,
-                    path,
-                    record.line,
-                )
-                is SltLoop -> for (value in record.values) {
-                    walk(path, record.body, engine, env, bindings + (record.variable to value), out)
+        fun expand(): List<ConcreteRecord> {
+            walk(file.records, emptyMap())
+            return out
+        }
+
+        private fun walk(records: List<SltRecord>, bindings: Map<String, String>) {
+            for (record in records) {
+                when (record) {
+                    is SltTestEnv -> accumulatedEnv[record.name] = budget.retain(substitute(record.value, bindings))
+                    is SltStatement -> out += ConcreteRecord(
+                        budget.retain(substitute(record.sql, bindings)),
+                        if (record.expectError) RecordKind.ERROR else RecordKind.OK,
+                        record.expectedError?.let { budget.retain(substituteEnv(it)) },
+                        file.path,
+                        record.line,
+                        mayError = record.mayError,
+                    )
+                    is SltQuery -> out += ConcreteRecord(
+                        budget.retain(substitute(record.sql, bindings)),
+                        RecordKind.QUERY,
+                        null,
+                        file.path,
+                        record.line,
+                    )
+                    is SltLoop -> for (value in record.values) {
+                        walk(record.body, bindings + (record.variable to value))
+                    }
+                    is SltConditional -> if (shouldRun(record, engine, bindings)) {
+                        walk(listOf(record.record), bindings)
+                    }
+                    is SltRequire -> {} // not SQL
+                    is SltUnsupported -> {} // skip-don't-throw: nothing runnable to emit
                 }
-                is SltConditional -> if (shouldRun(record, engine, bindings)) {
-                    walk(path, listOf(record.record), engine, env, bindings, out)
-                }
-                is SltRequire -> {} // not SQL
-                is SltUnsupported -> {} // skip-don't-throw: nothing runnable to emit
             }
         }
-    }
 
-    /** `skipif`/`onlyif` resolution — see [SltConditions] for the two dialects. */
-    private fun shouldRun(conditional: SltConditional, engine: String, bindings: Map<String, String>): Boolean {
-        val condition = SltConditions.evaluate(conditional.engine, engine, bindings)
-        return if (conditional.skipIf) !condition else condition
-    }
-
-    /** Env first (upstream `ReplaceKeywords`), then loop bindings outermost-first (`LoopReplacement`). */
-    private fun substitute(text: String, env: Map<String, String>, bindings: Map<String, String>): String {
-        var s = substituteEnv(text, env)
-        for ((iterator, value) in bindings) {
-            s = substituteLoop(s, iterator, substituteEnv(value, env))
+        /** `skipif`/`onlyif` resolution — see [SltConditions] for the two dialects. */
+        private fun shouldRun(conditional: SltConditional, engine: String, bindings: Map<String, String>): Boolean {
+            budget.inspect(conditional.engine)
+            val condition = SltConditions.evaluate(conditional.engine, engine, bindings)
+            return if (conditional.skipIf) !condition else condition
         }
-        return s
-    }
 
-    private fun substituteEnv(text: String, env: Map<String, String>): String {
-        // ${NAME} and {NAME} first (so a braced ${__TEST_DIR__} is resolved as the name
-        // "__TEST_DIR__" rather than mangled by the bare pass below); unknown names are left
-        // verbatim (still a valid SQL string literal).
-        var s = TEMPLATE.replace(text) { m -> env[m.groupValues[1]] ?: m.value }
-        // Then delimited bare keys (e.g. __TEST_DIR__) that the DuckDB SLT dialect references
-        // without ${}/{} braces.
-        for ((key, value) in env) {
-            if (key.length >= DELIMITED_KEY_MIN_LENGTH && key.startsWith("__") && key.endsWith("__")) {
-                s = s.replace(key, value)
+        /** Env first (upstream `ReplaceKeywords`), then loop bindings outermost-first (`LoopReplacement`). */
+        private fun substitute(text: String, bindings: Map<String, String>): String {
+            var s = substituteEnv(text)
+            for ((iterator, value) in bindings) {
+                s = substituteLoop(s, iterator, substituteEnv(value))
             }
+            return s
         }
-        return s
-    }
 
-    /**
-     * Upstream `ReplaceLoopIterator`: `${it}` then `{it}`, literal; a comma iterator name binds
-     * each part to the matching comma-separated part of [value] (arity mismatch is a hard error
-     * upstream — the parser already rejects it for raw values, so it can only arise from an env
-     * substitution introducing commas).
-     */
-    private fun substituteLoop(text: String, iterator: String, value: String): String {
-        val names = iterator.split(',')
-        val values = if (names.size == 1) listOf(value) else value.split(',')
-        require(names.size == values.size) {
-            "foreach loop: number of commas in loop iterator ($iterator) does not match number of commas in " +
-                "replacement ($value)"
+        private fun substituteEnv(text: String): String {
+            // ${NAME} and {NAME} first (so a braced ${__TEST_DIR__} is resolved as the name
+            // "__TEST_DIR__" rather than mangled by the bare pass below); unknown names stay verbatim.
+            var s = budget.replace(text, TEMPLATE) { m -> accumulatedEnv[m.groupValues[1]] ?: m.value }
+            for ((key, value) in accumulatedEnv) {
+                if (key.length >= DELIMITED_KEY_MIN_LENGTH && key.startsWith("__") && key.endsWith("__")) {
+                    s = budget.replace(s, key, value)
+                }
+            }
+            return s
         }
-        var s = text
-        for (i in names.indices) {
-            s = s.replace("\${${names[i]}}", values[i]).replace("{${names[i]}}", values[i])
+
+        /**
+         * Upstream `ReplaceLoopIterator`: `${it}` then `{it}`, literal; comma iterator names bind
+         * each matching part. Arity mismatch remains a hard error, not a resource refusal.
+         */
+        private fun substituteLoop(text: String, iterator: String, value: String): String {
+            val names = SltLimits.commaParts(iterator)
+            val values = if (names.size == 1) listOf(value) else SltLimits.commaParts(value)
+            require(names.size == values.size) {
+                "foreach loop: number of commas in loop iterator ($iterator) does not match number of commas in " +
+                    "replacement ($value)"
+            }
+            var s = text
+            for (i in names.indices) {
+                s = budget.replace(s, "\${${names[i]}}", values[i])
+                s = budget.replace(s, "{${names[i]}}", values[i])
+            }
+            return s
         }
-        return s
     }
 }

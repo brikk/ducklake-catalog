@@ -71,6 +71,10 @@ batch; this is an additional open qualification problem, not proof of a replay
 regression or an accepted flake. This full run must not be described as having only
 the parked TIME blocker. No assertion, fixture, timeout or driver pin is changed.
 
+The subsequent H06 full run passes all91 unchanged direct-Java Quack tests and
+reaches only the parked strict corpus baseline. That is a passing later execution,
+not a diagnosed fix for these earlier failures; their evidence remains preserved.
+
 Evidence: `build/verification/h14/` contains the red log/XML, per-JVM focused
 logs/XML, `full.log`, `full-exit.json`, `full-summary.json`, `full-xml/` and native
 JDBC probe output. Full verification uses the committed H15 workspace-temp/compiler

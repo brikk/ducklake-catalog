@@ -21,7 +21,7 @@ object SltConditions {
         if (!isLoopCondition(expr)) {
             return expr.equals(engine, ignoreCase = true)
         }
-        return expr.split("&&").all { term -> evaluateTerm(term.trim(), bindings) }
+        return expr.splitToSequence("&&").all { term -> evaluateTerm(term.trim(), bindings) }
     }
 
     fun isLoopCondition(expr: String): Boolean = expr.any { it == '=' || it == '<' || it == '>' }
@@ -29,7 +29,7 @@ object SltConditions {
     private fun evaluateTerm(term: String, bindings: Map<String, String>): Boolean {
         val op = OPERATORS.firstOrNull { term.contains(it) }
             ?: throw IllegalArgumentException("skipif/onlyif must be in the form of x=y or x>y, potentially separated by &&: $term")
-        val parts = term.split(op)
+        val parts = term.split(op, limit = 3)
         require(parts.size == 2) { "skipif/onlyif must be in the form of x=y or x>y, potentially separated by &&: $term" }
         val variable = parts[0].trim()
         val value = parts[1].trim()

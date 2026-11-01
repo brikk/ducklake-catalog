@@ -1,5 +1,6 @@
 package dev.brikk.ducklake.corpus
 
+import dev.brikk.ducklake.slt.SltExpansionBudget
 import org.duckdb.DuckDBConnection
 import java.io.IOException
 import java.nio.file.FileVisitResult
@@ -45,6 +46,7 @@ class DuckDbOracle(
     private val connections = mutableMapOf<String, Connection>()
     private val env = mutableMapOf<String, String>()
     private val loaded = mutableSetOf<String>()
+    internal val textBudget = SltExpansionBudget()
 
     init {
         root.createStatement().use { it.execute("SET timezone='UTC'") }
@@ -136,18 +138,18 @@ class DuckDbOracle(
 
     /** Applies template substitution: env vars, TEST_DIR forms, per-occurrence UUID. */
     fun substitute(text: String): String {
-        var s = text.replace("__TEST_DIR__", testDir.toString())
+        var s = textBudget.replace(text, "__TEST_DIR__", testDir.toString())
         // Repo-relative test-data references (read_parquet('data/...'),
         // ducklake_add_data_files(..., 'data/...')): upstream's harness runs
         // from the repo root; we resolve against the pinned submodule.
         if (repoRoot != null) {
-            s = s.replace("'data/", "'${repoRoot.resolve("data")}/")
+            s = textBudget.replace(s, "'data/", "'${repoRoot.resolve("data")}/")
             val duckdbRoot = System.getProperty("ducklake.corpus.duckdb.root")?.let(Path::of) ?: repoRoot.resolve("duckdb")
-            s = s.replace("'duckdb/data/", "'${duckdbRoot.resolve("data")}/")
+            s = textBudget.replace(s, "'duckdb/data/", "'${duckdbRoot.resolve("data")}/")
         }
         // ${NAME} and {NAME} forms; UUID is fresh per occurrence.
         val pattern = Regex("\\$?\\{([A-Za-z_][A-Za-z0-9_]*)}")
-        s = pattern.replace(s) { m ->
+        s = textBudget.replace(s, pattern) { m ->
             when (val name = m.groupValues[1]) {
                 "TEST_DIR" -> testDir.toString()
                 "UUID" -> UUID.randomUUID().toString()

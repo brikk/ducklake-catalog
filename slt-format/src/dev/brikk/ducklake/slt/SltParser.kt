@@ -5,6 +5,8 @@ package dev.brikk.ducklake.slt
  * the modeled subset). Parsing never throws on unknown or malformed constructs —
  * they surface as [SltUnsupported] so the driver can skip with a reason and the
  * corpus report can count the frontier.
+ * Resource ceilings are checked before eager allocations and recursive descent; exhaustion
+ * replaces the entire file with one resource-limit record, never a runnable prefix.
  *
  * Line semantics follow upstream `sqllogic_parser.cpp` exactly:
  *  - a line is a comment only when `#` is at column 0, and only a completely empty line
@@ -19,7 +21,16 @@ package dev.brikk.ducklake.slt
  */
 object SltParser {
 
-    fun parse(path: String, content: String): SltFile = Parse(path, content.lines()).parseFile()
+    fun parse(path: String, content: String): SltFile = try {
+        SltLimits.check(content.length.toLong(), SltLimits.MAX_SOURCE_CHARS.toLong(), "source characters", 1)
+        // Bound line-object allocation too, even for an input consisting only of newlines.
+        val lines = content.lineSequence().take(SltLimits.MAX_LINES + 1).toList()
+        SltLimits.check(lines.size.toLong(), SltLimits.MAX_LINES.toLong(), "source lines", 1)
+        Parse(path, lines).parseFile().also(SltLimits::validate)
+    } catch (e: SltLimitExceeded) {
+        // Refuse the WHOLE file, never return a runnable prefix after budget exhaustion.
+        SltFile(path, listOf(SltUnsupported(e.line, "resource-limit", e.message ?: "SLT resource limit")))
+    }
 
     /** Sort styles accepted by upstream `TestConfiguration::TryParseSortStyle`. */
     private val SORT_STYLES = mapOf(
@@ -39,6 +50,9 @@ object SltParser {
     private class Parse(private val path: String, private val lines: List<String>) {
 
         private var skipLevel = 0
+        private var depth = 0
+        private var recordCount = 0L
+        private var valueCount = 0L
 
         fun parseFile(): SltFile {
             val records = mutableListOf<SltRecord>()
@@ -48,7 +62,12 @@ object SltParser {
 
         private fun isEmptyOrComment(line: String): Boolean = line.isEmpty() || line.startsWith("#")
 
-        private fun tokensOf(line: String): List<String> = line.split(WHITESPACE).filter { it.isNotEmpty() }
+        private fun tokensOf(line: String): List<String> {
+            val tokens = line.splitToSequence(WHITESPACE).filter { it.isNotEmpty() }
+                .take(SltLimits.MAX_LOOP_VALUES + 3).toList()
+            SltLimits.check(tokens.size.toLong(), SltLimits.MAX_LOOP_VALUES.toLong() + 2, "directive tokens", 1)
+            return tokens
+        }
 
         /**
          * Parses from [from] into [out]; returns the index after the region. Inside a loop body
@@ -84,8 +103,15 @@ object SltParser {
         }
 
         /** Parses exactly one directive starting at the non-blank line [start]; returns the index after it. */
-        @Suppress("CyclomaticComplexMethod")
         private fun parseRecord(start: Int, out: MutableList<SltRecord>): Int {
+            SltLimits.check(++recordCount, SltLimits.MAX_RECORDS.toLong(), "records", start + 1)
+            SltLimits.check((depth + 1).toLong(), SltLimits.MAX_NESTING.toLong(), "nesting", start + 1)
+            depth++
+            return try { parseRecordBody(start, out) } finally { depth-- }
+        }
+
+        @Suppress("CyclomaticComplexMethod")
+        private fun parseRecordBody(start: Int, out: MutableList<SltRecord>): Int {
             val line = lines[start]
             val lineNo = start + 1
             val tokens = tokensOf(line)
@@ -273,11 +299,12 @@ object SltParser {
         private fun parseLoop(start: Int, tokens: List<String>, out: MutableList<SltRecord>): Int {
             val lineNo = start + 1
             val variable = tokens.getOrNull(1) ?: ""
-            val values = loopValues(tokens)
-            val arity = variable.split(',').size
+            val values = loopValues(tokens, lineNo)
+            val arity = variable.count { it == ',' } + 1
+            SltLimits.check(arity.toLong(), SltLimits.MAX_LOOP_VALUES.toLong(), "iterator arity", lineNo)
             val body = mutableListOf<SltRecord>()
             val end = parseLoopBody(start, body)
-            if (values == null || arity > 1 && values.any { it.split(',').size != arity }) {
+            if (values == null || arity > 1 && values.any { it.count { c -> c == ',' } + 1 != arity }) {
                 // Malformed header (upstream `parser.Fail`): the body is still consumed so the
                 // records after the loop parse normally.
                 out += SltUnsupported(lineNo, tokens[0], lines[start])
@@ -288,13 +315,20 @@ object SltParser {
         }
 
         /** Null when the directive is malformed (upstream `parser.Fail`). */
-        private fun loopValues(tokens: List<String>): List<String>? {
+        private fun loopValues(tokens: List<String>, line: Int): List<String>? {
             if (tokens[0] == "foreach") {
-                return if (tokens.size >= 3) SltForeachTokens.expand(tokens.drop(2)) else null
+                if (tokens.size < 3) return null
+                val remaining = minOf(SltLimits.MAX_LOOP_VALUES, (SltLimits.MAX_TOTAL_LOOP_VALUES - valueCount).toInt())
+                return SltForeachTokens.expand(tokens.drop(2), remaining, line).also { valueCount += it.size }
             }
             if (tokens.size != 4) return null
             val lo = tokens[2].toLongOrNull() ?: return null
             val hi = tokens[3].toLongOrNull() ?: return null
+            // A positive mathematical span overflowing Long wraps negative: reject before map().
+            val count = if (hi > lo) hi - lo else 0
+            SltLimits.check(count, SltLimits.MAX_LOOP_VALUES.toLong(), "loop values", line)
+            valueCount += count
+            SltLimits.check(valueCount, SltLimits.MAX_TOTAL_LOOP_VALUES.toLong(), "total loop values", line)
             return (lo until hi).map { it.toString() }
         }
     }
