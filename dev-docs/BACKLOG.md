@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **8 unfixed reproduced defects** and **8 implemented
+There are **16 open findings**: **7 unfixed reproduced defects** and **9 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -28,7 +28,6 @@ not production incident frequency.
 | H12 | P2 | Truncated loops become runnable loops rather than malformed records. |
 | H13 | P2 | Nested reuse of an iterator name substitutes the inner value instead of upstream outermost-first behavior. |
 | H14 | P2 | DML RETURNING mutates then fails through executeUpdate; support results/counts without a second mutation. |
-| H15 | P2 | Java17 floating rendering differs from native/Java25 for ordinary values; use runtime-independent conversion. |
 | H16 | P2 | Golden substitution discards valid raw expectations. |
 
 ## Implemented repairs pending qualification
@@ -52,6 +51,9 @@ The [N03 nested-type repair](archive/FIX-N03-NESTED-TYPES-2026-11-01.md) passes
 its library regressions and Java17/25 API checks. Its corrected grammar requires
 [coordinated Trino/Doris adoption](HANDOFF-N03-NESTED-TYPES-2026-11-01.md), not a
 silent consumer cutover or a claim that those plugins were verified here.
+The [H15 formatter repair](archive/FIX-H15-FLOAT-TEXT-2026-11-01.md) ports the
+pinned native Grisu/FPP behavior, with Java17–25 and strict native raw-bit evidence;
+its full run also retains only the parked strict baseline.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -63,6 +65,7 @@ silent consumer cutover or a claim that those plugins were verified here.
 | N05 | P2 | Conflicting expiry criteria now reject; DuckDB timestamp selection uses the existing UTC-safe rendering. All 19 regressions and 1,159 catalog tests pass; strict project qualification remains blocked. |
 | H07 | P2 | Attachment state now follows successful SQL, with persistent multi-lake/pinned gates and quoted DETACH support. All 16 transition regressions pass; full replay is 161/162, blocked only by the strict TIME records. |
 | N03 | P2 | Unsafe nested field names now quote unambiguously; the shared parser preserves names/case. All 18 new regressions and 1,177 catalog tests pass. Consumer adoption and strict project qualification remain pending. |
+| H15 | P2 | Pinned native floating text is now JVM-independent, including FLOAT fallback and signed NaN. Both JVMs pass36 focused tests and100K paired native samples; full replay167/168 retains the parked strict baseline. |
 
 ## Confirmed delivery-control gaps
 

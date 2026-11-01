@@ -21,7 +21,7 @@ import java.sql.DriverManager
 /** Native-only diagnostic fixture. No retagged format, reader migration or manufactured inline schema. */
 internal class Final11MySqlFixture : AutoCloseable {
     private val server = TestingDucklakeMySqlCatalogServer()
-    val data: Path = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-r06-mysql-")
+    val data: Path = Files.createTempDirectory(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-r06-mysql-")
     private var initialized = false
 
     fun native(sql: String, version: String = "1.1", migrate: Boolean = false) {

@@ -24,7 +24,7 @@ class TestFinal11LegacyStructOrder {
 
     @Test
     fun genuineUpstream156StructOrderFixtureReadsCorrectlyByNameAfterExplicitMigration() {
-        val input = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-r02-legacy-input-")
+        val input = Files.createTempDirectory(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-r02-legacy-input-")
         try {
             val database = input.resolve("legacy.db")
             Final11ReadFixtures.unpackLegacy(database)

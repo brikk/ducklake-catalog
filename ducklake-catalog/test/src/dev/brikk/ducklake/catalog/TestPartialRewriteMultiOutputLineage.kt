@@ -18,7 +18,7 @@ internal class TestPartialRewriteMultiOutputLineage {
     private data class Row(val rowId: Long, val id: Int, val partition: Int, val snapshot: Long)
 
     private fun verify(fixture: () -> LegacyWriteFixture) {
-        val root = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-c12-")
+        val root = Files.createTempDirectory(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-c12-")
         try { fixture().use { f ->
             f.native("CALL lake.set_option('data_inlining_row_limit',0); CREATE TABLE lake.t(id INTEGER,p INTEGER); " +
                 "ALTER TABLE lake.t SET PARTITIONED BY(p); INSERT INTO lake.t VALUES(10,0),(20,1),(30,0),(40,1)")

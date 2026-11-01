@@ -1,6 +1,5 @@
 package dev.brikk.ducklake.corpus
 
-import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -10,7 +9,7 @@ import java.time.ZoneOffset
  * kinds where the JDBC driver hands back a Java object whose `toString` differs.
  *
  * Floating point: DuckDB casts DOUBLE/FLOAT with `duckdb_fmt::format("{}", v)`
- * (`src/common/operator/string_cast.cpp`), i.e. the shortest round-trip digit string laid out by
+ * (`src/common/operator/string_cast.cpp`), i.e. the pinned Grisu/FPP digits laid out by
  * fmt's `float_writer` (`third_party/fmt/include/fmt/format.h`, `float_writer::float_writer` +
  * `prettify`) with the default spec (`general`, no precision → `trailing_zeros` on, precision
  * threshold 16):
@@ -18,10 +17,9 @@ import java.time.ZoneOffset
  *    `1e+16`, `1.5e-07` (sign always written, at least two exponent digits);
  *  - integral values keep a `.0`: `12345678.0`, `100.0`, `-0.0`;
  *  - otherwise plain positional: `0.0001`, `123.456`, `0.30000000000000004`;
- *  - non-finite: `inf`, `-inf`, `nan`.
- * The digits come from `Double.toString`/`Float.toString`, which produce the shortest
- * round-trip representation on JDK 19+ (JDK-4511638); the only known divergence is for
- * subnormals whose shortest form is one digit (`5e-324` vs Java's `4.9E-324`).
+ *  - non-finite: `inf`, `-inf`, `nan`, `-nan` (native sign bit preserved).
+ * Digits come from the pinned native Grisu/FPP algorithm port, not host-JDK Float/Double.toString.
+ * Its FLOAT fallback intentionally uses promoted DOUBLE boundaries, matching the vendored fmt.
  *
  * Temporal: `'infinity'::TIMESTAMP` is `int64::max` microseconds (`timestamp_t::infinity()`),
  * `-infinity` is its negation; DATE uses `int32::max` days. The driver returns those as ordinary
@@ -52,17 +50,17 @@ object DuckDbText {
     val DATE_NEGATIVE_INFINITY: LocalDate = LocalDate.ofEpochDay(-Int.MAX_VALUE.toLong())
 
     fun double(d: Double): String {
-        if (d.isNaN()) return "nan"
+        if (d.isNaN()) return if (d.toRawBits() < 0) "-nan" else "nan"
         if (d.isInfinite()) return if (d > 0) "inf" else "-inf"
         // compareTo is the IEEE total order: -0.0 sorts below 0.0, so the sign bit is honoured (fmt
         // uses std::signbit and prints "-0.0").
-        return signed(d.compareTo(0.0) < 0, Math.abs(d).toString())
+        return signed(d.compareTo(0.0) < 0, DuckDbGrisu.digits(Math.abs(d), false))
     }
 
     fun float(f: Float): String {
-        if (f.isNaN()) return "nan"
+        if (f.isNaN()) return if (f.toRawBits() < 0) "-nan" else "nan"
         if (f.isInfinite()) return if (f > 0) "inf" else "-inf"
-        return signed(f.compareTo(0.0f) < 0, Math.abs(f).toString())
+        return signed(f.compareTo(0.0f) < 0, DuckDbGrisu.digits(Math.abs(f).toDouble(), true))
     }
 
     /** `infinity` / `-infinity` for the two sentinel timestamps, null for a regular value. */
@@ -81,10 +79,8 @@ object DuckDbText {
             else -> null
         }
 
-    private fun signed(negative: Boolean, javaAbs: String): String {
-        val bd = BigDecimal(javaAbs).stripTrailingZeros()
-        val digits = bd.unscaledValue().toString()
-        val body = prettify(digits, -bd.scale())
+    private fun signed(negative: Boolean, decimal: DuckDbGrisu.Decimal): String {
+        val body = prettify(decimal.digits, decimal.exponent)
         return if (negative) "-$body" else body
     }
 

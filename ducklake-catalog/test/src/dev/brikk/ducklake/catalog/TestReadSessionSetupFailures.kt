@@ -28,7 +28,7 @@ internal class TestReadSessionSetupFailures {
     private val names = AtomicInteger()
 
     @BeforeAll fun start() {
-        root = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-review-r04-")
+        root = Files.createTempDirectory(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-review-r04-")
         server = TestingDucklakePostgreSqlCatalogServer()
         DriverManager.getConnection("jdbc:duckdb:").use { c -> c.createStatement().use { s ->
             s.execute("INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres")

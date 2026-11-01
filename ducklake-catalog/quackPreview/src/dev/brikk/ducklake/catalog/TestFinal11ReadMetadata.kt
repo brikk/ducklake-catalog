@@ -266,7 +266,7 @@ class TestFinal11ReadMetadata {
         val bytes = Files.readAllBytes(root.resolve("data/old_ducklake/migrate_bounds.db.gz"))
         assertThat(MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
             .isEqualTo("f9ad3a91468c3e3c96b1d3587214885b20fedd86c8a89b84efab2a7487188528")
-        val seed = Files.createTempFile(Path.of("/tmp/opencode"), "catalog-r04-bounds-", ".db")
+        val seed = Files.createTempFile(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-r04-bounds-", ".db")
         try {
             GZIPInputStream(bytes.inputStream()).use { input ->
                 val data = input.readNBytes(64 * 1024 * 1024 + 1)

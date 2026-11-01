@@ -21,7 +21,8 @@ import java.sql.Connection
 
 /** Native setup and direct SQL observation, always outside the library reader's owned transaction. */
 internal class Final11PostgresFixture(private val migrate: Boolean = false, private val formatVersion: String = "1.1") : AutoCloseable {
-    val root: Path = Files.createTempDirectory(Files.createDirectories(Path.of("/tmp/opencode")), "catalog-r06-pg-")
+    val root: Path = Files.createTempDirectory(
+        Files.createDirectories(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode"))), "catalog-r06-pg-")
     val data: Path = Files.createDirectories(root.resolve("data"))
     private val server = TestingDucklakePostgreSqlCatalogServer()
     private var initialized = false

@@ -34,7 +34,7 @@ internal class PreviewQuackServer(
     private val seedCatalog: Path? = null,
 ) : AutoCloseable {
     private val cli = Path.of(System.getProperty("ducklake.preview.cli")).toAbsolutePath()
-    private val root = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-quack-v3-$format-")
+    private val root = Files.createTempDirectory(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-quack-v3-$format-")
     private val reports = Files.createDirectories(Path.of(System.getProperty("ducklake.preview.reports")))
     private val extensions = root.resolve("extensions")
     private val database = root.resolve("metadata.db")

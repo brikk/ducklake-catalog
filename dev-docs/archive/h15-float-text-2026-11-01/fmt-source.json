@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/duckdb/duckdb",
+  "tag": "v2.0.0",
+  "commit": "d54cbbe3df17e8e5ce68312f483b4155836112aa",
+  "files": {
+    "third_party/fmt/include/fmt/format-inl.h": {
+      "sha256": "de74d8400d2811ecdba35ffea158e546aa00380afdd2b395429b868e02f8b2e7",
+      "url": "https://raw.githubusercontent.com/duckdb/duckdb/d54cbbe3df17e8e5ce68312f483b4155836112aa/third_party/fmt/include/fmt/format-inl.h"
+    },
+    "third_party/fmt/include/fmt/format.h": {
+      "sha256": "d46b3545a555e6504e67649d251fc9e0d0b73451bc605e8321be6265cabb562b",
+      "url": "https://raw.githubusercontent.com/duckdb/duckdb/d54cbbe3df17e8e5ce68312f483b4155836112aa/third_party/fmt/include/fmt/format.h"
+    }
+  },
+  "ported_scope": "default Grisu/FPP floating digit generation and 87 cached powers; existing native-style layout retained",
+  "license": "MIT; packaged in META-INF/licenses/duckdb-fmt.txt"
+}

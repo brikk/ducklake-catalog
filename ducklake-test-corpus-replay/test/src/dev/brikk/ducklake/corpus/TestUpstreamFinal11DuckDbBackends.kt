@@ -74,7 +74,8 @@ class TestUpstreamFinal11DuckDbBackends {
     }
 
     private fun local(path: String, digest: String, blob: Boolean) {
-        val temp = Files.createTempDirectory(Files.createDirectories(Path.of("/tmp/opencode")), "catalog-r06-pristine-local-")
+        val temp = Files.createTempDirectory(
+            Files.createDirectories(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode"))), "catalog-r06-pristine-local-")
         try {
             val metadata = temp.resolve("metadata.db")
             // Native oracle closes completely before the local read-only instance opens. No live RW/RO mixing.

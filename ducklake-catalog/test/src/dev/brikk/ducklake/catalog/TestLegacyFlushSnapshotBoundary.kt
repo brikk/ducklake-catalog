@@ -19,7 +19,7 @@ internal class TestLegacyFlushSnapshotBoundary {
         @Test fun deprecatedSingleStartFlushCannotSubstituteTheCommitTimeSnapshot() { verifyLegacy(2) }
 
         private fun verifyLegacy(kind: Int) {
-            val root = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-c13-flush-")
+            val root = Files.createTempDirectory(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-c13-flush-")
             try { fixture().use { f ->
                 f.native("CREATE TABLE lake.t(id INTEGER); INSERT INTO lake.t VALUES(1),(2)")
                 val planned = capture(f)
@@ -53,7 +53,7 @@ internal class TestLegacyFlushSnapshotBoundary {
         }
 
         @Test fun explicitSnapshotRejectsStaleOutputAndAcceptsRematerializedRows() {
-            val root = Files.createTempDirectory(Path.of("/tmp/opencode"), "catalog-c13-safe-")
+            val root = Files.createTempDirectory(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode")), "catalog-c13-safe-")
             try { fixture().use { f ->
                 f.native("CREATE TABLE lake.t(id INTEGER); INSERT INTO lake.t VALUES(1),(2)")
                 val old = capture(f)

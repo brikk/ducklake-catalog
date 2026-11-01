@@ -27,7 +27,8 @@ import java.util.Properties
 internal class Final11DuckDbBackendFixture(
     val route: Final11ReadRoute, private val migrate: Boolean = false, private val formatVersion: String = "1.1",
 ) : AutoCloseable {
-    val root: Path = Files.createTempDirectory(Files.createDirectories(Path.of("/tmp/opencode")), "catalog-r06-")
+    val root: Path = Files.createTempDirectory(
+        Files.createDirectories(Path.of(System.getProperty("ducklake.testing.tmpdir", "/tmp/opencode"))), "catalog-r06-")
     val data: Path = Files.createDirectories(root.resolve("data"))
     val file: Path = root.resolve("metadata.db")
     private val server: TestingDucklakeDuckDbQuackCatalogServer? =

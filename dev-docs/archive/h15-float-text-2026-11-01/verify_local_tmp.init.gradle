@@ -1,0 +1,15 @@
+import org.gradle.api.tasks.testing.Test
+
+// Verification-only: /tmp is a quota-enabled tmpfs; native extraction needs normal workspace disk.
+gradle.settingsEvaluated { println('Verification build temp directory: ' + System.getProperty('java.io.tmpdir')) }
+allprojects {
+    tasks.withType(Test).configureEach {
+        inputs.property('verificationTemporaryRoot', temporaryDir.absolutePath)
+        doFirst {
+            temporaryDir.mkdirs()
+            systemProperty('java.io.tmpdir', temporaryDir.absolutePath)
+            systemProperty('ducklake.testing.tmpdir', temporaryDir.absolutePath)
+            println('Verification test temp directory: ' + temporaryDir.absolutePath)
+        }
+    }
+}
