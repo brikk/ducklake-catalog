@@ -360,7 +360,11 @@ class ReplayDriver(
      * `N values hashing to …` golden is still checked, `:264-269`).
      */
     private fun labeledOutcome(record: SltQuery, label: String, actual: QueryResult): RecordOutcome {
-        val hash = GoldenComparator.resultHash(record, actual.rows)
+        val hash = try {
+            GoldenComparator.resultHash(record, actual.rows, actual.types)
+        } catch (e: IllegalArgumentException) {
+            return RecordOutcome.Fail(record, "could not hash labeled result '$label': ${firstLine(e)}")
+        }
         val stored = labelResults.putIfAbsent(label, LabeledResult(hash, actual.types.size))
         if (stored != null && stored.columns != actual.types.size) {
             return RecordOutcome.Fail(record, "labeled result '$label' column count changed: ${stored.columns} vs ${actual.types.size}")

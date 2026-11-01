@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **7 unfixed reproduced defects** and **9 implemented
+There are **16 open findings**: **6 unfixed reproduced defects** and **10 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -22,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| N19 | P2 | Boolean result hashes use true/false rather than upstream 1/0. |
 | H06 | P2 | A tiny huge-loop header exhausts a bounded child JVM before rejection; budget parsing, nesting and expansion. |
 | H11 | P2 | Mixed skipif conjunctions use the wrong per-term skip policy. |
 | H12 | P2 | Truncated loops become runnable loops rather than malformed records. |
@@ -54,6 +53,9 @@ silent consumer cutover or a claim that those plugins were verified here.
 The [H15 formatter repair](archive/FIX-H15-FLOAT-TEXT-2026-11-01.md) ports the
 pinned native Grisu/FPP behavior, with Java17–25 and strict native raw-bit evidence;
 its full run also retains only the parked strict baseline.
+The [N19 typed Boolean hash repair](archive/FIX-N19-BOOLEAN-HASHES-2026-11-01.md)
+passes its hash/label/sort/type-provenance checks on Java17/25, with raw/live row
+representations unchanged and the same full-project qualification boundary.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -66,6 +68,7 @@ its full run also retains only the parked strict baseline.
 | H07 | P2 | Attachment state now follows successful SQL, with persistent multi-lake/pinned gates and quoted DETACH support. All 16 transition regressions pass; full replay is 161/162, blocked only by the strict TIME records. |
 | N03 | P2 | Unsafe nested field names now quote unambiguously; the shared parser preserves names/case. All 18 new regressions and 1,177 catalog tests pass. Consumer adoption and strict project qualification remain pending. |
 | H15 | P2 | Pinned native floating text is now JVM-independent, including FLOAT fallback and signed NaN. Both JVMs pass36 focused tests and100K paired native samples; full replay167/168 retains the parked strict baseline. |
+| N19 | P2 | Scalar Boolean hashes now use retained SQL metadata and native1/0 before sorting; VARCHAR/nested/raw rows and the untyped descriptor remain unchanged. All18 new tests pass; full replay185/186 retains the parked strict baseline. |
 
 ## Confirmed delivery-control gaps
 

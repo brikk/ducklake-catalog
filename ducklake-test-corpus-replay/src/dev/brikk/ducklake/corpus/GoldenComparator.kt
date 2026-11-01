@@ -15,6 +15,7 @@ import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.util.Locale
 
 /**
  * Converts JDBC results to sqllogictest golden form and compares against a
@@ -25,7 +26,8 @@ import java.time.ZoneOffset
  *  - empty string renders as `(empty)`; embedded NUL bytes as `\0`
  *  - booleans render `true`/`false` here (upstream renders `1`/`0`); either side may write
  *    `true`/`false` (any case) or `1`/`0` for a boolean column, whatever the type letter
- *    (only retained SQL BOOLEAN metadata permits coercion; VARCHAR lookalikes are text)
+ *    (only retained SQL BOOLEAN metadata permits coercion; VARCHAR lookalikes are text).
+ *    Typed hashes normalize scalar Boolean cells to native `1`/`0` before sorting; raw/live rows do not change.
  *  - integer/decimal comparisons are exact, without Double conversion; only SQL FLOAT/DOUBLE
  *    results use the floating tolerance. JDBC arity is checked even for empty/hash/label results
  *  - everything else reproduces DuckDB's own `::VARCHAR` rendering from the JDBC objects:
@@ -246,9 +248,8 @@ object GoldenComparator {
      * Upstream `result_helper.cpp:127-136`: MD5 over every cell of the (sort-style-sorted) result,
      * each followed by `\n`, reported as `<count> values hashing to <hex>`. Used for
      * `N values hashing to …` goldens and for labelled queries (which compare hashes only).
-     * Caveat: upstream feeds booleans in as `1`/`0`; this side hashes `true`/`false`, so a hash
-     * golden over a boolean column written by DuckDB's runner will not match (labels are
-     * unaffected — both sides are rendered here).
+     * This legacy/untyped overload hashes supplied text; it cannot infer whether `true` is a
+     * Boolean or VARCHAR. Native-result callers must use the SQL-type-aware overload below.
      */
     fun resultHash(query: SltQuery, actual: List<List<String?>>): String {
         val cells = sortRows(actual.map { row -> row.map(::toGoldenCell) }, query.sortMode).flatten()
@@ -259,6 +260,27 @@ object GoldenComparator {
         }
         val hex = md5.digest().joinToString("") { "%02x".format(it) }
         return "${cells.size} values hashing to $hex"
+    }
+
+    /**
+     * Native scalar Boolean conversion precedes all sorting; nested values and VARCHAR stay text.
+     * [sqlTypes] supplies actual column provenance, not the query's placeholder type letters.
+     * @throws IllegalArgumentException on metadata/row width mismatch or an invalid Boolean cell.
+     */
+    fun resultHash(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>): String {
+        require(actual.all { it.size == sqlTypes.size }) { "Result hash row width does not match SQL metadata" }
+        val booleans = sqlTypes.map { scalarSqlType(it) in BOOLEAN_TYPES }
+        val normalized = actual.map { row -> row.mapIndexed { index, value -> hashCell(value, booleans[index], index) } }
+        return resultHash(query, normalized)
+    }
+
+    private fun hashCell(value: String?, boolean: Boolean, column: Int): String? {
+        if (value == null || !boolean) return value
+        return when (booleanValue(value)) {
+            true -> "1"
+            false -> "0"
+            null -> throw IllegalArgumentException("Invalid BOOLEAN hash cell at column ${column + 1}")
+        }
     }
 
     /** `ResultIsHash`: the expected block is exactly one `N values hashing to <md5>` line. */
@@ -286,15 +308,7 @@ object GoldenComparator {
 
     private fun compareResult(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>?): Comparison {
         shapeMismatch(query, actual, sqlTypes)?.let { return it }
-        if (isHashGolden(query)) {
-            val expectedHash = query.expected[0].trim()
-            val hash = resultHash(query, actual)
-            return if (hash == expectedHash) {
-                Comparison.Match
-            } else {
-                Comparison.Mismatch("result hash: expected '$expectedHash', got '$hash'")
-            }
-        }
+        if (isHashGolden(query)) return compareHash(query, actual, sqlTypes)
         val colCount = sqlTypes?.size ?: query.types.length
         val actualRows = actual.map { row -> row.map(::toGoldenCell) }
 
@@ -327,6 +341,16 @@ object GoldenComparator {
             }
         }
         return Comparison.Match
+    }
+
+    private fun compareHash(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>?): Comparison {
+        val hash = try {
+            if (sqlTypes == null) resultHash(query, actual) else resultHash(query, actual, sqlTypes)
+        } catch (e: IllegalArgumentException) {
+            return Comparison.Mismatch("result hash: ${e.message}")
+        }
+        val expected = query.expected[0].trim()
+        return if (hash == expected) Comparison.Match else Comparison.Mismatch("result hash: expected '$expected', got '$hash'")
     }
 
     private fun typedCells(query: SltQuery, actualRows: List<List<String>>, sqlTypes: List<String>?): List<Cell> {
@@ -371,8 +395,8 @@ object GoldenComparator {
         if (expected.startsWith(NOT_REGEX_PREFIX)) {
             return !Regex(expected.removePrefix(NOT_REGEX_PREFIX), RegexOption.DOT_MATCHES_ALL).matches(actual)
         }
-        val type = cell.sqlType?.uppercase()?.substringBefore('(')?.trim()
-        if (type == "BOOLEAN" || type == "BOOL") {
+        val type = scalarSqlType(cell.sqlType)
+        if (type in BOOLEAN_TYPES) {
             return booleanValue(expected)?.let { it == booleanValue(actual) } ?: false
         }
         return when {
@@ -388,6 +412,8 @@ object GoldenComparator {
     private val EXACT_NUMERIC_TYPES = setOf("TINYINT", "SMALLINT", "INTEGER", "INT", "BIGINT", "HUGEINT", "BIGNUM",
         "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "DECIMAL", "NUMERIC")
     private val REAL_TYPES = setOf("FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION")
+    private val BOOLEAN_TYPES = setOf("BOOLEAN", "BOOL")
+    private fun scalarSqlType(type: String?): String? = type?.uppercase(Locale.ROOT)?.substringBefore('(')?.trim()
 
     private fun exactNumericEqual(expected: String, actual: String): Boolean =
         runCatching { BigDecimal(expected).compareTo(BigDecimal(actual)) == 0 }.getOrDefault(false)
