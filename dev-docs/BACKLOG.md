@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **1 unfixed reproduced defect** and **15 implemented
+There are **16 open findings**: **0 unfixed reproduced defects** and **16 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -15,14 +15,10 @@ or edited by this queue.
 
 ## Unfixed confirmed defects
 
-Each entry has a fresh current-code witness in the report, not just an old checkbox.
-Use desired-behavior regressions before repairing it; do not preserve a bad result
-as a new golden. Priorities distinguish data/filesystem safety from other defects,
-not production incident frequency.
-
-| ID | Priority | Reproduced failure / next fix boundary |
-|---|---|---|
-| H16 | P2 | Golden substitution discards valid raw expectations. |
+None remain in this triaged implementation queue. The repairs below have passing
+scoped regressions, not a fully green project gate. External/native failures,
+unexplained Quack transaction observations, delivery controls and separate feature/
+maintenance work remain open; this is not a claim that the whole system is bug-free.
 
 ## Implemented repairs pending qualification
 
@@ -90,6 +86,12 @@ placeholders, while guards still resolve the innermost raw iterator. All26 new
 regressions pass within258 focused checks on Java17/25. Full1,177 catalog,
 91 direct-Java Quack and133 SLT pass; replay254/255 retains only the six parked
 TIME records, with original corpus totals/exclusions unchanged.
+The [H16 golden-keyword repair](archive/FIX-H16-GOLDEN-KEYWORDS-2026-11-02.md)
+retains raw expected cells and lazily accepts exact keyword-expanded alternatives,
+without creating regex/hash/coercion/layout controls from expanded text. All37 new
+regressions pass within331 focused checks on Java17/25. Full1,177 catalog,
+91 direct-Java Quack and133 SLT pass; replay291/292 retains only the six parked
+TIME records, with original corpus totals/exclusions unchanged.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -108,6 +110,7 @@ TIME records, with original corpus totals/exclusions unchanged.
 | H11 | P2 | Conditional policy now matches upstream per term, without hiding syntax errors or consulting unreachable bindings. All22 regressions pass on Java17/25; full affected-module checks retain only the six strict TIME records. Shared qualification remains pending; original Quack failure and passing repeat are preserved above. |
 | H12 | P2 | Unclosed loop/foreach bodies now become explicit malformed records instead of runnable loops; real terminators retain nesting/provenance. All32 regressions pass on Java17/25; full replay243/244 retains only the six parked TIME records. Strict project qualification remains pending. |
 | H13 | P2 | Loop text/file paths now consume ordered frames without collapsing duplicate names; guards retain native innermost lookup. All26 regressions pass on Java17/25; full replay254/255 retains only the six parked TIME records. Strict project qualification remains pending. |
+| H16 | P2 | Golden cells retain raw text with lazy exact keyword alternatives; raw controls/coercions and structural boundaries remain authoritative. All37 regressions pass on Java17/25; full replay291/292 retains only the six parked TIME records. Strict project qualification remains pending. |
 
 ## Confirmed delivery-control gaps
 

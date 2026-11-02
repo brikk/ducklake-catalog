@@ -402,7 +402,7 @@ class ReplayDriver(
         // No native schema is invented for JDBC's NOTHING return. Only an empty expectation
         // (or its zero-value hash) may accept it; empty SELECTs always take typed comparison.
         val comparable = if (actual.noResult) effective.copy(types = "") else effective
-        return when (val cmp = GoldenComparator.compare(comparable, actual.rows, actual.types)) {
+        return when (val cmp = GoldenComparator.compare(comparable, actual.rows, actual.types, oracle::substitute)) {
             is GoldenComparator.Comparison.Match -> RecordOutcome.Pass(record)
             is GoldenComparator.Comparison.Mismatch -> RecordOutcome.Fail(record, cmp.detail)
             is GoldenComparator.Comparison.Unsupported -> RecordOutcome.Skip(record, cmp.reason)
@@ -422,7 +422,7 @@ class ReplayDriver(
         bindings: List<Pair<String, String>>,
         actual: List<List<String?>>,
     ): SltQuery {
-        val goldenFile = record.goldenFile ?: return record.copy(expected = record.expected.map { oracle.substitute(it) })
+        val goldenFile = record.goldenFile ?: return record
         val path = substituteAll(goldenFile.path, bindings, oracle)
         val columnCount = actual.firstOrNull()?.size ?: record.types.length
         val rows = oracle.loadGoldenCsv(path, columnCount)

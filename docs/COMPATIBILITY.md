@@ -138,6 +138,15 @@ Labels still ignore ordinary golden text, as upstream specifies. VALUESORT keeps
 each actual cell's original SQL type; ROWSORT compares cell boundaries, not joined
 delimiter strings. Original corpus goldens and exclusions are not changed.
 
+Golden cells retain their raw expected text and may additionally match an exact,
+keyword-expanded version of that same cell. Expansion is lazy, env/keyword-only
+(never loop-bound), and happens after raw layout/shape validation. Expanded text
+cannot become new regex/hash syntax, numeric/Boolean coercion or column boundaries.
+Raw regex/coercion rules remain in force; given expected positions are checked
+before the existing raw-expected sorting fallback. Golden-file paths still use
+env then ordered loop frames; loaded CSV data uses the same per-cell alternatives.
+See the [golden-keyword contract/evidence](../dev-docs/archive/FIX-H16-GOLDEN-KEYWORDS-2026-11-02.md).
+
 JDBC's genuine NOTHING/no-result command is represented separately, not as an empty
 SELECT with lost metadata. It accepts an empty expectation (or zero-value hash)
 with the existing single-letter command placeholder; nonempty goldens and wider
@@ -149,9 +158,12 @@ to obtain metadata can rebind side-effecting table functions and alter lake stat
 declared-letter behavior: exact I, tolerant R, literal T, no guessed Boolean type.
 Use the new `compare(query, rows, sqlTypes)` overload for typed coercions and empty
 result arity. The old row-only entry point cannot infer an empty result's metadata.
+`compare(query, rows, sqlTypes, expandExpected)` adds the literal keyword alternative;
+the old two-/three-argument descriptors retain their no-expansion behavior.
 SQL NULL and empty-value golden tokens (and upstream hash serialization) remain
-golden-format conventions, not an injective encoding of live data. Boolean hash
-canonicalization is a separately tracked defect; this change does not claim it fixed.
+golden-format conventions, not an injective encoding of live data. Scalar Boolean
+hashes use retained SQL types and native1/0 before sorting; the legacy untyped hash
+entry point remains raw-text-only. See [typed corpus hashes](CORPUS-HASHES.md).
 
 Engine mirrors compare **multisets of structured nullable rows**, not golden tokens
 or delimiter-joined rows. SQL NULL, literal `NULL`, empty text, literal `(empty)`,

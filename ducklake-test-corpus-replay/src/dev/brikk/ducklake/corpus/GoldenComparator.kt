@@ -296,11 +296,22 @@ object GoldenComparator {
         query.expected.size == 1 && HASHING.matches(query.expected[0].trim())
 
     /** Untyped callers get conservative declared-letter semantics, never text-inferred Boolean types. */
-    fun compare(query: SltQuery, actual: List<List<String?>>): Comparison = compareResult(query, actual, null)
+    fun compare(query: SltQuery, actual: List<List<String?>>): Comparison = compareResult(query, actual, null, null)
 
     /** JDBC SQL types retain arity even for empty results and select the permitted coercions. */
     fun compare(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>): Comparison =
-        compareResult(query, actual, sqlTypes)
+        compareResult(query, actual, sqlTypes, null)
+
+    /**
+     * Native keyword handling: raw expected cells remain authoritative. [expandExpected] is a lazy
+     * exact-text alternative per cell, never a new hash/regex/coercion rule or a layout rewrite.
+     */
+    fun compare(
+        query: SltQuery,
+        actual: List<List<String?>>,
+        sqlTypes: List<String>,
+        expandExpected: (String) -> String,
+    ): Comparison = compareResult(query, actual, sqlTypes, expandExpected)
 
     internal fun shapeMismatch(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>?): Comparison.Mismatch? {
         // Upstream labels seed a hash from the first result; their letter string is a placeholder,
@@ -314,7 +325,12 @@ object GoldenComparator {
         return if (ragged < 0) null else Comparison.Mismatch("column count: declared $columns, row ${ragged + 1} has ${actual[ragged].size}")
     }
 
-    private fun compareResult(query: SltQuery, actual: List<List<String?>>, sqlTypes: List<String>?): Comparison {
+    private fun compareResult(
+        query: SltQuery,
+        actual: List<List<String?>>,
+        sqlTypes: List<String>?,
+        expandExpected: ((String) -> String)?,
+    ): Comparison {
         shapeMismatch(query, actual, sqlTypes)?.let { return it }
         if (isHashGolden(query)) return compareHash(query, actual, sqlTypes)
         val colCount = sqlTypes?.size ?: query.types.length
@@ -342,9 +358,15 @@ object GoldenComparator {
         }
         // Keep each cell's SQL type attached while VALUESORT moves it across column positions.
         val sorted = typedCells(query, actualRows, sqlTypes)
+        // Native compares sorted actual cells against the given raw expected positions first.
+        // Keep the existing raw-expected sorting fallback and legacy overload behavior; sorting
+        // eagerly-expanded expectations would lose literal tokens or move valid expanded cells.
+        if (expandExpected != null && expectedRows != e &&
+            expectedRows.flatten().withIndex().all { (index, value) -> cellEqual(value, sorted[index], expandExpected) }
+        ) return Comparison.Match
         val expected = e.flatten()
         for (i in sorted.indices) {
-            if (!cellEqual(expected[i], sorted[i])) {
+            if (!cellEqual(expected[i], sorted[i], expandExpected)) {
                 return Comparison.Mismatch("row ${i / colCount + 1}: expected ${e[i / colCount]}, got ${a[i / colCount]}")
             }
         }
@@ -393,9 +415,9 @@ object GoldenComparator {
     private const val REGEX_PREFIX = "<REGEX>:"
     private const val NOT_REGEX_PREFIX = "<!REGEX>:"
 
-    private fun cellEqual(expected: String, cell: Cell): Boolean {
+    private fun cellEqual(expected: String, cell: Cell, expandExpected: ((String) -> String)?): Boolean {
+        if (literalEqual(expected, cell, expandExpected)) return true
         val actual = cell.text
-        if (expected == actual) return true
         // Upstream cell-level regex escape hatches (analyzed_plan assertions etc.).
         if (expected.startsWith(REGEX_PREFIX)) {
             return Regex(expected.removePrefix(REGEX_PREFIX), RegexOption.DOT_MATCHES_ALL).matches(actual)
@@ -416,6 +438,19 @@ object GoldenComparator {
             else -> false
         }
     }
+
+    private fun literalEqual(expected: String, cell: Cell, expandExpected: ((String) -> String)?): Boolean {
+        if (expected == cell.text) return true
+        if (expandExpected == null) return false
+        val native = nativeLiteralText(cell)
+        return expected == native || expandExpected(expected) == native
+    }
+
+    /** Scalar BOOLEAN's native comparison text is1/0; raw/live row rendering remains true/false. */
+    private fun nativeLiteralText(cell: Cell): String =
+        if (scalarSqlType(cell.sqlType) in BOOLEAN_TYPES) {
+            when (booleanValue(cell.text)) { true -> "1"; false -> "0"; null -> cell.text }
+        } else cell.text
 
     private val EXACT_NUMERIC_TYPES = setOf("TINYINT", "SMALLINT", "INTEGER", "INT", "BIGINT", "HUGEINT", "BIGNUM",
         "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "DECIMAL", "NUMERIC")
