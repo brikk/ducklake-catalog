@@ -13,6 +13,8 @@ import java.util.Locale
  */
 internal object GeometryNormalizer {
     fun containsGeometry(sqlType: String): Boolean = parse(sqlType).hasGeometry
+    /** TUPLE detection shares the logical-type parser, not a search through names or cell text. */
+    fun containsTuple(sqlType: String): Boolean = parse(sqlType).hasTuple
 
     fun normalizeRows(connection: Connection, types: List<String>, rows: List<List<String?>>): List<List<String?>> {
         if (rows.isEmpty() || rows.any { it.size != types.size }) return rows
@@ -55,10 +57,15 @@ internal object GeometryNormalizer {
         val sql: String
         val storage: String
         val hasGeometry: Boolean
+        val hasTuple: Boolean
         fun fromWkb(value: String, depth: Int): String
     }
 
-    private data class Scalar(override val sql: String, override val hasGeometry: Boolean = false) : ValueType {
+    private data class Scalar(
+        override val sql: String,
+        override val hasGeometry: Boolean = false,
+        override val hasTuple: Boolean = false,
+    ) : ValueType {
         override val storage = if (hasGeometry) "BLOB" else sql
         override fun fromWkb(value: String, depth: Int) = if (hasGeometry) "ST_GeomFromWKB($value)" else value
     }
@@ -66,6 +73,7 @@ internal object GeometryNormalizer {
     private data class SequenceType(override val sql: String, val child: ValueType, val suffix: String) : ValueType {
         override val storage = child.storage + suffix
         override val hasGeometry = child.hasGeometry
+        override val hasTuple = child.hasTuple
         override fun fromWkb(value: String, depth: Int): String =
             "list_transform($value, lambda geo_$depth: ${child.fromWkb("geo_$depth", depth + 1)})"
     }
@@ -73,6 +81,7 @@ internal object GeometryNormalizer {
     private data class StructType(override val sql: String, val fields: List<Pair<String, ValueType>>) : ValueType {
         override val storage = fields.joinToString(", ", "STRUCT(", ")") { (name, type) -> "${identifier(name)} ${type.storage}" }
         override val hasGeometry = fields.any { it.second.hasGeometry }
+        override val hasTuple = fields.any { it.second.hasTuple }
         override fun fromWkb(value: String, depth: Int): String {
             val children = fields.joinToString(", ") { (name, type) ->
                 "${identifier(name)} := ${type.fromWkb("($value).${identifier(name)}", depth + 1)}"
@@ -85,6 +94,7 @@ internal object GeometryNormalizer {
     private data class MapType(override val sql: String, val key: ValueType, val value: ValueType) : ValueType {
         override val storage = "MAP(${key.storage}, ${value.storage})"
         override val hasGeometry = key.hasGeometry || value.hasGeometry
+        override val hasTuple = key.hasTuple || value.hasTuple
         override fun fromWkb(value: String, depth: Int): String =
             "map(list_transform(map_keys($value), lambda geo_k$depth: ${key.fromWkb("geo_k$depth", depth + 1)}), " +
                 "list_transform(map_values($value), lambda geo_v$depth: ${this.value.fromWkb("geo_v$depth", depth + 1)}))"
@@ -99,19 +109,24 @@ internal object GeometryNormalizer {
         val upper = sql.uppercase(Locale.ROOT)
         return when {
             upper == "GEOMETRY" || upper.startsWith("GEOMETRY(") -> Scalar(sql, true)
-            upper.startsWith("STRUCT(") -> StructType(sql, splitChildren(sql.substring(7, sql.length - 1)).map { field ->
-                val match = requireNotNull(FIELD.matchEntire(field.trim())) { "Invalid oracle struct field: $field" }
-                val key = match.groupValues[1].removeSurrounding("\"").replace("\"\"", "\"")
-                key to parse(match.groupValues[2])
-            })
+            upper.startsWith("STRUCT(") -> StructType(sql, fields(sql, 7))
+            // Keep mirror geometry handling opaque as before; only detect a tuple payload here.
+            upper.startsWith("UNION(") -> Scalar(sql, hasTuple = fields(sql, 6).any { it.second.hasTuple })
             upper.startsWith("MAP(") -> {
                 val children = splitChildren(sql.substring(4, sql.length - 1))
                 require(children.size == 2) { "Invalid oracle map type: $sql" }
                 MapType(sql, parse(children[0]), parse(children[1]))
             }
-            else -> Scalar(sql)
+            else -> Scalar(sql, hasTuple = upper.startsWith("TUPLE("))
         }
     }
+
+    private fun fields(sql: String, from: Int): List<Pair<String, ValueType>> =
+        splitChildren(sql.substring(from, sql.length - 1)).map { field ->
+            val match = requireNotNull(FIELD.matchEntire(field.trim())) { "Invalid oracle field: $field" }
+            val key = match.groupValues[1].removeSurrounding("\"").replace("\"\"", "\"")
+            key to parse(match.groupValues[2])
+        }
 
     /** Split type parameters without splitting DECIMALs, nested types, CRS strings or quoted keys. */
     private fun splitChildren(sql: String): List<String> {

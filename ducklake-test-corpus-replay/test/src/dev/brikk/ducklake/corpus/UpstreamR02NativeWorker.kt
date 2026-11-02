@@ -62,7 +62,7 @@ internal object UpstreamR02NativeWorker {
             statement.executeQuery("SELECT current_setting('allow_unsigned_extensions')").use { result ->
                 check(result.next() && !result.getBoolean(1))
             }
-            println("STRICT NATIVE PEER: JDBC 2.0.0.0, core d54cbbe3df, signed core DuckLake 417a9117f5, unsigned=false")
+            println("STRICT NATIVE PEER: JDBC 2.0.0.1, core d54cbbe3df, signed core DuckLake 417a9117f5, unsigned=false")
         } }
     }
 }

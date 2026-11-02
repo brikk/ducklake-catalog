@@ -138,9 +138,9 @@ internal class Final11DuckDbBackendFixture(
 
     companion object {
         fun requirePinnedJdbc() {
-            assertThat(jdbcSha256).isEqualTo("5170daa90a43296705127ef3c80834ba1cd275ec9d765a9f7eee346ab0087186")
+            assertThat(jdbcSha256).isEqualTo("6cb8b0e0fc51b2e45aead2d2c1e1fd09dd10267db2966e69aaab0de67319f826")
         }
-        // Maven Central org.duckdb:duckdb_jdbc:2.0.0.0 .jar.sha256, checked independently of driverVersion.
+        // Maven Central org.duckdb:duckdb_jdbc:2.0.0.1 .jar.sha256, checked independently of driverVersion.
         private val jdbcSha256: String by lazy {
             val jar = Path.of(Class.forName("org.duckdb.DuckDBDriver").protectionDomain.codeSource.location.toURI())
             val digest = MessageDigest.getInstance("SHA-256")

@@ -5,7 +5,7 @@
 - Latest stable catalog release: **0.12.0**; development: **0.13.0-SNAPSHOT**.
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in on development code. DuckLake 1.1 writes remain disabled.
-- Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.0**. Stable 0.12.0 retains its historical pins.
+- Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.1**. Stable 0.12.0 retains its historical pins.
 - Optional direct Java Quack JDBC: **0.12.0**; see the [driver update verification](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.12.0-2026-10-31.md).
 - Published libraries target **Java 17**. Building the repository requires JDK 25.
 - Applications supply their JDBC drivers and access to the data-file location.
@@ -14,7 +14,7 @@
 |---|---|---|
 | PostgreSQL | `jdbc:postgresql://host/catalog` | Supply the PostgreSQL JDBC driver and separate credentials |
 | MySQL | `jdbc:mysql://host/catalog` | Supply the MySQL JDBC driver; transactional-DDL limits still apply |
-| Local DuckDB | `jdbc:duckdb:/path/catalog.db` | DuckDB JDBC 2.0.0.0 |
+| Local DuckDB | `jdbc:duckdb:/path/catalog.db` | DuckDB JDBC 2.0.0.1 |
 | Native Quack | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC and native Quack/DuckLake extensions |
 | Direct Java Quack | `jdbc:quack://host:9494` | `dev.brikk.duckdb:quack-jdbc:0.12.0`; optional `/existing-server-catalog` |
 
@@ -116,6 +116,15 @@ source schema, and empty payload projections preserve CDC identity. The final-1.
 CDC tier retains its separate qualified initial-default behavior.
 
 ## Replay comparison and watchdog integrity
+
+The development replay lane requires the [qualified JDBC2.0.0.1 patch](../dev-docs/archive/UPGRADE-DUCKDB-JDBC-2.0.0.1-2026-11-02.md)
+for native TUPLE getters. Do not force its driver back to2.0.0.0: that version can
+crash the JVM on `ResultSet.getString()` for tuple lists. TUPLEs remain positional
+`(…)` values, not named STRUCTs merely because the new driver exposes `DuckDBStruct`.
+Native tuple-containing cells preserve their typed text, including nested geometry
+WKT; scalar temporal/floating rendering and SQL-type-aware Boolean hashes retain
+their existing contracts. This does not expand VARIANT/1.1 reader admission or
+change the already-published candidate artifacts and consumer/default pins.
 
 The 0.13 replay driver carries JDBC SQL types and column count into golden
 validation, including empty SELECT and hash results. Integers and DECIMAL use

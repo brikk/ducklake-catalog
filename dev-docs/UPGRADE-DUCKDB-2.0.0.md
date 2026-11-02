@@ -1,5 +1,9 @@
 # Maintained DuckDB 2.0.0 promotion — October 21, 2026
 
+The later [JDBC2.0.0.1 patch adoption](archive/UPGRADE-DUCKDB-JDBC-2.0.0.1-2026-11-02.md)
+updates only the development JDBC dependency and result handling. Core/server/
+extensions and the original October21 evidence below are unchanged.
+
 The user authorized upgrading the maintained engine lane to official 2.x. This
 changes development dependencies/server/corpus, **not DuckLake 1.1 write support**
 or the already-published 0.12.0 release. No push/publication is implied.

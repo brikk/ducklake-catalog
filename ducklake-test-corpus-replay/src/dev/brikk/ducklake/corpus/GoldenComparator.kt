@@ -57,7 +57,7 @@ object GoldenComparator {
     fun readRows(rs: ResultSet): List<List<String?>> {
         val cols = rs.metaData.columnCount
         val types = (1..cols).map { rs.metaData.getColumnTypeName(it) }
-        val geometry = types.map(GeometryNormalizer::containsGeometry)
+        val nativeText = types.map { GeometryNormalizer.containsGeometry(it) || GeometryNormalizer.containsTuple(it) }
         val zone = if (types.any { "TIMESTAMP WITH TIME ZONE" in it || "TIMESTAMPTZ" in it }) {
             rs.statement.connection.createStatement().use { statement ->
                 statement.executeQuery("SELECT current_setting('TimeZone')").use { result ->
@@ -71,9 +71,10 @@ object GoldenComparator {
             rows +=
                 (1..cols).map { i ->
                     runCatching {
-                        // Geometry getString preserves typed WKT, including nested leaves. Temporal
-                        // getString is Java object text in JDBC 2.0: render its value with session zone.
-                        if (geometry[i - 1]) rs.getString(i)?.replace("\u0000", "\\0")
+                        // Typed native text preserves geometry WKT and positional TUPLEs, including
+                        // nested geometry. TUPLE getters require the qualified JDBC2.0.0.1 fix.
+                        // Scalar temporal getters still need object rendering with the session zone.
+                        if (nativeText[i - 1]) rs.getString(i)?.replace("\u0000", "\\0")
                         else renderCell(rs.getObject(i), zone)
                     }.getOrElse { failure ->
                         // A failed getter/renderer is never data that regexes or labels may accept.
@@ -105,11 +106,7 @@ object GoldenComparator {
             // which DuckDB's `0.1` golden would reject even under the numeric tolerance.
             is Float -> DuckDbText.float(value)
             is List<*> -> value.joinToString(", ", prefix = "[", postfix = "]") { renderNested(it, zone) }
-            is DuckDBStruct ->
-                value.map.entries.joinToString(", ", prefix = "{", postfix = "}") { (k, v) ->
-                    // struct keys are always quoted (`CalculateEscapedStringLength<STRUCT_KEY=true>`)
-                    "${quoteNested(k.toString())}: ${renderNested(v, zone)}"
-                }
+            is DuckDBStruct -> renderStruct(value, zone)
             is DuckDBArray -> renderArray(value, zone)
             is Map<*, *> ->
                 value.entries.joinToString(", ", prefix = "{", postfix = "}") { (k, v) ->
@@ -119,6 +116,17 @@ object GoldenComparator {
             is ByteArray -> renderBlob(value)
             else -> value.toString()
         }
+
+    private fun renderStruct(value: DuckDBStruct, zone: ZoneId): String {
+        // Logical type, never synthetic field names: a named STRUCT may also have element1/2 keys.
+        if (value.sqlTypeName.startsWith("TUPLE(")) {
+            return value.attributes.joinToString(", ", prefix = "(", postfix = ")") { renderNested(it, zone) }
+        }
+        return value.map.entries.joinToString(", ", prefix = "{", postfix = "}") { (key, child) ->
+            // struct keys are always quoted (`CalculateEscapedStringLength<STRUCT_KEY=true>`)
+            "${quoteNested(key.toString())}: ${renderNested(child, zone)}"
+        }
+    }
 
     private fun renderTemporal(value: Any, zone: ZoneId): String =
         when (value) {

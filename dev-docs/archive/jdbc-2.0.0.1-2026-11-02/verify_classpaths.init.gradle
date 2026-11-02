@@ -1,0 +1,24 @@
+// Read-only resolution proof; no compilation, installation or publication task.
+gradle.projectsEvaluated {
+    def root = rootProject
+    root.tasks.register('verifyJdbcPatchPaths') {
+        doLast {
+            def selected = [:]
+            [':ducklake-catalog': ['testRuntimeClasspath', 'quackPreviewRuntimeClasspath', 'legacyInlineProducer'],
+             ':ducklake-test-corpus-replay': ['runtimeClasspath', 'testRuntimeClasspath']].each { module, names ->
+                names.each { name ->
+                    def artifacts = root.project(module).configurations.getByName(name).resolvedConfiguration.resolvedArtifacts
+                    selected[module + ':' + name] = artifacts.findAll {
+                        it.moduleVersion.id.group == 'org.duckdb' && it.name == 'duckdb_jdbc'
+                    }.collect { [version: it.moduleVersion.id.version, file: it.file.absolutePath] }
+                }
+            }
+            selected.each { name, artifacts ->
+                def expected = name.endsWith(':quackPreviewRuntimeClasspath') ? [] :
+                    [name.endsWith(':legacyInlineProducer') ? '1.5.6.0' : '2.0.0.1']
+                assert artifacts.collect { it.version } == expected : 'Unexpected JDBC resolution: ' + name + ' ' + artifacts
+            }
+            println(groovy.json.JsonOutput.toJson(selected))
+        }
+    }
+}

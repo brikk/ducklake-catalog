@@ -7,6 +7,17 @@ shipping checkpoints are in [the history](archive/UPSTREAM-FOLLOWUPS-HISTORY-202
 
 ## Published-artifact checkpoint
 
+**November2 update:** DuckDB JDBC2.0.0.1 is now published, and its
+[adoption is explicitly approved](archive/UPGRADE-DUCKDB-JDBC-2.0.0.1-2026-11-02.md).
+It repairs the tuple-list getter crash reported in our comments on upstream#728;
+no TIME24 fix or broader format support is inferred. Fresh official2.0/Linux AMD64
+DuckLake, native Quack, PostgreSQL and MySQL extensions remain byte-identical to
+their qualified pins. Source main advanced to24562f1a (pluggable SQLite metadata
+profiles); future source adoption must pair the matching SQLite scanner pin.
+This source work is not in the checked stable payloads. Detailed read-only evidence
+is in `build/verification/upstream-2026-11-02/REVIEW.md`; original gate failures
+remain strict and are not rerun/waived by that source review.
+
 **Checked October 28, 11:52 UTC:** latest stable DuckDB/JDBC remain 2.0.0/2.0.0.0.
 Fresh official `v2.0.0/linux_amd64` DuckLake, Quack, PostgreSQL and MySQL extension
 downloads are byte-identical to the qualified pins; DuckLake remains `417a9117f5`.

@@ -67,6 +67,14 @@ without truncation. The latest full run passes1,177 catalog,91 direct-Java Quack
 and80 SLT tests; replay207/208 retains exactly the six parked TIME failures, with
 the original corpus totals/exclusions unchanged. The later Quack pass is retained
 alongside, not substituted for or claimed as a fix to, the earlier failures.
+The [JDBC2.0.0.1 adoption](archive/UPGRADE-DUCKDB-JDBC-2.0.0.1-2026-11-02.md)
+fixes the tuple-list native getter crash reported in our upstream#728 comments,
+with positional tuple/native-text compatibility preserved. All20 new regressions
+pass within191 focused checks on Java17/25. Latest forced full:1,177 catalog,
+91 direct-Java Quack and80 SLT pass; replay227/228 retains exactly the six strict
+TIME records, with corpus totals/exclusions unchanged. Two earlier Quack-backed
+evolution failures, their unchanged eight-case passing repeat and the later
+baseline-only full run remain recorded; their cause is not claimed fixed.
 
 | ID | Priority | Pending boundary |
 |---|---|---|

@@ -7,7 +7,7 @@ remains open. Current scope and exact external gates are in
 dated execution evidence are preserved in
 [the history](archive/DUCKLAKE-1.1-SUPPORT-HISTORY-2026-10-28.md).
 
-Maintained pins remain DuckDB 2.0.0 / JDBC 2.0.0.0, signed DuckLake `417a9117f5`
+Maintained pins remain DuckDB 2.0.0 / JDBC 2.0.0.1, signed DuckLake `417a9117f5`
 and Quack `f96420ed46`. Reads remain explicit/default-off; all 1.1 writes remain
 disabled. A completed implementation is not blanket format or production acceptance.
 

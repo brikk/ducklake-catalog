@@ -19,7 +19,8 @@ The active defect queue excludes completed repairs.
 
 The subsequent [H05/H09/H08 stage implementations](archive/FIX-HARNESS-STAGES-2026-10-29.md)
 are **qualification-blocked, not Complete**. Their regressions pass, but strict
-maintained corpus checks expose six TIME24:00 conversion failures in JDBC2.0.0.0.
+maintained corpus checks expose six TIME24:00 conversion failures, first recorded
+on JDBC2.0.0.0 and still strict after the qualified2.0.0.1 patch adoption.
 The owner selected keeping those failures visible; no new skip or synthesized value
 is authorized. They remain in the active queue pending separately scoped lossless
 support and qualification. Earlier completed repairs are not reopened by this gate.
@@ -95,6 +96,18 @@ defects and delivery controls have current evidence in [BACKLOG.md](BACKLOG.md);
 resolved and optional items are classified in the archive rather than another bug list.
 
 ## External verification linked to each feature
+
+**November2 JDBC patch:** the user approved
+[2.0.0.1 adoption](archive/UPGRADE-DUCKDB-JDBC-2.0.0.1-2026-11-02.md), fixing the
+reported tuple-list native getter crash and typed TUPLE handling. This does not
+adopt a newer core/DuckLake/Quack/scanner build or waive any external gate below.
+The new DuckLake main metadata-profile API and open branching/backport work are
+not promoted. All20 new regressions and191 focused checks pass on Java17/25;
+the final forced full run passes1,177 catalog,91 direct-Java Quack and80 SLT,
+with replay227/228 retaining only the six parked TIME failures. Earlier evolution
+transaction failures and their unchanged passing repeats remain in the report,
+not waived or diagnosed as repaired. No native R02/R03/R04/MySQL gate is rerun
+or waived by this JDBC patch adoption.
 
 **Checked October 28, 11:52 UTC:** latest stable DuckDB/JDBC remain 2.0.0/2.0.0.0.
 Fresh official `v2.0.0/linux_amd64` DuckLake/Quack/PostgreSQL/MySQL extensions are
