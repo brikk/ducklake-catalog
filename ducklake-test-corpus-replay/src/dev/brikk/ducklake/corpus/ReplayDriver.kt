@@ -79,7 +79,7 @@ class ReplayDriver(
                 attachments = ReplayAttachmentState(metadataRewriter)
                 openTransactions.clear()
                 mirrorsThisFile = 0
-                val halted = executeAll(file.records, oracle, emptyMap(), progress)
+                val halted = executeAll(file.records, oracle, emptyList(), progress)
                 progress.fileResult(file.path, halted)
             }
         } catch (e: SltLimitExceeded) {
@@ -134,7 +134,7 @@ class ReplayDriver(
     private fun executeAll(
         records: List<SltRecord>,
         oracle: DuckDbOracle,
-        bindings: Map<String, String>,
+        bindings: List<Pair<String, String>>,
         outcomes: ReplayProgress,
     ): String? {
         for (record in records) {
@@ -170,11 +170,12 @@ class ReplayDriver(
     private fun executeConditional(
         record: SltConditional,
         oracle: DuckDbOracle,
-        bindings: Map<String, String>,
+        bindings: List<Pair<String, String>>,
         outcomes: ReplayProgress,
     ): String? {
         oracle.textBudget.inspect(record.engine)
-        val run = SltConditions.shouldRun(record.engine, "duckdb", bindings, record.skipIf)
+        // Guard lookup is innermost-wins, while SQL replacement below retains every frame.
+        val run = SltConditions.shouldRun(record.engine, "duckdb", bindings.toMap(), record.skipIf)
         if (run) {
             return executeAll(listOf(record.record), oracle, bindings, outcomes)
         }
@@ -183,17 +184,17 @@ class ReplayDriver(
     }
 
     /** Upstream order: `ReplaceKeywords` (env, TEST_DIR, UUID) first, then `LoopReplacement`. */
-    private fun substituteAll(text: String, bindings: Map<String, String>, oracle: DuckDbOracle): String =
+    private fun substituteAll(text: String, bindings: List<Pair<String, String>>, oracle: DuckDbOracle): String =
         bindLoops(oracle.substitute(text), bindings, oracle)
 
     /**
      * `LoopReplacement` / `ReplaceLoopIterator` (`sqllogic_test_runner.cpp:198-235`): active loops
-     * outermost-first; each replacement value is env-substituted before insertion; `${it}` then
+     * outermost-first, retaining duplicate iterator names; each value is env-substituted before insertion; `${it}` then
      * `{it}` are replaced literally. A comma iterator `a,b` bound to `1,x` binds `a`→`1`, `b`→`x`
      * (the parser guarantees equal arity for raw values; env substitution could still break it,
      * which upstream `FAIL`s on — here it escapes [replay] and the runner reports a CRASH file).
      */
-    private fun bindLoops(text: String, bindings: Map<String, String>, oracle: DuckDbOracle): String {
+    private fun bindLoops(text: String, bindings: List<Pair<String, String>>, oracle: DuckDbOracle): String {
         var s = text
         for ((iterator, rawValue) in bindings) {
             val names = SltLimits.commaParts(iterator)
@@ -214,7 +215,7 @@ class ReplayDriver(
     private fun runStatement(
         record: SltStatement,
         oracle: DuckDbOracle,
-        bindings: Map<String, String>,
+        bindings: List<Pair<String, String>>,
     ): RecordOutcome {
         val substituted = substituteAll(record.sql, bindings, oracle)
         val prepared = attachments.prepare(substituted)
@@ -292,7 +293,7 @@ class ReplayDriver(
     private fun runQuery(
         record: SltQuery,
         oracle: DuckDbOracle,
-        bindings: Map<String, String>,
+        bindings: List<Pair<String, String>>,
     ): RecordOutcome {
         val sql = substituteAll(record.sql, bindings, oracle)
         // runCatching: unchecked escapes happen too (e.g. the JDBC driver throws
@@ -385,7 +386,7 @@ class ReplayDriver(
     private fun goldenOutcome(
         record: SltQuery,
         oracle: DuckDbOracle,
-        bindings: Map<String, String>,
+        bindings: List<Pair<String, String>>,
         actual: QueryResult,
     ): RecordOutcome {
         val effective =
@@ -418,7 +419,7 @@ class ReplayDriver(
     private fun resolveExpected(
         record: SltQuery,
         oracle: DuckDbOracle,
-        bindings: Map<String, String>,
+        bindings: List<Pair<String, String>>,
         actual: List<List<String?>>,
     ): SltQuery {
         val goldenFile = record.goldenFile ?: return record.copy(expected = record.expected.map { oracle.substitute(it) })

@@ -78,15 +78,15 @@ object SltExpander {
         private val budget = SltExpansionBudget().also { it.environment(env) }
         private val out = mutableListOf<ConcreteRecord>()
         // Per-file, mutable: `test-env` accumulates here (as the driver's oracle does), visible to
-        // all subsequent records. Loop bindings are layered on top per scope (see [walk]).
+        // all subsequent records. Loop frames retain duplicate names in outermost-first order.
         private val accumulatedEnv = LinkedHashMap(env)
 
         fun expand(): List<ConcreteRecord> {
-            walk(file.records, emptyMap())
+            walk(file.records, emptyList())
             return out
         }
 
-        private fun walk(records: List<SltRecord>, bindings: Map<String, String>) {
+        private fun walk(records: List<SltRecord>, bindings: List<Pair<String, String>>) {
             for (record in records) {
                 when (record) {
                     is SltTestEnv -> accumulatedEnv[record.name] = budget.retain(substitute(record.value, bindings))
@@ -118,13 +118,14 @@ object SltExpander {
         }
 
         /** `skipif`/`onlyif` resolution — see [SltConditions] for the two dialects. */
-        private fun shouldRun(conditional: SltConditional, engine: String, bindings: Map<String, String>): Boolean {
+        private fun shouldRun(conditional: SltConditional, engine: String, bindings: List<Pair<String, String>>): Boolean {
             budget.inspect(conditional.engine)
-            return SltConditions.shouldRun(conditional.engine, engine, bindings, conditional.skipIf)
+            // Native CheckLoopCondition scans every matching frame, leaving the inner value.
+            return SltConditions.shouldRun(conditional.engine, engine, bindings.toMap(), conditional.skipIf)
         }
 
         /** Env first (upstream `ReplaceKeywords`), then loop bindings outermost-first (`LoopReplacement`). */
-        private fun substitute(text: String, bindings: Map<String, String>): String {
+        private fun substitute(text: String, bindings: List<Pair<String, String>>): String {
             var s = substituteEnv(text)
             for ((iterator, value) in bindings) {
                 s = substituteLoop(s, iterator, substituteEnv(value))
