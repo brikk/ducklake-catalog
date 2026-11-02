@@ -32,7 +32,7 @@ package dev.brikk.ducklake.slt
  * a stray `endloop`, unknown directives, and malformed records that upstream rejects with
  * `parser.Fail` (`statement error|maybe` without `----`, `statement ok` with `----`, an empty
  * statement body, a `query` type string that is not `[TIR]+`, a `loop` without numeric bounds,
- * a `foreach` without values or with mismatched comma arity).
+ * a `foreach` without values or with mismatched comma arity, or a loop/foreach missing `endloop`).
  */
 sealed interface SltRecord {
     val line: Int

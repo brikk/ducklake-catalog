@@ -5,7 +5,7 @@ Remaining work after current-code triage and the verified
 [harness integrity](archive/FIX-HARNESS-INTEGRITY-2026-10-28.md) repairs. The
 [74-item triage report](archive/TRIAGE-2026-10-28.md) preserves the original evidence
 against `662a84a`; completed repairs are not repeated in this queue.
-There are **16 open findings**: **3 unfixed reproduced defects** and **13 implemented
+There are **16 open findings**: **2 unfixed reproduced defects** and **14 implemented
 repairs pending qualification**, plus **3 source-confirmed delivery-control gaps**.
 Missing features or missing evidence are not counted as reproduced bugs.
 
@@ -22,7 +22,6 @@ not production incident frequency.
 
 | ID | Priority | Reproduced failure / next fix boundary |
 |---|---|---|
-| H12 | P2 | Truncated loops become runnable loops rather than malformed records. |
 | H13 | P2 | Nested reuse of an iterator name substitutes the inner value instead of upstream outermost-first behavior. |
 | H16 | P2 | Golden substitution discards valid raw expectations. |
 
@@ -80,6 +79,12 @@ the existing positive predicate API. All22 new regressions pass within200 focuse
 checks on Java17/25; full SLT94/94 and replay235/236 retain only the parked TIME
 records in the affected modules. The full run's additional Quack abort remains
 preserved alongside an unchanged91/91 Quack repeat, not diagnosed as repaired.
+The [H12 loop-termination repair](archive/FIX-H12-LOOP-TERMINATION-2026-11-02.md)
+rejects EOF in open loop/foreach scopes and does not treat data or skipped
+endloop text as a closing directive. All32 new regressions pass within232 focused
+checks on Java17/25; the948-file census has zero new closure refusals. Full1,177
+catalog,91 direct-Java Quack and118 SLT pass; replay243/244 retains only the six
+parked TIME records, with original corpus totals/exclusions unchanged.
 
 | ID | Priority | Pending boundary |
 |---|---|---|
@@ -96,6 +101,7 @@ preserved alongside an unchanged91/91 Quack repeat, not diagnosed as repaired.
 | H14 | P2 | DML query records now consume typed rows or large changed-row counts from one standard JDBC execution. All13 regressions pass on Java17/25; full replay198/199 retains the parked strict baseline. Project qualification also records the separate Quack transaction failures above. |
 | H06 | P2 | Parsing/allocation/nesting/expansion budgets and the preparation watchdog are implemented; all38 new regressions pass on Java17/25. Full replay207/208 retains only the six parked TIME records, with no added exclusions or resource refusals. Strict project qualification remains pending. |
 | H11 | P2 | Conditional policy now matches upstream per term, without hiding syntax errors or consulting unreachable bindings. All22 regressions pass on Java17/25; full affected-module checks retain only the six strict TIME records. Shared qualification remains pending; original Quack failure and passing repeat are preserved above. |
+| H12 | P2 | Unclosed loop/foreach bodies now become explicit malformed records instead of runnable loops; real terminators retain nesting/provenance. All32 regressions pass on Java17/25; full replay243/244 retains only the six parked TIME records. Strict project qualification remains pending. |
 
 ## Confirmed delivery-control gaps
 

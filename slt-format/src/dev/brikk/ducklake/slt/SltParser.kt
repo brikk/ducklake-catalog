@@ -82,8 +82,8 @@ object SltParser {
                 i = when {
                     // Whitespace-only lines are rejected upstream ("Empty line!?"); we read them as blank.
                     tokens.isEmpty() || lines[i].startsWith("#") -> i + 1
-                    tokens[0] == "endloop" && insideLoop -> return i
                     skipLevel > 0 && tokens[0] != "mode" -> skipStatement(i)
+                    tokens[0] == "endloop" && insideLoop -> return i
                     else -> parseRecord(i, out)
                 }
             }
@@ -133,8 +133,8 @@ object SltParser {
                     // Not executed, but it OWNS a body up to its endloop: consume that body so the
                     // records after the loop are still parsed (S-B1), then report the directive.
                     val end = parseLoopBody(start, mutableListOf())
-                    out += SltUnsupported(lineNo, tokens[0], line)
-                    end
+                    out += if (end.closed) SltUnsupported(lineNo, tokens[0], line) else missingEndloop(lineNo, tokens[0])
+                    end.next
                 }
                 "endloop" -> {
                     out += SltUnsupported(lineNo, "endloop", "stray endloop without a matching loop/foreach")
@@ -192,11 +192,17 @@ object SltParser {
             return end
         }
 
-        /** Parses a loop body (into [body]) and returns the index just past its `endloop`. */
-        private fun parseLoopBody(start: Int, body: MutableList<SltRecord>): Int {
+        private data class LoopEnd(val next: Int, val closed: Boolean)
+
+        /** EOF and an observed closing directive are distinct, even when both return lines.size. */
+        private fun parseLoopBody(start: Int, body: MutableList<SltRecord>): LoopEnd {
             val after = parseInto(start + 1, body, insideLoop = true)
-            return if (after < lines.size && tokensOf(lines[after]).firstOrNull() == "endloop") after + 1 else after
+            val closed = after < lines.size && tokensOf(lines[after]).firstOrNull() == "endloop"
+            return LoopEnd(if (closed) after + 1 else after, closed)
         }
+
+        private fun missingEndloop(line: Int, directive: String) =
+            SltUnsupported(line, directive, "Missing endloop! $directive opened at line $line")
 
         /**
          * `statement ok|error|maybe [conN]`. As upstream `ExtractExpectedError`, `statement
@@ -308,10 +314,13 @@ object SltParser {
                 // Malformed header (upstream `parser.Fail`): the body is still consumed so the
                 // records after the loop parse normally.
                 out += SltUnsupported(lineNo, tokens[0], lines[start])
+            } else if (!end.closed) {
+                // Never let the unclosed body's statements escape or become a runnable SltLoop.
+                out += missingEndloop(lineNo, tokens[0])
             } else {
                 out += SltLoop(lineNo, variable, values, body)
             }
-            return end
+            return end.next
         }
 
         /** Null when the directive is malformed (upstream `parser.Fail`). */
