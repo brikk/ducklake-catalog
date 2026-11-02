@@ -1,6 +1,7 @@
 package dev.brikk.ducklake.corpus
 
 import dev.brikk.ducklake.slt.SltConditional
+import dev.brikk.ducklake.slt.SltConditions
 import dev.brikk.ducklake.slt.SltFile
 import dev.brikk.ducklake.slt.SltLimitExceeded
 import dev.brikk.ducklake.slt.SltLimits
@@ -173,18 +174,13 @@ class ReplayDriver(
         outcomes: ReplayProgress,
     ): String? {
         oracle.textBudget.inspect(record.engine)
-        val cond = evalCondition(record.engine, bindings)
-        val run = if (record.skipIf) !cond else cond
+        val run = SltConditions.shouldRun(record.engine, "duckdb", bindings, record.skipIf)
         if (run) {
             return executeAll(listOf(record.record), oracle, bindings, outcomes)
         }
         outcomes += RecordOutcome.Skip(record.record, "${if (record.skipIf) "skipif" else "onlyif"} ${record.engine}")
         return null
     }
-
-    /** True when the guarded record applies (engine name or loop condition — see [SltConditions]). */
-    private fun evalCondition(expr: String, bindings: Map<String, String>): Boolean =
-        dev.brikk.ducklake.slt.SltConditions.evaluate(expr, "duckdb", bindings)
 
     /** Upstream order: `ReplaceKeywords` (env, TEST_DIR, UUID) first, then `LoopReplacement`. */
     private fun substituteAll(text: String, bindings: Map<String, String>, oracle: DuckDbOracle): String =

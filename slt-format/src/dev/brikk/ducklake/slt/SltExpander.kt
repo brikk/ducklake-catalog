@@ -120,8 +120,7 @@ object SltExpander {
         /** `skipif`/`onlyif` resolution — see [SltConditions] for the two dialects. */
         private fun shouldRun(conditional: SltConditional, engine: String, bindings: Map<String, String>): Boolean {
             budget.inspect(conditional.engine)
-            val condition = SltConditions.evaluate(conditional.engine, engine, bindings)
-            return if (conditional.skipIf) !condition else condition
+            return SltConditions.shouldRun(conditional.engine, engine, bindings, conditional.skipIf)
         }
 
         /** Env first (upstream `ReplaceKeywords`), then loop bindings outermost-first (`LoopReplacement`). */
