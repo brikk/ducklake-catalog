@@ -2,11 +2,11 @@
 
 ## Supported lane
 
-- Latest stable catalog release: **0.13.1** ([notes](releases/RELEASE-0.13.1.md)); development: **0.14.0-SNAPSHOT**.
+- Latest stable catalog release: **0.13.2** ([notes](releases/RELEASE-0.13.2.md)); development: **0.14.0-SNAPSHOT**.
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in. DuckLake 1.1 writes remain disabled.
 - Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.1**. Stable 0.12.0 retains its historical pins; 0.13.0 ships these.
-- Optional direct Java Quack JDBC: **0.12.1**; see the [driver update verification](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.12.1-2026-11-03.md).
+- Optional direct Java Quack JDBC: **0.13.0**; see the [driver update verification](../dev-docs/archive/UPGRADE-QUACK-JDBC-0.13.0-2026-11-03.md).
   It fixes read transactions aborting after a result is closed early ([diagnosis](../dev-docs/archive/QUACK-TRANSACTION-DIAGNOSIS-2026-11-03.md)). Do not use 0.12.0 or older for direct read sessions.
 - Published libraries target **Java 17**. Building the repository requires JDK 25.
 - Applications supply their JDBC drivers and access to the data-file location.
@@ -17,7 +17,7 @@
 | MySQL | `jdbc:mysql://host/catalog` | Supply the MySQL JDBC driver; transactional-DDL limits still apply |
 | Local DuckDB | `jdbc:duckdb:/path/catalog.db` | DuckDB JDBC 2.0.0.1 |
 | Native Quack | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC and native Quack/DuckLake extensions |
-| Direct Java Quack | `jdbc:quack://host:9494` | `dev.brikk.duckdb:quack-jdbc:0.12.1`; optional `/existing-server-catalog` |
+| Direct Java Quack | `jdbc:quack://host:9494` | `dev.brikk.duckdb:quack-jdbc:0.13.0`; optional `/existing-server-catalog` |
 
 Pass Quack tokens in `catalogDatabasePassword`, not shared URLs. The direct Java
 route uses ordinary remote JDBC transactions and does not require embedded DuckDB
@@ -268,7 +268,7 @@ The original [shipping qualification](../dev-docs/UPGRADE-DUCKDB-2.0.0.md) cover
 2.0 JDBC/local/native-Quack and Java Quack 0.8.0 routes separately, including protocol
 v3 without embedded DuckDB in the direct Java reader. Default-off final inline reads
 and all 1.1 writes remain guarded. Existing constructors and wire shapes are unchanged.
-The subsequent driver scans/verifications through 0.12.1 are recorded separately; they do not
+The subsequent driver scans/verifications through 0.13.0 are recorded separately; they do not
 relabel that earlier full engine/corpus run as having used the newer driver.
 
 Native probes have reproduced CDC, inline-flush, statistics, BLOB, lineage and

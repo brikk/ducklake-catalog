@@ -21,10 +21,10 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 ## Using it as a dependency
 
-Latest release: **0.13.1** (`main` is `0.14.0-SNAPSHOT`)
+Latest release: **0.13.2** (`main` is `0.14.0-SNAPSHOT`)
 
 See [user documentation](docs/README.md) for compatibility, producer contracts and
-[release notes](docs/releases/RELEASE-0.13.1.md). Upgrading from 0.12.x? Read the
+[release notes](docs/releases/RELEASE-0.13.2.md). Upgrading from 0.12.x? Read the
 [0.13.0 upgrade guidance](docs/SNAPSHOT-UPGRADE.md) first. Consumers upgrading from before
 0.10.0 must adopt its [nullable row-ID contract](docs/releases/RELEASE-0.10.0.md).
 
@@ -36,16 +36,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.13.1")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.13.2")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.13.1"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.13.2"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.1")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.2")
 
     // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
-    implementation("dev.brikk.ducklake:slt-format:0.13.1")
+    implementation("dev.brikk.ducklake:slt-format:0.13.2")
 }
 ```
 
@@ -56,10 +56,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.13.1'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.13.1')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.1'
-    implementation 'dev.brikk.ducklake:slt-format:0.13.1'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.13.2'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.13.2')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.2'
+    implementation 'dev.brikk.ducklake:slt-format:0.13.2'
 }
 ```
 
@@ -69,14 +69,14 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.13.1</version>
+  <version>0.13.2</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.13.1</version>
+  <version>0.13.2</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
 </dependency>
@@ -85,7 +85,7 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>slt-format</artifactId>
-  <version>0.13.1</version>
+  <version>0.13.2</version>
 </dependency>
 ```
 
@@ -135,7 +135,7 @@ DuckDB **2.0.0** Quack server. For an initialized DuckLake 1.0 metadata catalog:
 |---|---|---|
 | Local DuckDB file | `jdbc:duckdb:/path/catalog.db` | `org.duckdb:duckdb_jdbc:2.0.0.1` |
 | Native Quack client | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC 2.0.0.1, native Quack/DuckLake extensions |
-| Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.12.1` or later |
+| Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.13.0` |
 
 For both remote routes, pass the token in `catalogDatabasePassword`, not in shared
 URLs. The direct Java route uses ordinary remote JDBC transactions and does not
@@ -146,16 +146,16 @@ metadata through the native extension. No 1.1 migration is enabled by this libra
 Quack serves metadata here; engines still need access to the actual Parquet data location.
 DuckDB 2.0 defaults new lakes to 1.1. For read/write access, initialize them with
 `DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE`; native Quack bootstrap does this
-explicitly. Direct Java Quack 0.12.1 uses protocol v3 on the official 2.0 server; 0.12.0 and older
+explicitly. Direct Java Quack 0.13.0 uses protocol v3 on the official 2.0 server; 0.12.0 and older
 can abort read transactions after an early result close ([diagnosis](dev-docs/archive/QUACK-TRANSACTION-DIAGNOSIS-2026-11-03.md)).
 See [compatibility](docs/COMPATIBILITY.md) and [shipping qualification](dev-docs/UPGRADE-DUCKDB-2.0.0.md).
-The [driver update verification](dev-docs/archive/UPGRADE-QUACK-JDBC-0.12.1-2026-11-03.md)
+The [driver update verification](dev-docs/archive/UPGRADE-QUACK-JDBC-0.13.0-2026-11-03.md)
 is separate from the earlier full engine/corpus qualification.
 
 ## Compatibility status
 
 - **Maintained lane (0.13.0):** DuckLake **1.0**, DuckDB/JDBC **2.0.0 / 2.0.0.1**,
-  with optional direct Java Quack JDBC **0.12.1**. The catalog library targets Java 17;
+  with optional direct Java Quack JDBC **0.13.0**. The catalog library targets Java 17;
   building it requires JDK 25.
 - **DuckLake 1.1 / DuckDB 2.0:** a [limited opt-in read tier](docs/READING-1.1.md)
   is available through direct Java Quack for root-schema catalogs. It is not full
