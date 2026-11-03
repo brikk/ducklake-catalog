@@ -74,7 +74,9 @@ class TestReadBackendVersionPolicy {
                 assertThatThrownBy { c.currentSnapshotId }.isInstanceOf(DucklakeInvalidOperationException::class.java)
                     .hasMessageContaining("catalog format 1.1")
                 c.readSession(Supplier {
-                    for (action in listOf<() -> Any?>({ c.getSpecVersion() }, { c.listSchemas(0) }, { c.getCleanupDataPath() })) {
+                    // Diagnostics/lane selection stay available; reads are refused.
+                    assertThat(c.getSpecVersion()).isEqualTo("1.1")
+                    for (action in listOf<() -> Any?>({ c.listSchemas(0) }, { c.getCleanupDataPath() })) {
                         assertThatThrownBy { action() }.isInstanceOf(DucklakeInvalidOperationException::class.java)
                             .hasMessageContaining("enableFinal11Reads")
                     }

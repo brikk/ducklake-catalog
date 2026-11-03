@@ -102,6 +102,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /** Pool-backed context: each statement checks out a connection and autocommits. */
     private val pooledDsl: DSLContext
     private val final11ReadsEnabled: Boolean
+    private val formatAdmission: DucklakeFormatAdmission
     private val final11ReadRoute: Final11ReadRoute?
 
     /** Set on a thread for the duration of [readSession]: every read on that thread uses it. */
@@ -118,12 +119,14 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 throw DucklakeInvalidOperationException("enableFinal11Reads requires readSession for validation and reads on one snapshot")
             }
             val ctx = session ?: pooledDsl
-            if (dialect == SQLDialect.MYSQL && validatedReadSession.get() !== ctx) {
-                DucklakeReadBackendPolicy.requireMySqlFormat(globalMetadataValue("version", ctx), final11ReadsEnabled)
-                if (!final11ReadsEnabled && session != null) validatedReadSession.set(ctx)
-            }
-            if (final11ReadsEnabled && validatedReadSession.get() !== ctx) {
-                Final11ReadCompatibility.requireReadableLayout(ctx, globalMetadataValue("version", ctx))
+            if (validatedReadSession.get() !== ctx) {
+                // Format admission reads the stored version in the SAME view the reads use: once per owned
+                // read session, per access outside one (a later native migration is never cached away).
+                val version = globalMetadataValue("version", ctx)
+                // MySQL's narrower policy keeps its established refusal first; then the general admission/lock.
+                if (dialect == SQLDialect.MYSQL) DucklakeReadBackendPolicy.requireMySqlFormat(version, final11ReadsEnabled)
+                formatAdmission.requireReadable(version)
+                if (final11ReadsEnabled) Final11ReadCompatibility.requireReadableLayout(ctx, version)
                 // Never cache this across read sessions or autocommit calls. It must describe the
                 // owned transaction's view, not stale instance-level migration/hierarchy metadata.
                 if (session != null) validatedReadSession.set(ctx)
@@ -140,6 +143,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         if (config == null) throw NullPointerException("config is null")
 
         this.final11ReadsEnabled = config.enableFinal11Reads
+        this.formatAdmission = DucklakeFormatAdmission(catalogDatabaseUrl, config.requiredCatalogFormat, config.enableFinal11Reads)
 
         val hikariConfig = HikariConfig()
         val configuredUrl: String = requireNotNull(config.catalogDatabaseUrl) {
@@ -2963,7 +2967,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     override fun getDataPath(): String? = globalMetadataValue("data_path")
 
-    override fun getSpecVersion(): String? = globalMetadataValue("version")
+    /** Diagnostics/lane selection: reads the stored version WITHOUT format admission (session view if open). */
+    override fun getSpecVersion(): String? = globalMetadataValue("version", readSessionDsl.get() ?: pooledDsl)
 
     override fun isEncrypted(): Boolean = globalMetadataValue("encrypted")?.equals("true", ignoreCase = true) == true
 
@@ -2980,6 +2985,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     /** Fresh per attempt: another engine can migrate while this instance remains attached. */
     private fun requireCatalogWritesSupported(ctx: DSLContext, registersFiles: Boolean = false) = guardInitialized {
         val version = lockedGlobalMetadataValue(ctx, "version")
+        formatAdmission.requireWritable(version)
         if (version !in DucklakeSpecVersions.WRITABLE) {
             throw DucklakeUnsupportedCatalogVersionException(catalogDatabaseUrl, version)
         }

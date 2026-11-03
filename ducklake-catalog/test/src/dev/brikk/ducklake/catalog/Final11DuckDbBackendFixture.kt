@@ -34,6 +34,7 @@ internal class Final11DuckDbBackendFixture(
     private val server: TestingDucklakeDuckDbQuackCatalogServer? =
         if (route == Final11ReadRoute.LOCAL_DUCKDB) null else TestingDucklakeDuckDbQuackCatalogServer()
     private var initialized = false
+    val token: String? get() = server?.getToken()
     val readerUrl: String get() = when (route) {
         Final11ReadRoute.LOCAL_DUCKDB -> "jdbc:duckdb:$file"
         Final11ReadRoute.NATIVE_QUACK -> "jdbc:duckdb:quack://${server!!.getHost()}:${server.getMappedPort()}?metadata_catalog=r06_meta"

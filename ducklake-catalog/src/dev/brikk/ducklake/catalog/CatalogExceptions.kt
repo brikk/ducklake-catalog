@@ -158,16 +158,45 @@ open class DucklakeEncryptedCatalogUnsupportedException(
  * catalog once from a current DuckDB.
  * @property catalogDatabaseUrl Diagnostic URL; user-info/options are redacted, not a connection URL.
  */
-open class DucklakeUnsupportedCatalogVersionException(
-    catalogDatabaseUrl: String,
-    val version: String?,
-) : DucklakeException(
-    "DuckLake catalog at \"${JdbcUrlDiagnostics.redact(catalogDatabaseUrl)}\" has spec version " + (version ?: "<missing>") +
-        "; this client writes spec versions ${DucklakeSpecVersions.WRITABLE.joinToString(", ")} only. " +
-        "Use a compatible catalog version; do not migrate to a newer development format until this client supports it.",
-) {
-    val catalogDatabaseUrl: String = JdbcUrlDiagnostics.redact(catalogDatabaseUrl)
+open class DucklakeUnsupportedCatalogVersionException : DucklakeException {
+    val version: String?
+    val catalogDatabaseUrl: String
+
+    constructor(catalogDatabaseUrl: String, version: String?) : super(
+        "DuckLake catalog at \"${JdbcUrlDiagnostics.redact(catalogDatabaseUrl)}\" has spec version " + (version ?: "<missing>") +
+            "; this client writes spec versions ${DucklakeSpecVersions.WRITABLE.joinToString(", ")} only. " +
+            "Use a compatible catalog version; do not migrate to a newer development format until this client supports it.",
+    ) {
+        this.version = version
+        this.catalogDatabaseUrl = JdbcUrlDiagnostics.redact(catalogDatabaseUrl)
+    }
+
+    /** For subclasses that refuse a stored version for a more specific reason. */
+    protected constructor(catalogDatabaseUrl: String, version: String?, message: String) : super(message) {
+        this.version = version
+        this.catalogDatabaseUrl = JdbcUrlDiagnostics.redact(catalogDatabaseUrl)
+    }
 }
+
+/**
+ * The catalog's stored DuckLake format is not admitted by this client's configuration, checked before any
+ * layout-dependent read or write. Raised for a [DucklakeCatalogConfig.requiredCatalogFormat] mismatch, and for
+ * final 1.1 or unknown formats when final-1.1 reads are not enabled. Nothing was read, migrated or rewritten.
+ *
+ * A [DucklakeUnsupportedCatalogVersionException], so existing version-refusal handling applies.
+ *
+ * @property requiredFormat the configured lock, or null when refused by the default admission rules.
+ */
+open class DucklakeCatalogFormatNotAdmittedException(
+    catalogDatabaseUrl: String,
+    version: String?,
+    val requiredFormat: DucklakeCatalogFormat?,
+    detail: String,
+) : DucklakeUnsupportedCatalogVersionException(
+    catalogDatabaseUrl, version,
+    "DuckLake catalog at \"${JdbcUrlDiagnostics.redact(catalogDatabaseUrl)}\" has stored format " + (version ?: "<missing>") +
+        "; $detail No data was read and the catalog was not migrated.",
+)
 
 /** DuckLake spec versions as recorded in `ducklake_metadata.version`. */
 object DucklakeSpecVersions {

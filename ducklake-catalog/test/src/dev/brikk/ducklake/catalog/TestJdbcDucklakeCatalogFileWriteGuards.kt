@@ -144,9 +144,12 @@ class TestJdbcDucklakeCatalogFileWriteGuards {
                         .isInstanceOf(DucklakeUnsupportedCatalogVersionException::class.java)
                     assertThatThrownBy { catalog.analyzeTable(table.tableId) }
                         .isInstanceOf(DucklakeUnsupportedCatalogVersionException::class.java)
-                    assertThat(catalog.currentSnapshotId).isEqualTo(before)
-                    assertThat(catalog.getSchema("candidate_only", before)).isNull()
+                    // The default reader refuses an unadmitted stored format instead of reading it.
+                    assertThatThrownBy { catalog.currentSnapshotId }
+                        .isInstanceOf(DucklakeCatalogFormatNotAdmittedException::class.java)
                 } finally { setMetadata("version", "1.0") }
+                assertThat(catalog.currentSnapshotId).isEqualTo(before)
+                assertThat(catalog.getSchema("candidate_only", before)).isNull()
             }
         }
     }

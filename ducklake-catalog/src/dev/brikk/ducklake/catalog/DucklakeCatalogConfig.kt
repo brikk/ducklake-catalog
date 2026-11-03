@@ -86,4 +86,24 @@ class DucklakeCatalogConfig {
      * or migration; existing record/wire shapes omit advisory 1.1 metadata. MySQL's narrower scalar/layout contract is validated separately.
      */
     var enableFinal11Reads: Boolean = false
+
+    /**
+     * Optional catalog format lock, checked against the stored `ducklake_metadata.version` before reads (once per
+     * owned [DucklakeCatalog.readSession], or per pooled read outside one) and before writes. A mismatch throws
+     * [DucklakeCatalogFormatNotAdmittedException]; nothing is migrated and no version string is changed.
+     *  - [DucklakeCatalogFormat.V1_0]: admits stored 1.0 (and its layout-identical predecessor 0.4) only.
+     *  - [DucklakeCatalogFormat.V1_1]: admits stored final 1.1 only; requires [enableFinal11Reads]. 1.1 writes stay disabled.
+     * Null (default): with [enableFinal11Reads] off, final 1.1 and unknown formats are refused up front; with it on,
+     * the qualified 1.0/1.1 reader rules apply. Use [DucklakeCatalog.getSpecVersion] to inspect a catalog's format.
+     */
+    var requiredCatalogFormat: DucklakeCatalogFormat? = null
+}
+
+/** DuckLake catalog format families a caller can lock a catalog to; see [DucklakeCatalogConfig.requiredCatalogFormat]. */
+enum class DucklakeCatalogFormat(
+    /** Stored `ducklake_metadata.version` values admitted under this lock. */
+    val admittedSpecVersions: Set<String>,
+) {
+    V1_0(setOf("0.4", "1.0")),
+    V1_1(setOf("1.1")),
 }

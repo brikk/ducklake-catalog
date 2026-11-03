@@ -557,7 +557,11 @@ interface DucklakeCatalog : AutoCloseable {
      */
     fun getDataPath(): String?
 
-    /** `ducklake_metadata.version` — the DuckLake spec version of this catalog (null if the row is missing). */
+    /**
+     * `ducklake_metadata.version` — the stored DuckLake spec version of this catalog (null if the row is missing).
+     * Safe for diagnostics and lane selection: it is not subject to format admission, so it also reports formats
+     * this client refuses to read (see [DucklakeCatalogConfig.requiredCatalogFormat]).
+     */
     fun getSpecVersion(): String?
 
     /**
