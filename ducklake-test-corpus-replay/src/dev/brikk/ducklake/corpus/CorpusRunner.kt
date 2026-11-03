@@ -20,7 +20,7 @@ import kotlin.io.path.relativeTo
  * carries per-file skips with reasons — the curation surface, seeded over time
  * from upstream's own per-backend test-config skip lists (test/configs).
  */
-class CorpusRunner(
+class CorpusRunner @Suppress("LongParameterList") constructor(
     private val corpusRoot: Path,
     private val skipList: Map<String, String> = emptyMap(),
     private val engine: ReplayReadEngine? = null,
@@ -38,7 +38,26 @@ class CorpusRunner(
     private val fileTimeoutSeconds: Long = DEFAULT_FILE_TIMEOUT_SECONDS,
     /** DuckLake format for lakes the corpus creates without an explicit version; see [ReplaySetupFormat]. */
     private val setupFormat: ReplaySetupFormat? = null,
+    /** See [ReplayDriver]'s `mirrorFormatScope`: mirror only lakes whose stored format is in scope. */
+    private val mirrorFormatScope: Set<ReplaySetupFormat>? = null,
+    /** See [MetadataRewriteScope]. */
+    private val metadataRewriteScope: MetadataRewriteScope = MetadataRewriteScope.ALL_ATTACHES,
+    /** See [ReplayOracleSqlBinder]. */
+    private val oracleSqlBinder: ReplayOracleSqlBinder? = null,
+    /** See [ReplayDriver]'s `executionFormatScope`: halt files once they attach an out-of-scope stored format. */
+    private val executionFormatScope: Set<ReplaySetupFormat>? = null,
 ) {
+
+    /** 0.13.1/0.13.2 binary signature (including its default-argument bridge). */
+    @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
+    constructor(
+        corpusRoot: Path,
+        skipList: Map<String, String> = emptyMap(),
+        engine: ReplayReadEngine? = null,
+        metadataRewriter: ((String) -> String)? = null,
+        fileTimeoutSeconds: Long = DEFAULT_FILE_TIMEOUT_SECONDS,
+        setupFormat: ReplaySetupFormat? = null,
+    ) : this(corpusRoot, skipList, engine, metadataRewriter, fileTimeoutSeconds, setupFormat, null)
 
     /** 0.13.0 binary signature (including its default-argument bridge). */
     @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
@@ -48,7 +67,7 @@ class CorpusRunner(
         engine: ReplayReadEngine? = null,
         metadataRewriter: ((String) -> String)? = null,
         fileTimeoutSeconds: Long = DEFAULT_FILE_TIMEOUT_SECONDS,
-    ) : this(corpusRoot, skipList, engine, metadataRewriter, fileTimeoutSeconds, null)
+    ) : this(corpusRoot, skipList, engine, metadataRewriter, fileTimeoutSeconds, null, null)
 
     companion object {
         const val DEFAULT_FILE_TIMEOUT_SECONDS: Long = 300
@@ -112,6 +131,8 @@ class CorpusRunner(
         // corpusRoot = <repo>/test/sql → repo root two levels up (for `data/` refs).
         val driver = ReplayDriver(
             engine, repoRoot = corpusRoot.parent?.parent, metadataRewriter = metadataRewriter, setupFormat = setupFormat,
+            mirrorFormatScope = mirrorFormatScope, metadataRewriteScope = metadataRewriteScope, oracleSqlBinder = oracleSqlBinder,
+            executionFormatScope = executionFormatScope,
         )
         val progress = ReplayProgress(engine?.name)
         val body = {
@@ -215,7 +236,9 @@ class CorpusReport(val files: List<FileResult>) {
         }
         val resourceHalts = haltedFiles.count { it.fileSkipReason!!.startsWith("RESOURCE LIMIT:") }
         if (resourceHalts > 0) sb.appendLine("  halted mid-file by resource limit $resourceHalts (records above include theirs)")
-        val otherHalts = haltedFiles.size - requireHalts - resourceHalts
+        val formatHalts = haltedFiles.count { it.fileSkipReason!!.startsWith("format-") }
+        if (formatHalts > 0) sb.appendLine("  halted mid-file by format scope $formatHalts (records above include theirs)")
+        val otherHalts = haltedFiles.size - requireHalts - resourceHalts - formatHalts
         if (otherHalts > 0) {
             sb.appendLine("  halted mid-file by crash/timeout $otherHalts (records above include theirs)")
         }

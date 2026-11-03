@@ -32,7 +32,7 @@ import java.sql.SQLException
  *    rather than running around unknown constructs)
  *  - guarded-out conditional records, and a `<FILE>:` golden that is not on disk → record skip
  */
-class ReplayDriver(
+class ReplayDriver @Suppress("LongParameterList") constructor(
     private val engine: ReplayReadEngine? = null,
     private val repoRoot: java.nio.file.Path? = null,
     /**
@@ -49,7 +49,33 @@ class ReplayDriver(
     private val mirrorCapPerFile: Int = DEFAULT_MIRROR_CAP,
     /** DuckLake format for lakes created without an explicit version; see [ReplaySetupFormat]. */
     private val setupFormat: ReplaySetupFormat? = null,
+    /**
+     * Mirror only lakes whose STORED format belongs to these formats (checked after each successful ATTACH in the
+     * oracle); others are measured mirror skips `format-out-of-scope:<version>`. Null mirrors every format.
+     */
+    private val mirrorFormatScope: Set<ReplaySetupFormat>? = null,
+    /** Which attaches [metadataRewriter] moves to the backend; see [MetadataRewriteScope]. */
+    private val metadataRewriteScope: MetadataRewriteScope = MetadataRewriteScope.ALL_ATTACHES,
+    /** Optional backend adaptation of oracle SQL; see [ReplayOracleSqlBinder]. Null executes SQL as substituted. */
+    private val oracleSqlBinder: ReplayOracleSqlBinder? = null,
+    /**
+     * Execute only lakes whose STORED format belongs to these formats. After a successful ATTACH whose positively
+     * read global version is outside the scope, the rest of the file is halted (`format-out-of-scope: …`): its
+     * remaining SQL never runs, earlier outcomes and failures stand, and the file never counts as ran-to-end.
+     * Inspection errors fail the ATTACH record loudly. Null executes every format (default).
+     */
+    private val executionFormatScope: Set<ReplaySetupFormat>? = null,
 ) {
+
+    /** 0.13.1/0.13.2 binary signature (including its default-argument bridge). */
+    @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
+    constructor(
+        engine: ReplayReadEngine? = null,
+        repoRoot: java.nio.file.Path? = null,
+        metadataRewriter: ((original: String) -> String)? = null,
+        mirrorCapPerFile: Int = DEFAULT_MIRROR_CAP,
+        setupFormat: ReplaySetupFormat? = null,
+    ) : this(engine, repoRoot, metadataRewriter, mirrorCapPerFile, setupFormat, null)
 
     /** 0.13.0 binary signature (including its default-argument bridge). */
     @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
@@ -58,7 +84,7 @@ class ReplayDriver(
         repoRoot: java.nio.file.Path? = null,
         metadataRewriter: ((original: String) -> String)? = null,
         mirrorCapPerFile: Int = DEFAULT_MIRROR_CAP,
-    ) : this(engine, repoRoot, metadataRewriter, mirrorCapPerFile, null)
+    ) : this(engine, repoRoot, metadataRewriter, mirrorCapPerFile, null, null)
 
     companion object {
         const val DEFAULT_MIRROR_CAP: Int = 40
@@ -87,9 +113,10 @@ class ReplayDriver(
         return try {
             DuckDbOracle(repoRoot = repoRoot, setupFormat = setupFormat).use { oracle ->
                 labelResults.clear()
-                attachments = ReplayAttachmentState(metadataRewriter)
+                attachments = ReplayAttachmentState(metadataRewriter, metadataRewriteScope) { oracle.envValue("DUCKLAKE_CONNECTION") }
                 openTransactions.clear()
                 mirrorsThisFile = 0
+                formatHalt = null
                 val halted = executeAll(file.records, oracle, emptyList(), progress)
                 progress.fileResult(file.path, halted)
             }
@@ -124,6 +151,9 @@ class ReplayDriver(
      */
     private var mirrorsThisFile = 0
 
+    /** Set when [executionFormatScope] halts the current file after an out-of-scope ATTACH. */
+    private var formatHalt: String? = null
+
     private fun findUnsupported(records: List<SltRecord>): SltUnsupported? {
         for (r in records) {
             when (r) {
@@ -156,7 +186,10 @@ class ReplayDriver(
                     if (miss != null) return "require ${record.requirement}: $miss"
                 }
                 is SltTestEnv -> oracle.defineEnv(record.name, bindLoops(record.value, bindings, oracle))
-                is SltStatement -> outcomes += runStatement(record, oracle, bindings)
+                is SltStatement -> {
+                    outcomes += runStatement(record, oracle, bindings)
+                    formatHalt?.let { return it }
+                }
                 is SltQuery -> outcomes += runQuery(record, oracle, bindings)
                 is SltLoop -> {
                     for (v in record.values) {
@@ -230,7 +263,7 @@ class ReplayDriver(
     ): RecordOutcome {
         val substituted = substituteAll(record.sql, bindings, oracle)
         val prepared = attachments.prepare(substituted)
-        val sql = prepared.sql
+        val sql = bindOracleSql(prepared.sql, record.connection)
         progress.checkActive()
         val conn = oracle.connection(record.connection)
         try {
@@ -240,7 +273,12 @@ class ReplayDriver(
         }
         progress.checkActive()
         trackTransaction(sql, record.connection)
-        val pendingAttachment = attachments.succeeded(prepared)
+        executionScopeHalt(record, prepared, conn)?.let { return it }
+        val pendingAttachment = try {
+            attachments.succeeded(prepared, mirrorFormatScope?.let { scope -> { attach: ReplayAttachmentState.Attach -> formatGate(scope, attach, conn) } })
+        } catch (e: ReplayFormatInspectionFailed) {
+            return RecordOutcome.Fail(record, "mirror format inspection failed: ${e.message}")
+        }
         val outcome = statementSucceeded(record)
         if (outcome !is RecordOutcome.Pass || pendingAttachment == null) return outcome
         val mirror = engine ?: return outcome
@@ -253,6 +291,63 @@ class ReplayDriver(
         progress.checkActive()
         attachments.connectionSucceeded(pendingAttachment)
         return outcome
+    }
+
+    private fun bindOracleSql(sql: String, connection: String?): String =
+        oracleSqlBinder?.bind(sql, ReplayOracleSqlContext(connection, attachments.lakes())) ?: sql
+
+    /**
+     * Applies [executionFormatScope] to a successful ATTACH: returns the record's outcome when the file must halt
+     * (an expectation failure is kept, never swallowed), null to continue.
+     */
+    private fun executionScopeHalt(
+        record: SltStatement, prepared: ReplayAttachmentState.PreparedSql, conn: java.sql.Connection,
+    ): RecordOutcome? {
+        val scope = executionFormatScope ?: return null
+        val attach = prepared.attach ?: return null
+        val outcome = statementSucceeded(record)
+        val version = try {
+            storedVersion(attach, conn)
+        } catch (e: ReplayFormatInspectionFailed) {
+            formatHalt = "format-inspection-failed at line ${record.line}: ${e.message}"
+            return outcome as? RecordOutcome.Fail ?: RecordOutcome.Fail(record, "execution format inspection failed: ${e.message}")
+        }
+        if (scope.any { version in it.storedVersions }) return null
+        formatHalt = "format-out-of-scope: stored DuckLake $version outside execution scope " +
+            "${scope.joinToString("/") { it.version }} at line ${record.line} ('${attach.attachment.catalogAlias}')"
+        return outcome
+    }
+
+    /** Mirror scope: a measured skip reason only for a positively observed out-of-scope stored format. */
+    private fun formatGate(scope: Set<ReplaySetupFormat>, attach: ReplayAttachmentState.Attach, conn: java.sql.Connection): String? {
+        val version = storedVersion(attach, conn)
+        return if (scope.any { version in it.storedVersions }) null else "format-out-of-scope:$version"
+    }
+
+    /**
+     * The lake's stored GLOBAL format, read natively in the oracle session that attached it. An inspection error,
+     * a missing, NULL or ambiguous version throws [ReplayFormatInspectionFailed] with the real diagnostic.
+     */
+    private fun storedVersion(attach: ReplayAttachmentState.Attach, conn: java.sql.Connection): String {
+        fun quote(name: String) = "\"" + name.replace("\"", "\"\"") + "\""
+        val table = listOfNotNull(attach.metadataCatalog, attach.metadataSchema).joinToString(".") { quote(it) } + ".ducklake_metadata"
+        val values = try {
+            conn.createStatement().use { st ->
+                st.executeQuery("SELECT value FROM $table WHERE key = 'version' AND scope IS NULL LIMIT 2").use { rs ->
+                    buildList<String?> { while (rs.next()) add(rs.getString(1)) }
+                }
+            }
+        } catch (e: SQLException) {
+            throw ReplayFormatInspectionFailed("cannot read the stored format of '${attach.attachment.catalogAlias}': ${firstLine(e)}")
+        }
+        val problem = when {
+            values.isEmpty() -> "missing"
+            values.size > 1 -> "ambiguous (multiple global version rows)"
+            values[0] == null -> "NULL"
+            else -> null
+        }
+        if (problem != null) throw ReplayFormatInspectionFailed("stored format of '${attach.attachment.catalogAlias}' is $problem")
+        return requireNotNull(values[0])
     }
 
     /** `statement ok` and `statement maybe` accept success; `statement error` must fail (any message). */
@@ -311,7 +406,7 @@ class ReplayDriver(
         // DateTimeException on TIME '24:00:00'); a record failure must never
         // abort the corpus.
         val actual =
-            runCatching { executeQuerySql(oracle.connection(record.connection), sql) }
+            runCatching { executeQuerySql(oracle.connection(record.connection), bindOracleSql(sql, record.connection)) }
                 .getOrElse { e -> return RecordOutcome.Fail(record, "query errored: ${firstLine(e)}") }
         if (actual.noResult) {
             if (record.label == null && record.types.length != 1) {
@@ -498,3 +593,6 @@ class ReplayDriver(
 
     private fun firstLine(e: Throwable): String = e.message?.lineSequence()?.firstOrNull() ?: e.toString()
 }
+
+/** The mirror format scope could not positively determine an attached lake's stored format. */
+internal class ReplayFormatInspectionFailed(message: String) : RuntimeException(message)

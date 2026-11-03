@@ -153,6 +153,8 @@ class DuckDbOracle(
         }
     }
 
+    internal fun envValue(name: String): String? = env[name]
+
     fun defineEnv(name: String, value: String) {
         env[name] = substitute(value)
     }

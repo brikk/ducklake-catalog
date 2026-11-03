@@ -2,7 +2,7 @@
 
 ## Supported lane
 
-- Latest stable catalog release: **0.13.2** ([notes](releases/RELEASE-0.13.2.md)); development: **0.14.0-SNAPSHOT**.
+- Latest stable catalog release: **0.13.2** ([notes](releases/RELEASE-0.13.2.md)); development: **0.14.0-SNAPSHOT** (format admission, see below).
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in. DuckLake 1.1 writes remain disabled.
 - Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.1**. Stable 0.12.0 retains its historical pins; 0.13.0 ships these.
@@ -45,6 +45,25 @@ initialized by these guards. Missing columns, permission/connection failures and
 unsupported catalog versions are not reclassified as initialization failures;
 existing read-session write rejection and uncertain-COMMIT classifications remain
 unchanged. Native Quack's legacy ATTACH/bootstrap remains a separate boundary.
+
+## Catalog format admission (0.14.0)
+
+Reads are admitted by the catalog's **stored** `ducklake_metadata.version`, checked in the
+reader's own view before any layout-dependent read: once per `readSession`, or per pooled
+read outside one, so a later native migration is noticed. It is one bounded key lookup,
+not a catalog scan. Nothing is migrated and no version string is written.
+
+| Configuration | Admitted stored formats |
+|---|---|
+| default (`enableFinal11Reads = false`) | 1.0 / 0.4 and older known legacy layouts; **final 1.1 and unknown formats are refused up front** |
+| `enableFinal11Reads = true` | qualified 1.0 and final 1.1 reader rules (unchanged) |
+| `requiredCatalogFormat = DucklakeCatalogFormat.V1_0` | 1.0 (and layout-identical 0.4) only, for reads **and** writes |
+| `requiredCatalogFormat = DucklakeCatalogFormat.V1_1` | final 1.1 only; requires `enableFinal11Reads`; 1.1 writes stay disabled |
+
+A refusal throws `DucklakeCatalogFormatNotAdmittedException` (stored `version`, `requiredFormat`).
+Before 0.14.0 the default reader admitted a final 1.1 catalog: Parquet-only tables read and
+inline tables failed late with `Unknown inlined metadata layout`. Use `getSpecVersion()`, which
+is not subject to admission, to inspect a catalog's format and choose a lane.
 
 ## Limits and safe operation
 
@@ -148,6 +167,32 @@ An explicit `DUCKLAKE_VERSION` in a corpus ATTACH still wins, a file's own
 newer catalog fails loudly ("Cannot downgrade"). Corpus SQL, goldens and mirror
 gating (snapshot-pinned, multiple lakes) are unchanged. The default (`null`) keeps
 the native default. The pinned `general` directory replays identically either way.
+
+Independent lanes (0.14.0): `mirrorFormatScope = setOf(ReplaySetupFormat.DUCKLAKE_1_0)` on
+`CorpusRunner`/`ReplayDriver` mirrors only lakes whose stored format (read natively in the
+oracle after each successful ATTACH) is in scope. Others, such as explicit 1.1 nested-schema
+fixtures or lakes migrated mid-file, are measured mirror skips `format-out-of-scope:<version>`.
+Only a single, positively read global version (`scope IS NULL`) can skip; a failing inspection,
+missing or ambiguous version fails that ATTACH record loudly with its diagnostic. The oracle still validates every record against its golden;
+earlier mirror outcomes stand and a later in-scope lake can reconnect. This is separate from
+`setupFormat`, which never overrides explicit versions.
+`metadataRewriteScope = MetadataRewriteScope.CONNECTION_ENV_ONLY` applies the
+`metadataRewriter` backend axis only to lakes derived from the file's `DUCKLAKE_CONNECTION`,
+like upstream backend configs. Hardcoded local fixtures (e.g. `view/view_null_column_aliases.test`,
+which edits `__ducklake_metadata_dl.main.ducklake_view`) stay local; their mirrors are measured
+`backend-local-fixture` skips. To keep such a fixture on the backend instead, pass an
+`oracleSqlBinder` (`ReplayOracleSqlBinder`): it receives every oracle statement and query on
+every named connection, plus the live lakes (alias, original/rewritten target, metadata
+catalog, explicit `METADATA_SCHEMA`, `rewritten`), and returns the SQL to execute. For
+example, it can rebind `__ducklake_metadata_dl.main.ducklake_view` to `public` for a lake
+rewritten to PostgreSQL. Corpus files, goldens and expected errors are unchanged, and
+mirrors receive the unbound SQL.
+`executionFormatScope = setOf(ReplaySetupFormat.DUCKLAKE_1_0)` halts a file after a
+successful ATTACH whose positively read stored format is outside the scope
+(`format-out-of-scope: …`, reported as a format-scope halt). Its remaining SQL never runs,
+earlier outcomes and failures stand, and the file never counts as ran-to-end. A 1.0 lane
+therefore does not depend on native 1.1 goldens. All defaults keep 0.13 behavior, and every
+0.13.x constructor remains binary-compatible.
 
 Golden cells retain their raw expected text and may additionally match an exact,
 keyword-expanded version of that same cell. Expansion is lazy, env/keyword-only
