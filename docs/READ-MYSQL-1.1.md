@@ -1,6 +1,6 @@
 # Existing MySQL final-1.1 catalogs: guarded read-only mode
 
-**0.13.0-SNAPSHOT development tier.** MySQL can remain on the maintained 0.4/1.0
+**0.13.0 opt-in tier.** MySQL can remain on the maintained 0.4/1.0
 lane, or use explicit read-only access to an **already-initialized final-1.1**
 catalog. This does not create, upgrade, repair or downgrade a catalog. It enables
 no 1.1 writes. The [native writer/scanner/migration failures](READ-MYSQL-1.1-BLOCKERS.md)

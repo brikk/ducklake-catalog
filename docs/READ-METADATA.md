@@ -1,6 +1,6 @@
 # Rich final-1.1 read metadata
 
-Available in **0.13.0-SNAPSHOT development code**, through
+Available from **0.13.0**, through
 `JdbcDucklakeCatalog.readMetadata(): DucklakeReadMetadata`. This is an additive,
 read-only companion; existing `DucklakeCatalog` methods, records, constructors and
 fragment JSON are unchanged. It requires **`enableFinal11Reads=true`**, a

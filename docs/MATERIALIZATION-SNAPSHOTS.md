@@ -1,6 +1,6 @@
 # Materialization snapshots — 0.13 migration
 
-Starting with **0.13.0-SNAPSHOT**, the catalog rejects mutation overloads that
+Starting with **0.13.0**, the catalog rejects mutation overloads that
 cannot identify the caller's planning/materialization snapshot. They throw
 `DucklakeInvalidOperationException` before mutation. Their JVM method signatures
 remain available for linking, including the two interface default methods' `void`

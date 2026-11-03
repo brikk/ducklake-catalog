@@ -21,10 +21,11 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 ## Using it as a dependency
 
-Latest release: **0.12.0** (`main` is `0.13.0-SNAPSHOT`)
+Latest release: **0.13.0** (`main` is `0.14.0-SNAPSHOT`)
 
 See [user documentation](docs/README.md) for compatibility, producer contracts and
-[release notes](docs/releases/RELEASE-0.12.0.md). Consumers upgrading from before
+[release notes](docs/releases/RELEASE-0.13.0.md). Upgrading from 0.12.x? Read the
+[0.13.0 upgrade guidance](docs/SNAPSHOT-UPGRADE.md) first. Consumers upgrading from before
 0.10.0 must adopt its [nullable row-ID contract](docs/releases/RELEASE-0.10.0.md).
 
 ### Gradle (Kotlin DSL)
@@ -35,16 +36,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.12.0")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.13.0")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.12.0"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.13.0"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.12.0")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.0")
 
     // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
-    implementation("dev.brikk.ducklake:slt-format:0.12.0")
+    implementation("dev.brikk.ducklake:slt-format:0.13.0")
 }
 ```
 
@@ -55,10 +56,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.12.0'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.12.0')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.12.0'
-    implementation 'dev.brikk.ducklake:slt-format:0.12.0'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.13.0'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.13.0')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.0'
+    implementation 'dev.brikk.ducklake:slt-format:0.13.0'
 }
 ```
 
@@ -68,14 +69,14 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
 </dependency>
@@ -84,7 +85,7 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>slt-format</artifactId>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
 </dependency>
 ```
 
@@ -101,7 +102,7 @@ repositories {
         content { includeGroup("dev.brikk.ducklake") }
     }
 }
-// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.13.0-SNAPSHOT
+// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.14.0-SNAPSHOT
 ```
 
 ## Bounded Cleanup API
@@ -127,14 +128,14 @@ Update consumers to matching published artifacts before deployment.
 
 ## DuckDB catalog transports
 
-The maintained development runtime/test lane uses DuckDB JDBC **2.0.0.0** and a matching
+The maintained runtime/test lane uses DuckDB JDBC **2.0.0.1** and a matching
 DuckDB **2.0.0** Quack server. For an initialized DuckLake 1.0 metadata catalog:
 
 | Route | `DucklakeCatalogConfig.catalogDatabaseUrl` | Required runtime driver |
 |---|---|---|
-| Local DuckDB file | `jdbc:duckdb:/path/catalog.db` | `org.duckdb:duckdb_jdbc:2.0.0.0` |
-| Native Quack client | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC 2.0.0.0, native Quack/DuckLake extensions |
-| Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.12.0` |
+| Local DuckDB file | `jdbc:duckdb:/path/catalog.db` | `org.duckdb:duckdb_jdbc:2.0.0.1` |
+| Native Quack client | `jdbc:duckdb:quack://host:9494?metadata_catalog=lake_meta` | DuckDB JDBC 2.0.0.1, native Quack/DuckLake extensions |
+| Direct Java Quack client | `jdbc:quack://host:9494` (optionally `/existing-server-catalog`) | `dev.brikk.duckdb:quack-jdbc:0.12.1` or later |
 
 For both remote routes, pass the token in `catalogDatabasePassword`, not in shared
 URLs. The direct Java route uses ordinary remote JDBC transactions and does not
@@ -145,31 +146,32 @@ metadata through the native extension. No 1.1 migration is enabled by this libra
 Quack serves metadata here; engines still need access to the actual Parquet data location.
 DuckDB 2.0 defaults new lakes to 1.1. For read/write access, initialize them with
 `DUCKLAKE_VERSION '1.0', AUTOMATIC_MIGRATION FALSE`; native Quack bootstrap does this
-explicitly. Direct Java Quack 0.12.0 uses protocol v3 on the official 2.0 server.
+explicitly. Direct Java Quack 0.12.1 uses protocol v3 on the official 2.0 server; 0.12.0 and older
+can abort read transactions after an early result close ([diagnosis](dev-docs/archive/QUACK-TRANSACTION-DIAGNOSIS-2026-11-03.md)).
 See [compatibility](docs/COMPATIBILITY.md) and [shipping qualification](dev-docs/UPGRADE-DUCKDB-2.0.0.md).
-The [driver update verification](dev-docs/archive/UPGRADE-QUACK-JDBC-0.12.0-2026-10-31.md)
+The [driver update verification](dev-docs/archive/UPGRADE-QUACK-JDBC-0.12.1-2026-11-03.md)
 is separate from the earlier full engine/corpus qualification.
 
 ## Compatibility status
 
-- **Maintained development lane:** DuckLake **1.0**, DuckDB/JDBC **2.0.0 / 2.0.0.0**,
-  with optional direct Java Quack JDBC **0.12.0**. The catalog library targets Java 17;
+- **Maintained lane (0.13.0):** DuckLake **1.0**, DuckDB/JDBC **2.0.0 / 2.0.0.1**,
+  with optional direct Java Quack JDBC **0.12.1**. The catalog library targets Java 17;
   building it requires JDK 25.
 - **DuckLake 1.1 / DuckDB 2.0:** a [limited opt-in read tier](docs/READING-1.1.md)
   is available through direct Java Quack for root-schema catalogs. It is not full
   1.1 schema/type/statistics support. The limited reader is tested on official 2.0
   artifacts; all 1.1 writes
   remain disabled.
-- Version 0.12.0 adds compatibility/regression preparation without changing the
-  0.11.0 production support contract or dependency pins.
+- Version 0.13.0 moves to the DuckDB 2.0 lane, adds the opt-in 1.1 reader, and
+  includes behavior changes for writers; see the [release notes](docs/releases/RELEASE-0.13.0.md).
 - Passing JVM tests or pinned native-preview CI does not qualify every native
   correctness case. Source merges are not proof a fix is in a shipping binary.
 - **Rollback requires a tested backup:** the preview write/checkpoint rehearsal made
   local metadata unreadable by 1.5.6 even while the DuckLake format stayed 1.0.
   See [compatibility and rollback limits](docs/COMPATIBILITY.md).
 
-Before adopting development snapshots, read the
-[0.13.0-SNAPSHOT upgrade guidance](docs/SNAPSHOT-UPGRADE.md), including uncertain
+Before adopting 0.13.0, read the
+[upgrade guidance](docs/SNAPSHOT-UPGRADE.md), including uncertain
 COMMIT handling and ANALYZE's intentional metadata-only snapshots.
 
 ## Development

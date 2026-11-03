@@ -1,6 +1,6 @@
 # Catalog nested-type signatures
 
-N03 development contract for `0.13.0-SNAPSHOT`. This is the catalog API's
+N03 development contract for `0.13.0`. This is the catalog API's
 `DucklakeColumn.columnType` projection from `getTableColumns`, **not** SQL, a JDBC
 driver format, physical DuckLake metadata or a new payload-type admission policy.
 Consumer adoption/verification is required before deploying the correction.

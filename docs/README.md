@@ -6,7 +6,7 @@ For dependency examples and configuration, start with the [project README](../RE
 - [Conservative opt-in 1.1 reads](READING-1.1.md)
 - [Nested-type signatures and quoted field names](NESTED-TYPE-SIGNATURES.md)
 - [Typed corpus result hashes](CORPUS-HASHES.md)
-- [0.13.0-SNAPSHOT upgrade guidance](SNAPSHOT-UPGRADE.md)
+- [0.13.0 upgrade guidance](SNAPSHOT-UPGRADE.md)
 - [COMMIT outcomes and producer cleanup](COMMIT-OUTCOME-CONTRACT.md)
 - Release notes: [0.13.0](releases/RELEASE-0.13.0.md), [0.12.0](releases/RELEASE-0.12.0.md),
   [0.11.0](releases/RELEASE-0.11.0.md), [0.10.0](releases/RELEASE-0.10.0.md)

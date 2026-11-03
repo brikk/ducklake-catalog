@@ -68,7 +68,7 @@ unchanged. Native Quack's legacy ATTACH/bootstrap remains a separate boundary.
   it mixes table-relative and catalog-root-relative paths without a discriminator.
   See [file-reference namespaces and bounded-maintenance limits](FILE-REFERENCE-NAMESPACES.md).
 - Read the [COMMIT outcome contract](COMMIT-OUTCOME-CONTRACT.md) before adopting
-  0.13.0-SNAPSHOT. An uncertain commit is not permission to retry or delete output.
+  0.13.0. An uncertain commit is not permission to retry or delete output.
 
 ## Statistics and pruning
 

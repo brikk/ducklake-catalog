@@ -1,6 +1,6 @@
 # Catalog COMMIT outcomes and producer cleanup
 
-This contract accompanies the 0.13.0-SNAPSHOT follow-up. It does not add an
+This contract accompanies the 0.13.0 follow-up. It does not add an
 idempotency key, ownership lease, automatic reconciliation or filesystem cleanup.
 
 ## Caller decisions

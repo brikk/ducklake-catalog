@@ -1,6 +1,6 @@
 # Parent-aware final-1.1 schema and path reads
 
-Available in **0.13.0-SNAPSHOT development code** through
+Available from **0.13.0** through
 `JdbcDucklakeCatalog.readHierarchy(): DucklakeHierarchyReader`. It is an additive,
 read-only companion, qualified on the three DuckDB-backed, PostgreSQL and existing-MySQL [routes](READ-BACKENDS.md)
 as [rich metadata](READ-METADATA.md). Every operation requires

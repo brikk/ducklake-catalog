@@ -5,7 +5,7 @@ development scope below. The [closeout checkpoint](../dev-docs/R07-SCOPE-AND-QUA
 records accepted library/connector revisions, final-code checks, reused evidence
 and specific pending upstream tests. This does not enable default-on reads or writes.
 
-Available on **0.13.0-SNAPSHOT development code**, not stable 0.12.0. This is an
+Available from **0.13.0**, not 0.12.0. This is an
 explicit, limited read tier over **direct Java Quack**, read-only local DuckDB files
 and native Quack, qualified
 against official DuckDB **2.0.0**, DuckLake `417a9117f5` and Quack `f96420ed46`
@@ -167,7 +167,7 @@ Decoded reads and decoded CDC use `LocalTime`, `OffsetTime`, `LocalDate`,
 Intervals do not collapse months into days or elapsed hours into calendar days.
 Malformed interval tokens, partial matches and component overflow fail as corruption.
 
-**Intentional opt-in raw contract change in 0.13.0-SNAPSHOT:** every final-1.1
+**Intentional opt-in raw contract change in 0.13.0:** every final-1.1
 projected root containing a temporal leaf returns native VARCHAR text, including
 the entire STRUCT/LIST/MAP root. Raw CDC uses the same rule. Even DATE/timestamp
 roots formerly returned as driver objects now return text; non-temporal roots and

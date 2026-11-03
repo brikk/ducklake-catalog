@@ -1,6 +1,6 @@
 # PostgreSQL final-1.1 read subset
 
-**0.13.0-SNAPSHOT development tier, not full R06 closure.** Direct PostgreSQL JDBC
+**0.13.0 opt-in tier, not full R06 closure.** Direct PostgreSQL JDBC
 supports an explicit root-schema payload subset plus rich metadata/hierarchy with `enableFinal11Reads=true`.
 MySQL has a separate [existing-catalog read-only subset](READ-MYSQL-1.1.md).
 No 1.1 write or automatic migration is enabled.
