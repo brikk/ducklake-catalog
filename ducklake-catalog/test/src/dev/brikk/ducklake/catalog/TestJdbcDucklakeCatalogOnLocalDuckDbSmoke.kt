@@ -124,7 +124,20 @@ class TestJdbcDucklakeCatalogOnLocalDuckDbSmoke {
             .extracting(java.util.function.Function<DucklakeTable, String> { it.tableName })
             .containsExactly("smoke_tbl")
 
+        // One insert so the table owns ducklake_table_stats / ducklake_table_column_stats rows,
+        // which dropTable must DELETE on this backend (they are unversioned, so time travel
+        // never reads them).
+        val tableId = catalog.getTable(schemaName, "smoke_tbl", snapshotId)!!.tableId
+        val idColumn = catalog.getTableColumns(tableId, snapshotId).single { it.columnName == "id" }.columnId
+        catalog.commitInsert(
+            tableId,
+            listOf(DucklakeWriteFragment("smoke.parquet", 100L, 0L, 2L,
+                listOf(DucklakeFileColumnStats(idColumn, 8L, 2L, 0L, "1", "2", false)))),
+        )
+        assertThat(catalog.getTableStats(tableId)).isNotNull()
+
         catalog.dropTable(schemaName, "smoke_tbl")
+        assertThat(catalog.getTableStats(tableId)).`as`("dropTable removes ducklake_table_stats").isNull()
         assertThat(catalog.listTables(schema.schemaId, catalog.currentSnapshotId))
             .`as`(
                 "dropTable must end-snapshot the row (UPDATE on ducklake_table) " +
@@ -177,5 +190,13 @@ class TestJdbcDucklakeCatalogOnLocalDuckDbSmoke {
             },
         )
         assertThat(pinned).isEqualTo(catalog.currentSnapshotId)
+    }
+
+    @Test
+    fun recommendedIndexesAreSkippedOnEmbeddedDuckDb() {
+        val result = catalog!!.ensureRecommendedIndexes()
+        assertThat(result.created).isEmpty()
+        assertThat(result.existing).isEmpty()
+        assertThat(result.skippedReason).contains("DUCKDB")
     }
 }

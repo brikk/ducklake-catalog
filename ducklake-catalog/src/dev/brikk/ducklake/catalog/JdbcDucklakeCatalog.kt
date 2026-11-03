@@ -92,7 +92,7 @@ import javax.sql.DataSource
 class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
     private val dataSource: DataSource
-    private val hikariDataSource: HikariDataSource
+    internal val hikariDataSource: HikariDataSource
     private val dialect: SQLDialect
     private val jooqSettings: Settings
     /** jOOQ configuration template (dialect, settings, Quack read-wrapping listener); derived per connection. */
@@ -196,8 +196,10 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             metadataQuery = DirectMetadataQuery()
         }
         hikariConfig.maximumPoolSize = config.maxCatalogConnections
-        hikariConfig.minimumIdle = 1
-        hikariConfig.connectionTimeout = 30000
+        hikariConfig.minimumIdle = config.minIdleCatalogConnections
+        hikariConfig.connectionTimeout = config.catalogConnectionTimeout.toMillis()
+        config.catalogConnectionIdleTimeout?.let { hikariConfig.idleTimeout = it.toMillis() }
+        config.catalogConnectionMaxLifetime?.let { hikariConfig.maxLifetime = it.toMillis() }
         // Name the pool after the catalog so several catalogs in one JVM are distinguishable in
         // logs/metrics (default would be HikariPool-1, -2, ...). Leak detection at 2 minutes: every
         // catalog operation holds a connection for milliseconds to seconds; anything longer is a bug.
@@ -1320,6 +1322,53 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 throw e
             }
         }
+    }
+
+    override fun ensureRecommendedIndexes(): DucklakeRecommendedIndexesResult {
+        requireNotInReadSession("ensure recommended indexes")
+        if (!DucklakeRecommendedIndexes.supports(dialect)) {
+            return DucklakeRecommendedIndexesResult(
+                created = emptyList(),
+                existing = emptyList(),
+                skippedReason = "recommended indexes are not applied on the $dialect backend",
+            )
+        }
+        val ifNotExists = DucklakeRecommendedIndexes.supportsIfNotExists(dialect)
+        val created = ArrayList<String>()
+        val existing = ArrayList<String>()
+        dataSource.connection.use { conn ->
+            // DDL only: one autocommit statement per index, never inside a snapshot transaction.
+            conn.autoCommit = true
+            guardInitialized { readLatestSnapshotId(forConnection(conn)) }
+            for (index in DucklakeRecommendedIndexes.ALL) {
+                if (indexExists(conn, index)) {
+                    existing.add(index.name)
+                    continue
+                }
+                try {
+                    conn.createStatement().use { it.execute(index.createStatement(ifNotExists)) }
+                    created.add(index.name)
+                }
+                catch (e: SQLException) {
+                    // Lost a race with another caller: PostgreSQL's IF NOT EXISTS absorbs it, MySQL
+                    // reports ER_DUP_KEYNAME.
+                    if (e.errorCode == MYSQL_ER_DUP_KEYNAME || indexExists(conn, index)) existing.add(index.name) else throw e
+                }
+            }
+        }
+        return DucklakeRecommendedIndexesResult(created, existing)
+    }
+
+    private fun indexExists(conn: Connection, index: DucklakeRecommendedIndexes.RecommendedIndex): Boolean {
+        // DatabaseMetaData is the portable lookup across PostgreSQL and MySQL. The catalog argument
+        // scopes MySQL to the connection's database (null would mean every database there); the
+        // schema argument scopes PostgreSQL to the connection's current schema (MySQL reports none).
+        conn.metaData.getIndexInfo(conn.catalog, conn.schema, index.table, false, true).use { rs ->
+            while (rs.next()) {
+                if (index.name.equals(rs.getString("INDEX_NAME"), ignoreCase = true)) return true
+            }
+        }
+        return false
     }
 
     /** A dead data/delete file row carrying just what scheduling needs. */
@@ -3981,6 +4030,17 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     .and(meta.SCOPE_ID.eq(tableId)),
             )
 
+            // Table-level statistics are likewise unversioned ("describe the latest committed
+            // snapshot" per the spec); a dropped table has no latest state, time travel never
+            // reads these rows, and the spec allows them to be absent. Removing them here rather
+            // than at snapshot expiry stops dropped-table rows from dominating the stats tables
+            // under create/drop-heavy workloads, where they would otherwise be scanned by every
+            // insert's per-table stats probe until the next expiry pass.
+            val tabstats = DUCKLAKE_TABLE_STATS.`as`("tabstats")
+            metadata.execute(ctx, ctx.deleteFrom(tabstats).where(tabstats.TABLE_ID.eq(tableId)))
+            val tabcolst = DUCKLAKE_TABLE_COLUMN_STATS.`as`("tabcolst")
+            metadata.execute(ctx, ctx.deleteFrom(tabcolst).where(tabcolst.TABLE_ID.eq(tableId)))
+
             tx.incrementSchemaVersion() // dropped: no ducklake_schema_versions row (upstream writes them for new/altered only)
             tx.recordChange(WriteChange.DroppedTable(tableId))
         }
@@ -5859,6 +5919,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         /** Inlined types whose native JDBC mapping loses information on text-backed backends (see [textCastIfNeeded]). */
         private val TEXT_CAST_TYPES: Set<String> = setOf("time", "time_ns", "timetz", "interval")
         private const val LEAK_DETECTION_THRESHOLD_MS: Long = 120_000
+        /** MySQL "Duplicate key name" — raised by `CREATE INDEX` when the index already exists. */
+        private const val MYSQL_ER_DUP_KEYNAME = 1061
         private const val MAX_RETRY_COUNT = 10
         private const val INITIAL_RETRY_WAIT_MS: Long = 100
         private const val RETRY_BACKOFF_MULTIPLIER: Double = 1.5

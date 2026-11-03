@@ -49,7 +49,35 @@ class DucklakeCatalogConfig {
     var catalogDatabaseUser: String? = null
     var catalogDatabasePassword: String? = null
     var dataPath: String? = null
+
+    /** Upper bound of the metadata connection pool (HikariCP `maximumPoolSize`). */
     var maxCatalogConnections: Int = 10
+
+    /**
+     * Connections the pool keeps open while idle (HikariCP `minimumIdle`). `0` lets an idle
+     * catalog instance release every metadata connection, which matters on shared PostgreSQL
+     * servers where each connection has a real cost; the default keeps one warm connection.
+     */
+    var minIdleCatalogConnections: Int = 1
+
+    /**
+     * How long a connection may sit idle above [minIdleCatalogConnections] before the pool
+     * closes it (HikariCP `idleTimeout`). `null` keeps HikariCP's default (10 minutes).
+     */
+    var catalogConnectionIdleTimeout: java.time.Duration? = null
+
+    /**
+     * Maximum lifetime of a pooled connection (HikariCP `maxLifetime`). `null` keeps HikariCP's
+     * default (30 minutes). Set it below any server- or proxy-side idle limit so the pool
+     * retires connections before the other side drops them.
+     */
+    var catalogConnectionMaxLifetime: java.time.Duration? = null
+
+    /**
+     * How long a catalog operation waits for a pooled connection before failing (HikariCP
+     * `connectionTimeout`). Default 30 seconds.
+     */
+    var catalogConnectionTimeout: java.time.Duration = java.time.Duration.ofSeconds(30)
 
     /**
      * Opt in to qualified final-1.1 reads over DuckDB, PostgreSQL or the narrower existing-MySQL scalar tier:

@@ -126,6 +126,19 @@ new bulk maintenance must not use their unbounded fetches as a paging fallback.
 
 Update consumers to matching published artifacts before deployment.
 
+## Large catalogs
+
+- `ensureRecommendedIndexes()` creates the [recommended secondary indexes](docs/RECOMMENDED-INDEXES.md)
+  on a PostgreSQL or MySQL metadata database. Run it once after bootstrapping a new
+  catalog; the library never changes an existing catalog's schema on open.
+- `dropTable` deletes the table's `ducklake_table_stats` / `ducklake_table_column_stats`
+  rows in the drop transaction, so create/drop-heavy workloads do not accumulate dead
+  stats rows between expiry passes.
+- `DucklakeCatalogConfig` exposes the metadata pool's `minIdleCatalogConnections`,
+  `catalogConnectionIdleTimeout`, `catalogConnectionMaxLifetime` and
+  `catalogConnectionTimeout` next to `maxCatalogConnections`, for shared database servers
+  where every connection has a cost.
+
 ## DuckDB catalog transports
 
 The maintained runtime/test lane uses DuckDB JDBC **2.0.0.1** and a matching

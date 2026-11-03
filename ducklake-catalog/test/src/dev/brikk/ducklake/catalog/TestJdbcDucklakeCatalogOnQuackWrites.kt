@@ -139,10 +139,12 @@ class TestJdbcDucklakeCatalogOnQuackWrites {
         assertThat(c.getDataFiles(tableId, snap)).extracting<String> { it.path }.containsExactly("w/c.parquet")
         assertThat(c.getLiveRowCount(tableId, snap)).isEqualTo(3L)
 
-        // Drop table, drop schema.
+        // Drop table, drop schema. The drop also DELETEs the unversioned stats rows on Quack.
+        assertThat(c.getTableStats(tableId)).isNotNull()
         c.dropTable("w", "t")
         assertThat(c.getTable("w", "t", c.currentSnapshotId)).isNull()
         assertThat(c.getTable("w", "t", snap)).`as`("time travel").isNotNull()
+        assertThat(c.getTableStats(tableId)).`as`("dropTable removes ducklake_table_stats").isNull()
         c.dropSchema("w")
         assertThat(c.getSchema("w", c.currentSnapshotId)).isNull()
     }

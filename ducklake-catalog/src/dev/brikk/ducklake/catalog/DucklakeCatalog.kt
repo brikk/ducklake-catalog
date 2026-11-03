@@ -206,6 +206,18 @@ interface DucklakeCatalog : AutoCloseable {
     fun expireSnapshots(snapshotIds: Set<Long>): ExpireSnapshotsResult
 
     /**
+     * Create the secondary indexes in [DucklakeRecommendedIndexes.ALL] that are missing from the
+     * metadata database. Idempotent; concurrent callers are safe. Intended to run once, right
+     * after a new catalog has been bootstrapped — the library never applies indexes implicitly
+     * when opening an existing catalog, and never drops or alters anything.
+     *
+     * Each index is created in its own autocommit statement outside any snapshot transaction.
+     * Backends without index support in this library (embedded DuckDB, Quack) return a result
+     * with [DucklakeRecommendedIndexesResult.skippedReason] set and change nothing.
+     */
+    fun ensureRecommendedIndexes(): DucklakeRecommendedIndexesResult
+
+    /**
      * Files due for physical deletion: `ducklake_files_scheduled_for_deletion` rows whose
      * `schedule_start` is strictly before [olderThan] (the grace period). Paths are returned raw;
      * relative ones are resolved by the caller against the catalog `data_path` ROOT (NOT a table
@@ -606,6 +618,12 @@ interface DucklakeCatalog : AutoCloseable {
      * Drop a table. Sets end_snapshot on the table and all its columns,
      * data files, delete files, and partition info.
      * Creates a new snapshot atomically.
+     *
+     * The table's unversioned rows — table-scoped settings in `ducklake_metadata`, and its
+     * `ducklake_table_stats` / `ducklake_table_column_stats` rows — are deleted in the same
+     * transaction rather than left for [expireSnapshots]. They describe only the latest state of
+     * a live table, so time travel to the dropped table is unaffected ([getTableStats] returns
+     * `null` for it, which the spec permits).
      */
     fun dropTable(schemaName: String, tableName: String)
 

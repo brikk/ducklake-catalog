@@ -125,7 +125,20 @@ class TestJdbcDucklakeCatalogOnMySqlSmoke {
             .extracting(java.util.function.Function<DucklakeTable, String> { it.tableName })
             .containsExactly("smoke_tbl")
 
+        // One insert so the table owns ducklake_table_stats / ducklake_table_column_stats rows,
+        // which dropTable must DELETE on this backend (they are unversioned, so time travel
+        // never reads them).
+        val tableId = catalog.getTable(schemaName, "smoke_tbl", snapshotId)!!.tableId
+        val idColumn = catalog.getTableColumns(tableId, snapshotId).single { it.columnName == "id" }.columnId
+        catalog.commitInsert(
+            tableId,
+            listOf(DucklakeWriteFragment("smoke.parquet", 100L, 0L, 2L,
+                listOf(DucklakeFileColumnStats(idColumn, 8L, 2L, 0L, "1", "2", false)))),
+        )
+        assertThat(catalog.getTableStats(tableId)).isNotNull()
+
         catalog.dropTable(schemaName, "smoke_tbl")
+        assertThat(catalog.getTableStats(tableId)).`as`("dropTable removes ducklake_table_stats").isNull()
         assertThat(catalog.listTables(schema.schemaId, catalog.currentSnapshotId))
             .`as`("dropTable must end-snapshot the row (UPDATE on ducklake_table) and listTables must respect it")
             .isEmpty()
@@ -177,5 +190,40 @@ class TestJdbcDucklakeCatalogOnMySqlSmoke {
             },
         )
         assertThat(pinned).isEqualTo(catalog.currentSnapshotId)
+    }
+
+    @Test
+    fun ensureRecommendedIndexesIsIdempotentOnMySql() {
+        val catalog = catalog!!
+        val expected = DucklakeRecommendedIndexes.ALL.map { it.name }
+        // MySQL has no CREATE INDEX IF NOT EXISTS: existence comes from information_schema, and a
+        // repeat must report everything as existing without issuing failing DDL.
+        val first = catalog.ensureRecommendedIndexes()
+        assertThat(first.skippedReason).isNull()
+        assertThat(first.created + first.existing).containsExactlyElementsOf(expected)
+        val second = catalog.ensureRecommendedIndexes()
+        assertThat(second.created).isEmpty()
+        assertThat(second.existing).containsExactlyElementsOf(expected)
+
+        val server = server!!
+        DriverManager.getConnection(server.getJdbcUrl(), server.getUser(), server.getPassword()).use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    "SELECT DISTINCT index_name FROM information_schema.statistics " +
+                        "WHERE table_schema = DATABASE() AND index_name LIKE 'idx\\_ducklake\\_%'",
+                ).use { rs ->
+                    val names = generateSequence { if (rs.next()) rs.getString(1) else null }.toList()
+                    assertThat(names).containsExactlyInAnyOrderElementsOf(expected)
+                }
+            }
+        }
+        // The indexed catalog still takes writes and reads.
+        catalog.createTable("main", "indexed_smoke", listOf(TableColumnSpec.leaf("id", "int32", true)), null, null)
+        val tableId = catalog.getTable("main", "indexed_smoke", catalog.currentSnapshotId)!!.tableId
+        val columnId = catalog.getTableColumns(tableId, catalog.currentSnapshotId).single().columnId
+        catalog.commitInsert(tableId, listOf(DucklakeWriteFragment("indexed.parquet", 100L, 0L, 2L,
+            listOf(DucklakeFileColumnStats(columnId, 8L, 2L, 0L, "1", "2", false)))))
+        assertThat(catalog.getDataFiles(tableId, catalog.currentSnapshotId)).hasSize(1)
+        assertThat(catalog.getTableStats(tableId)!!.recordCount).isEqualTo(2L)
     }
 }

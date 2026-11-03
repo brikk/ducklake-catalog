@@ -16,6 +16,7 @@ live in [the user documentation](../docs/README.md).
 | [1.1 acceptance](DUCKLAKE-1.1-ACCEPTANCE.md) | Artifact qualification, migration/rollback rehearsal and go/no-go gates |
 | [Future consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) | Richer 1.1 metadata envelope/wire design; not yet implemented |
 | [Final-1.1 read results](FINAL-1.1-READ-RESULTS.md) | Conservative direct-Java read tier and explicit unsupported cases; no writes |
+| [Scale optimization research](RESEARCH-SCALE-OPTIMIZATIONS.md) | Unscheduled in-format optimizations for very large catalogs; what the format itself fixes |
 
 ## Working on the repository
 
