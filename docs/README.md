@@ -8,7 +8,7 @@ For dependency examples and configuration, start with the [project README](../RE
 - [Typed corpus result hashes](CORPUS-HASHES.md)
 - [0.13.0 upgrade guidance](SNAPSHOT-UPGRADE.md)
 - [COMMIT outcomes and producer cleanup](COMMIT-OUTCOME-CONTRACT.md)
-- Release notes: [0.13.0](releases/RELEASE-0.13.0.md), [0.12.0](releases/RELEASE-0.12.0.md),
+- Release notes: [0.13.1](releases/RELEASE-0.13.1.md), [0.13.0](releases/RELEASE-0.13.0.md), [0.12.0](releases/RELEASE-0.12.0.md),
   [0.11.0](releases/RELEASE-0.11.0.md), [0.10.0](releases/RELEASE-0.10.0.md)
 
 These are consumer contracts, not a claim that every native DuckDB/DuckLake behavior

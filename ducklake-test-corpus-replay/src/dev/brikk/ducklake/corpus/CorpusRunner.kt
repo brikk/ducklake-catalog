@@ -36,7 +36,19 @@ class CorpusRunner(
      * Zero or negative disables the watchdog.
      */
     private val fileTimeoutSeconds: Long = DEFAULT_FILE_TIMEOUT_SECONDS,
+    /** DuckLake format for lakes the corpus creates without an explicit version; see [ReplaySetupFormat]. */
+    private val setupFormat: ReplaySetupFormat? = null,
 ) {
+
+    /** 0.13.0 binary signature (including its default-argument bridge). */
+    @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
+    constructor(
+        corpusRoot: Path,
+        skipList: Map<String, String> = emptyMap(),
+        engine: ReplayReadEngine? = null,
+        metadataRewriter: ((String) -> String)? = null,
+        fileTimeoutSeconds: Long = DEFAULT_FILE_TIMEOUT_SECONDS,
+    ) : this(corpusRoot, skipList, engine, metadataRewriter, fileTimeoutSeconds, null)
 
     companion object {
         const val DEFAULT_FILE_TIMEOUT_SECONDS: Long = 300
@@ -98,7 +110,9 @@ class CorpusRunner(
         // Per-file mutable driver state, plus a frozen progress prefix on timeout/crash. The
         // engine/rewriter are still shared; quarantine prevents their reuse after cancellation.
         // corpusRoot = <repo>/test/sql → repo root two levels up (for `data/` refs).
-        val driver = ReplayDriver(engine, repoRoot = corpusRoot.parent?.parent, metadataRewriter = metadataRewriter)
+        val driver = ReplayDriver(
+            engine, repoRoot = corpusRoot.parent?.parent, metadataRewriter = metadataRewriter, setupFormat = setupFormat,
+        )
         val progress = ReplayProgress(engine?.name)
         val body = {
             runCatching { driver.replay(prepare(), progress) }

@@ -47,7 +47,18 @@ class ReplayDriver(
     private val metadataRewriter: ((original: String) -> String)? = null,
     /** Max engine mirrors per file (loop-heavy files repeat queries; see [mirrorsThisFile]). */
     private val mirrorCapPerFile: Int = DEFAULT_MIRROR_CAP,
+    /** DuckLake format for lakes created without an explicit version; see [ReplaySetupFormat]. */
+    private val setupFormat: ReplaySetupFormat? = null,
 ) {
+
+    /** 0.13.0 binary signature (including its default-argument bridge). */
+    @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
+    constructor(
+        engine: ReplayReadEngine? = null,
+        repoRoot: java.nio.file.Path? = null,
+        metadataRewriter: ((original: String) -> String)? = null,
+        mirrorCapPerFile: Int = DEFAULT_MIRROR_CAP,
+    ) : this(engine, repoRoot, metadataRewriter, mirrorCapPerFile, null)
 
     companion object {
         const val DEFAULT_MIRROR_CAP: Int = 40
@@ -74,7 +85,7 @@ class ReplayDriver(
             return progress.fileResult(file.path, "unsupported construct '${unsupported.directive}' at line ${unsupported.line}")
         }
         return try {
-            DuckDbOracle(repoRoot = repoRoot).use { oracle ->
+            DuckDbOracle(repoRoot = repoRoot, setupFormat = setupFormat).use { oracle ->
                 labelResults.clear()
                 attachments = ReplayAttachmentState(metadataRewriter)
                 openTransactions.clear()

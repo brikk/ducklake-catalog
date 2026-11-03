@@ -21,10 +21,10 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 ## Using it as a dependency
 
-Latest release: **0.13.0** (`main` is `0.14.0-SNAPSHOT`)
+Latest release: **0.13.1** (`main` is `0.14.0-SNAPSHOT`)
 
 See [user documentation](docs/README.md) for compatibility, producer contracts and
-[release notes](docs/releases/RELEASE-0.13.0.md). Upgrading from 0.12.x? Read the
+[release notes](docs/releases/RELEASE-0.13.1.md). Upgrading from 0.12.x? Read the
 [0.13.0 upgrade guidance](docs/SNAPSHOT-UPGRADE.md) first. Consumers upgrading from before
 0.10.0 must adopt its [nullable row-ID contract](docs/releases/RELEASE-0.10.0.md).
 
@@ -36,16 +36,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.13.0")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.13.1")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.13.0"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.13.1"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.0")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.1")
 
     // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
-    implementation("dev.brikk.ducklake:slt-format:0.13.0")
+    implementation("dev.brikk.ducklake:slt-format:0.13.1")
 }
 ```
 
@@ -56,10 +56,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.13.0'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.13.0')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.0'
-    implementation 'dev.brikk.ducklake:slt-format:0.13.0'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.13.1'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.13.1')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.13.1'
+    implementation 'dev.brikk.ducklake:slt-format:0.13.1'
 }
 ```
 
@@ -69,14 +69,14 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.13.0</version>
+  <version>0.13.1</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.13.0</version>
+  <version>0.13.1</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
 </dependency>
@@ -85,7 +85,7 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>slt-format</artifactId>
-  <version>0.13.0</version>
+  <version>0.13.1</version>
 </dependency>
 ```
 

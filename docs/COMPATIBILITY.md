@@ -2,7 +2,7 @@
 
 ## Supported lane
 
-- Latest stable catalog release: **0.13.0** ([notes](releases/RELEASE-0.13.0.md)); development: **0.14.0-SNAPSHOT**.
+- Latest stable catalog release: **0.13.1** ([notes](releases/RELEASE-0.13.1.md)); development: **0.14.0-SNAPSHOT**.
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in. DuckLake 1.1 writes remain disabled.
 - Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.1**. Stable 0.12.0 retains its historical pins; 0.13.0 ships these.
@@ -138,6 +138,16 @@ alongside its hash, and later occurrences must preserve it (including empty resu
 Labels still ignore ordinary golden text, as upstream specifies. VALUESORT keeps
 each actual cell's original SQL type; ROWSORT compares cell boundaries, not joined
 delimiter strings. Original corpus goldens and exclusions are not changed.
+
+Replay setup format (0.13.1+): DuckDB 2.0 creates DuckLake **1.1** lakes by default.
+Engines that read only 1.0 (no final-1.1 planning) pass
+`setupFormat = ReplaySetupFormat.DUCKLAKE_1_0` to `CorpusRunner` or `ReplayDriver`.
+The oracle then sets DuckLake's native `ducklake_default_version` for its session.
+An explicit `DUCKLAKE_VERSION` in a corpus ATTACH still wins, a file's own
+`SET`/`RESET ducklake_default_version` keeps its meaning, and attaching an existing
+newer catalog fails loudly ("Cannot downgrade"). Corpus SQL, goldens and mirror
+gating (snapshot-pinned, multiple lakes) are unchanged. The default (`null`) keeps
+the native default. The pinned `general` directory replays identically either way.
 
 Golden cells retain their raw expected text and may additionally match an exact,
 keyword-expanded version of that same cell. Expansion is lazy, env/keyword-only

@@ -31,7 +31,13 @@ class DuckDbOracle(
     testDirRoot: Path? = null,
     /** The pinned ducklake repo root; corpus SQL references test data as repo-relative `data/...` paths. */
     private val repoRoot: Path? = null,
+    /** See [ReplaySetupFormat]; null keeps the native default. */
+    private val setupFormat: ReplaySetupFormat? = null,
 ) : AutoCloseable {
+
+    /** 0.13.0 binary signature (including its default-argument bridge). */
+    @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
+    constructor(testDirRoot: Path? = null, repoRoot: Path? = null) : this(testDirRoot, repoRoot, null)
 
     val testDir: Path =
         (if (testDirRoot == null) Files.createTempDirectory("corpus-replay")
@@ -50,6 +56,21 @@ class DuckDbOracle(
 
     init {
         root.createStatement().use { it.execute("SET timezone='UTC'") }
+        if (setupFormat != null) {
+            // The setting belongs to the extension, so load it first. GLOBAL scope reaches every
+            // named connection of this per-file database; a setup failure is never silently ignored.
+            try {
+                root.createStatement().use {
+                    it.execute("INSTALL ducklake")
+                    it.execute("LOAD ducklake")
+                    it.execute("SET GLOBAL ducklake_default_version = '${setupFormat.version}'")
+                }
+            } catch (e: SQLException) {
+                close()
+                throw IllegalStateException("cannot apply DuckLake setup format ${setupFormat.version}: ${e.message}", e)
+            }
+            loaded += "ducklake"
+        }
     }
 
     fun connection(name: String?): Connection =
