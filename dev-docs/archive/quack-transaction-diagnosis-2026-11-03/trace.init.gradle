@@ -1,0 +1,13 @@
+import org.gradle.api.tasks.testing.Test
+
+gradle.projectsEvaluated {
+    def p = rootProject.findProject(':ducklake-catalog')
+    if (p == null) return
+    p.sourceSets.quackPreview.kotlin.srcDir(rootProject.file('dev-docs/archive/quack-transaction-diagnosis-2026-11-03/src'))
+    p.dependencies.add('quackPreviewImplementation', 'dev.brikk.duckdb:quack-jdbc:0.12.0')
+    p.tasks.named('quackPreviewTest', Test) {
+        doFirst {
+            systemProperty('quack.diagnostic.output', rootProject.file('build/verification/quack-transaction-diagnosis').absolutePath)
+        }
+    }
+}

@@ -17,8 +17,14 @@ or edited by this queue.
 
 None remain in this triaged implementation queue. The repairs below have passing
 scoped regressions, not a fully green project gate. External/native failures,
-unexplained Quack transaction observations, delivery controls and separate feature/
-maintenance work remain open; this is not a claim that the whole system is bug-free.
+delivery controls and separate feature/maintenance work remain open; this is not a
+claim that the whole system is bug-free.
+
+The intermittent Quack `Current transaction is aborted` failures recorded below
+(H14, JDBC2.0.0.1, H11, N13) are [diagnosed](archive/QUACK-TRANSACTION-DIAGNOSIS-2026-11-03.md)
+as a driver early-close / native interrupt race, not catalog behavior. The driver
+fix is adopted as [quack-jdbc 0.12.1](archive/UPGRADE-QUACK-JDBC-0.12.1-2026-11-03.md)
+with a deterministic regression; the original failures stay recorded as history.
 
 ## Implemented repairs pending qualification
 
