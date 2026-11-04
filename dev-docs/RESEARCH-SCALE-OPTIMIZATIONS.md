@@ -72,7 +72,13 @@ A change needs either a new entry point or an explicit fallback (missing row, ti
 travel, or not in a read session → file aggregation), contract-test review with both
 plugins, and a check of what Trino and Doris do with wider bounds.
 
-## R3. Per-table expiry and cleanup scope
+## R3. Per-table expiry and cleanup scope — done (0.15.0-SNAPSHOT)
+
+Snapshots stay catalog-wide; cleanup is table-scoped. `cleanUpExpiredObjects(tableId, maxFiles)`
+schedules only that table's dead files (and its metadata if the table is fully expired).
+`listTablesWithExpiredFiles(afterTableId, limit)` pages through tables needing cleanup.
+Consumer guidance: [CONSUMER-NOTES-0.15.md](CONSUMER-NOTES-0.15.md). Original note follows.
+
 
 `expireSnapshots` is a whole-catalog sweep by design (upstream expires at catalog
 level too). With one catalog per tenant that is fine; with many tables per catalog a

@@ -103,6 +103,8 @@ and the remaining dead objects stay dead.
 - `cleanUpExpiredObjects(maxFiles)` resumes cleanup without expiring anything new and is idempotent.
 - `ExpireSnapshotsResult.cleanupComplete` reports whether cleanup finished. The old two-argument
   constructor still means a completed cleanup.
+- `cleanUpExpiredObjects(tableId, maxFiles)` cleans up one table (snapshots stay catalog-wide), and
+  `listTablesWithExpiredFiles(afterTableId, limit)` pages through tables that still need it.
 
 ## Statistics and pruning
 

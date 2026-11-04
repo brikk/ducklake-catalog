@@ -227,6 +227,21 @@ interface DucklakeCatalog : AutoCloseable {
     fun cleanUpExpiredObjects(maxFiles: Int): ExpireSnapshotsResult
 
     /**
+     * [cleanUpExpiredObjects] scoped to one table: schedules only [tableId]'s dead data/delete files
+     * and, if the table itself is fully expired, removes its metadata rows. Lets maintenance run
+     * table by table after a catalog-wide `expireSnapshots(ids, 0)`. Catalog-wide view/macro/schema
+     * metadata GC is left to the unscoped cleanup. Same paging, budget and idempotency.
+     */
+    fun cleanUpExpiredObjects(tableId: Long, maxFiles: Int): ExpireSnapshotsResult
+
+    /**
+     * Ascending page (ids after [afterTableId], at most [limit] <= 1000) of tables that still have dead
+     * data/delete files or are themselves fully expired, for driving [cleanUpExpiredObjects] per table.
+     * Bounded in SQL; a scheduler can resume from the last id returned.
+     */
+    fun listTablesWithExpiredFiles(afterTableId: Long?, limit: Int): List<Long>
+
+    /**
      * Create the secondary indexes in [DucklakeRecommendedIndexes.ALL] that are missing from the
      * metadata database. Idempotent; concurrent callers are safe. Intended to run once, right
      * after a new catalog has been bootstrapped — the library never applies indexes implicitly

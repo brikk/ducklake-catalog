@@ -1299,9 +1299,35 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     override fun cleanUpExpiredObjects(maxFiles: Int): ExpireSnapshotsResult {
         require(maxFiles >= 0) { "maxFiles must be >= 0" }
         requireNotInReadSession("clean up expired objects")
-        val gc = ExpiredObjectCollector(maxFiles)
+        val gc = ExpiredObjectCollector(maxFiles, null)
         val complete = gc.deadTables() && gc.deadDataFiles() && gc.deadDeleteFiles() && gc.deadSchemaViewMacroMetadata()
         return ExpireSnapshotsResult(0, gc.scheduled, complete)
+    }
+
+    override fun cleanUpExpiredObjects(tableId: Long, maxFiles: Int): ExpireSnapshotsResult {
+        require(maxFiles >= 0) { "maxFiles must be >= 0" }
+        requireNotInReadSession("clean up expired table objects")
+        // Only this table's files and, if the table itself is fully expired, its metadata rows.
+        // Catalog-wide view/macro/schema GC is left to the unscoped cleanup.
+        val gc = ExpiredObjectCollector(maxFiles, tableId)
+        val complete = gc.deadTables() && gc.deadDataFiles() && gc.deadDeleteFiles()
+        return ExpireSnapshotsResult(0, gc.scheduled, complete)
+    }
+
+    override fun listTablesWithExpiredFiles(afterTableId: Long?, limit: Int): List<Long> {
+        require(limit in 1..MAX_EXPIRED_TABLE_PAGE) { "limit must be in 1..$MAX_EXPIRED_TABLE_PAGE" }
+        val ctx = dsl
+        val data = DUCKLAKE_DATA_FILE.`as`("df")
+        val delete = DUCKLAKE_DELETE_FILE.`as`("delf")
+        val after = afterTableId ?: -1L
+        // Each probe is bounded: DISTINCT table ids above the cursor, LIMIT applied in SQL.
+        fun page(table: org.jooq.Table<*>, tableId: Field<Long?>, begin: Field<Long?>, end: Field<Long?>) =
+            ctx.selectDistinct(tableId).from(table).where(tableId.gt(after)).and(noSurvivor(ctx, begin, end))
+                .orderBy(tableId).limit(limit).fetch(tableId).filterNotNull()
+        val fromData = page(data, data.TABLE_ID, data.BEGIN_SNAPSHOT, data.END_SNAPSHOT)
+        val fromDelete = page(delete, delete.TABLE_ID, delete.BEGIN_SNAPSHOT, delete.END_SNAPSHOT)
+        val deadTables = findDeadTableIds(ctx, after, limit)
+        return (fromData + fromDelete + deadTables).toSortedSet().take(limit)
     }
 
     /** One catalog maintenance transaction: no snapshot is minted; failures roll back this page only. */
@@ -1326,7 +1352,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * range), so each page commits on its own and an interrupted or capped run is completed by the next.
      * Every SQL result is bounded by [GC_PAGE]; file paths are copied in SQL, never fetched.
      */
-    private inner class ExpiredObjectCollector(private val maxFiles: Int) {
+    private inner class ExpiredObjectCollector(private val maxFiles: Int, private val onlyTable: Long?) {
         var scheduled = 0
             private set
         private var processed = 0
@@ -1334,11 +1360,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         private fun budgetLeft(): Int = (maxFiles - processed).coerceAtLeast(0)
 
+        private fun inScope(tableId: Field<Long?>): Condition = onlyTable?.let { tableId.eq(it) } ?: DSL.trueCondition()
+
         /** Fully-expired dropped tables: every file of theirs, then their metadata rows, then physical inlined tables. */
         fun deadTables(): Boolean {
             var after = -1L
             while (true) {
-                val page = inMaintenanceTransaction("find expired tables") { ctx -> findDeadTableIds(ctx, after, GC_PAGE) }
+                val page = inMaintenanceTransaction("find expired tables") { ctx ->
+                    if (onlyTable == null) findDeadTableIds(ctx, after, GC_PAGE)
+                    else findDeadTableIds(ctx, onlyTable - 1, 1).filter { it == onlyTable && it > after }
+                }
                 if (page.isEmpty()) return true
                 for (tableId in page) {
                     if (!tableFiles(tableId)) return false
@@ -1385,7 +1416,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 val last = inMaintenanceTransaction("expire data files") { ctx ->
                     val file = DUCKLAKE_DATA_FILE.`as`("df")
                     val ids = ctx.select(file.DATA_FILE_ID).from(file)
-                        .where(file.DATA_FILE_ID.gt(after)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
+                        .where(file.DATA_FILE_ID.gt(after)).and(inScope(file.TABLE_ID)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
                         .orderBy(file.DATA_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(file.DATA_FILE_ID)
                     if (ids.isNotEmpty()) removeDataFiles(ctx, ids)
                     ids.lastOrNull()
@@ -1396,7 +1427,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         private fun hasDeadDataFile(after: Long): Boolean = inMaintenanceTransaction("probe expired data files") { ctx ->
             val file = DUCKLAKE_DATA_FILE.`as`("df")
-            ctx.fetchExists(ctx.selectOne().from(file).where(file.DATA_FILE_ID.gt(after))
+            ctx.fetchExists(ctx.selectOne().from(file).where(file.DATA_FILE_ID.gt(after)).and(inScope(file.TABLE_ID))
                 .and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT)).limit(1))
         }
 
@@ -1407,13 +1438,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 val file = DUCKLAKE_DELETE_FILE.`as`("delf")
                 if (budgetLeft() == 0) {
                     return !inMaintenanceTransaction("probe expired delete files") { ctx ->
-                        ctx.fetchExists(ctx.selectOne().from(file).where(file.DELETE_FILE_ID.gt(after))
+                        ctx.fetchExists(ctx.selectOne().from(file).where(file.DELETE_FILE_ID.gt(after)).and(inScope(file.TABLE_ID))
                             .and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT)).limit(1))
                     }
                 }
                 val last = inMaintenanceTransaction("expire delete files") { ctx ->
                     val ids = ctx.select(file.DELETE_FILE_ID).from(file)
-                        .where(file.DELETE_FILE_ID.gt(after)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
+                        .where(file.DELETE_FILE_ID.gt(after)).and(inScope(file.TABLE_ID)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
                         .orderBy(file.DELETE_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(file.DELETE_FILE_ID)
                     if (ids.isNotEmpty()) removeDeleteFiles(ctx, ids)
                     ids.lastOrNull()
@@ -6018,6 +6049,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         private const val LEAK_DETECTION_THRESHOLD_MS: Long = 120_000
         /** Rows per expired-object cleanup page (one transaction, bounded `IN` lists). */
         private const val GC_PAGE = 1000
+        private const val MAX_EXPIRED_TABLE_PAGE = 1000
         /** MySQL "Duplicate key name" — raised by `CREATE INDEX` when the index already exists. */
         private const val MYSQL_ER_DUP_KEYNAME = 1061
         private const val MAX_RETRY_COUNT = 10

@@ -17,6 +17,7 @@ live in [the user documentation](../docs/README.md).
 | [Future consumer contract](DUCKLAKE-1.1-CONSUMER-CONTRACT.md) | Richer 1.1 metadata envelope/wire design; not yet implemented |
 | [Final-1.1 read results](FINAL-1.1-READ-RESULTS.md) | Conservative direct-Java read tier and explicit unsupported cases; no writes |
 | [Scale optimization research](RESEARCH-SCALE-OPTIMIZATIONS.md) | Unscheduled in-format optimizations for very large catalogs; what the format itself fixes |
+- [Consumer notes for 0.15.0](CONSUMER-NOTES-0.15.md): what Trino/Doris should review when adopting the next release.
 
 ## Working on the repository
 
