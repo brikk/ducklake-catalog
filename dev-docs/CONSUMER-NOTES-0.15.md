@@ -47,6 +47,16 @@ released yet; main is `0.15.0-SNAPSHOT`.
 - **Large catalogs.** `listTablesWithExpiredFiles` scans retired file rows above the cursor;
   page with the returned last id rather than restarting from null.
 
+## Trial results
+
+- **Trino** (snapshot `0.15.0-20261104.182540-2`): PASS on 483 and 484, 1,075 tests each,
+  zero failures/skips, including expiry-failure recovery, table-scoped cleanup and
+  duplicate/missing-file deletion. Trial commit `5fe49e3` (not pushed); normal pin still 0.14.0.
+  Non-blocking requests: a typed error distinguishing a committed expiry from failed cleanup,
+  and a strict (or explicitly bounded) `maxFiles` overshoot contract. Today a page of data files
+  also takes the delete files that reference them, so a call can exceed `maxFiles`.
+- **Doris**: trial in progress.
+
 ## Known limits
 
 - Dead view/macro/schema metadata GC still runs as one transaction with in-memory id lists
