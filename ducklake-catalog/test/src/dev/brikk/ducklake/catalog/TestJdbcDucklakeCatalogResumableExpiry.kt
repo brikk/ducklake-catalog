@@ -14,6 +14,7 @@
 package dev.brikk.ducklake.catalog
 
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -38,6 +39,7 @@ class TestJdbcDucklakeCatalogResumableExpiry {
             val removed = (1L..2999L).filter { it != 1000L && it != 2000L && it != 1500L }.toSet()
             val first = catalog.expireSnapshots(removed, 100)
             assertThat(first.expiredSnapshotCount).isEqualTo(removed.size)
+            assertThat(first.scheduledFileCount).isLessThanOrEqualTo(100) // strict budget
             assertThat(first.cleanupComplete).isFalse()
             // The snapshots are gone even though cleanup is incomplete.
             assertThat(count(file, "ducklake_snapshot")).isEqualTo(5L) // native init 0, kept 1000/1500/2000, latest
@@ -45,6 +47,7 @@ class TestJdbcDucklakeCatalogResumableExpiry {
             var rounds = 0
             while (true) {
                 val next = catalog.cleanUpExpiredObjects(100)
+                assertThat(next.scheduledFileCount).isLessThanOrEqualTo(100)
                 scheduled += next.scheduledFileCount
                 rounds++
                 if (next.cleanupComplete) break
@@ -93,6 +96,84 @@ class TestJdbcDucklakeCatalogResumableExpiry {
             assertThat(catalog.cleanUpExpiredObjects(Int.MAX_VALUE).cleanupComplete).isTrue()
             assertThat(count(file, "ducklake_data_file")).isLessThan(2500L)
         }
+    }
+
+    @Test
+    fun aDataFileWithMoreDeleteFilesThanTheBudgetStillMakesProgress(@TempDir directory: Path) {
+        val (file, config) = native(directory)
+        JdbcDucklakeCatalog(config).use { catalog ->
+            DriverManager.getConnection(config.catalogDatabaseUrl!!).use { conn ->
+                val ctx = catalog.forConnection(conn)
+                fun exec(sql: String) = DirectMetadataQuery().execute(ctx, ctx.query(sql))
+                exec("INSERT INTO ducklake_snapshot (snapshot_id, schema_version, next_catalog_id, next_file_id) " +
+                    "SELECT range, 0, 100, 100 FROM range(1, 11)")
+                exec("INSERT INTO ducklake_table (table_id, schema_id, begin_snapshot, end_snapshot, path, path_is_relative) " +
+                    "VALUES (20, 0, 1, NULL, 'live/', true)")
+                exec("INSERT INTO ducklake_data_file (data_file_id, table_id, begin_snapshot, end_snapshot, path, path_is_relative, file_format) " +
+                    "VALUES (1, 20, 2, 5, 'd1.parquet', true, 'parquet'), (2, 20, 2, 5, 'd2.parquet', true, 'parquet')")
+                exec("INSERT INTO ducklake_delete_file (delete_file_id, data_file_id, table_id, begin_snapshot, end_snapshot, path, path_is_relative) " +
+                    "SELECT 10 + range, 1, 20, 2, NULL, 'x' || range || '.parquet', true FROM range(0, 7)")
+            }
+            val steps = ArrayList<Int>()
+            var result = catalog.expireSnapshots((1L..9L).toSet(), 3)
+            steps += result.scheduledFileCount
+            while (!result.cleanupComplete) {
+                result = catalog.cleanUpExpiredObjects(3)
+                steps += result.scheduledFileCount
+                check(steps.size < 20) { "no progress: $steps" }
+            }
+            // 7 delete files of file 1, then file 1, then file 2; never more than 3 per call.
+            assertThat(steps).allMatch { it <= 3 }
+            assertThat(steps.sum()).isEqualTo(9)
+            assertThat(count(file, "ducklake_data_file")).isZero()
+            assertThat(count(file, "ducklake_delete_file")).isZero()
+        }
+    }
+
+    @Test
+    fun aCleanupFailureAfterTheCommittedExpiryIsTypedAndResumable(@TempDir directory: Path) {
+        val (file, config) = native(directory)
+        JdbcDucklakeCatalog(config).use { catalog ->
+            seed(catalog, config.catalogDatabaseUrl!!)
+            val queue = "ducklake_files_scheduled_for_deletion"
+            fun sql(statement: String) =
+                DriverManager.getConnection(config.catalogDatabaseUrl!!).use { c -> c.createStatement().use { it.execute(statement) } }
+            sql("ALTER TABLE $queue RENAME TO parked_queue")
+            val removed = (1L..2999L).filter { it != 1000L }.toSet()
+            assertThatThrownBy { catalog.expireSnapshots(removed) }
+                .isInstanceOf(DucklakeExpiryCleanupIncompleteException::class.java)
+                .hasMessageContaining("expiry is committed")
+                .satisfies({ assertThat((it as DucklakeExpiryCleanupIncompleteException).expiredSnapshotCount).isEqualTo(removed.size) })
+            assertThat(count(file, "ducklake_snapshot")).isEqualTo(3L) // native init 0, kept 1000, latest
+            sql("ALTER TABLE parked_queue RENAME TO $queue")
+            val finish = catalog.cleanUpExpiredObjects(Int.MAX_VALUE)
+            assertThat(finish.cleanupComplete).isTrue()
+            assertThat(finish.scheduledFileCount).isGreaterThan(0)
+        }
+    }
+
+    @Test
+    fun the014ResultCopySignaturesStillLink() {
+        val type = ExpireSnapshotsResult::class.java
+        val copy = type.getMethod("copy", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+        val incomplete = ExpireSnapshotsResult(1, 2, false)
+        assertThat(copy.invoke(incomplete, 3, 4)).isEqualTo(ExpireSnapshotsResult(3, 4, false))
+        val bridge = type.getMethod("copy\$default", type, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType, Any::class.java)
+        assertThat(java.lang.reflect.Modifier.isStatic(bridge.modifiers)).isTrue()
+        assertThat(bridge.invoke(null, incomplete, 9, 0, 2, null)).isEqualTo(ExpireSnapshotsResult(9, 2, false))
+        assertThat(type.getConstructor(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType).newInstance(1, 2).cleanupComplete).isTrue()
+    }
+
+    private fun native(directory: Path): Pair<Path, DucklakeCatalogConfig> {
+        val file = directory.resolve("lake.db")
+        DriverManager.getConnection("jdbc:duckdb:").use { native ->
+            native.createStatement().use { st ->
+                st.execute("INSTALL ducklake; LOAD ducklake")
+                st.execute("ATTACH 'ducklake:$file' AS lake (DATA_PATH '${directory.resolve("data")}', DUCKLAKE_VERSION '1.0')")
+            }
+        }
+        return file to DucklakeCatalogConfig().apply { catalogDatabaseUrl = "jdbc:duckdb:$file" }
     }
 
     private fun seed(catalog: JdbcDucklakeCatalog, url: String) {

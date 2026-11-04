@@ -176,7 +176,41 @@ data class ExpireSnapshotsResult(
 ) {
     /** 0.14 signature: a completed cleanup. */
     constructor(expiredSnapshotCount: Int, scheduledFileCount: Int) : this(expiredSnapshotCount, scheduledFileCount, true)
+
+    /** 0.14 binary signature of the data-class `copy`; keeps [cleanupComplete]. */
+    @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
+    fun copy(expiredSnapshotCount: Int, scheduledFileCount: Int): ExpireSnapshotsResult =
+        ExpireSnapshotsResult(expiredSnapshotCount, scheduledFileCount, cleanupComplete)
+
+    companion object {
+        /** 0.14 binary signature of the synthetic default-argument `copy` bridge used by Kotlin callers. */
+        @Suppress("FunctionName", "UNUSED_PARAMETER")
+        @JvmStatic
+        @JvmName("copy\$default")
+        @Deprecated("Retained for binary compatibility", level = DeprecationLevel.HIDDEN)
+        fun copyDefault014(self: ExpireSnapshotsResult, expired: Int, scheduled: Int, mask: Int, marker: Any?): ExpireSnapshotsResult =
+            ExpireSnapshotsResult(
+                if (mask and 1 != 0) self.expiredSnapshotCount else expired,
+                if (mask and 2 != 0) self.scheduledFileCount else scheduled,
+                self.cleanupComplete,
+            )
+    }
 }
+
+/**
+ * [DucklakeCatalog.expireSnapshots] committed the snapshot deletion, but the cleanup that followed failed.
+ * The snapshots stay expired: do not retry the same expiry; call [DucklakeCatalog.cleanUpExpiredObjects]
+ * (dead objects stay dead, so it finishes the job). [scheduledFileCount] files were scheduled before the failure.
+ */
+open class DucklakeExpiryCleanupIncompleteException(
+    val expiredSnapshotCount: Int,
+    val scheduledFileCount: Int,
+    cause: Throwable,
+) : DucklakeException(
+    "Expired $expiredSnapshotCount snapshot(s), but cleanup failed after scheduling $scheduledFileCount file(s): " +
+        "${cause.message}. The expiry is committed; finish with cleanUpExpiredObjects.",
+    cause,
+)
 
 /**
  * One output file of a partial-emitting compaction ([DucklakeCatalog.rewriteDataFilesPartial]):

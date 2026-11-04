@@ -25,7 +25,7 @@ released yet; main is `0.15.0-SNAPSHOT`.
 
 | API | Use |
 |---|---|
-| `expireSnapshots(ids, maxCleanupFiles)` | Bound one maintenance call; `maxCleanupFiles = 0` expires only |
+| `expireSnapshots(ids, maxCleanupFiles)` | Bound one maintenance call (hard limit); `maxCleanupFiles = 0` expires only |
 | `cleanUpExpiredObjects(maxFiles)` | Resume or continue catalog-wide cleanup; idempotent |
 | `cleanUpExpiredObjects(tableId, maxFiles)` | Clean one table's dead files (and its metadata if the table is fully expired) (R3) |
 | `listTablesWithExpiredFiles(afterTableId, limit ≤ 1000)` | Page through tables needing cleanup (R3) |
@@ -55,7 +55,21 @@ released yet; main is `0.15.0-SNAPSHOT`.
   Non-blocking requests: a typed error distinguishing a committed expiry from failed cleanup,
   and a strict (or explicitly bounded) `maxFiles` overshoot contract. Today a page of data files
   also takes the delete files that reference them, so a call can exceed `maxFiles`.
-- **Doris**: trial in progress.
+- **Doris** (same snapshot): PASS. Java 25 319, Java 17 276 and build logic 8 tests, zero failures;
+  six focused trial tests per JVM cover paged expiry, committed-expiry recovery, retained history,
+  table-scoped cleanup and duplicate/missing S3 deletion. Same two requests as Trino, plus:
+  `ExpireSnapshotsResult.copy(int,int)` threw `NoSuchMethodError` for a client compiled against 0.14.
+
+### Addressed after the trials (in 0.15.0)
+
+- **Typed error:** if cleanup fails after the snapshot deletion committed, `expireSnapshots`
+  throws `DucklakeExpiryCleanupIncompleteException` (`expiredSnapshotCount`,
+  `scheduledFileCount`, cause). Do not retry the expiry; call `cleanUpExpiredObjects`.
+- **Strict budget:** `maxCleanupFiles` / `maxFiles` is now a hard limit on files handled per
+  call. A data file is removed together with the delete files that reference them only when all
+  fit. If even one data file's delete files exceed the budget, those delete files go first (they
+  are dead with it) and the data file follows on the next call.
+- **Binary compatibility:** the 0.14 `copy(int,int)` and its Kotlin default-argument bridge link again.
 
 ## Known limits
 

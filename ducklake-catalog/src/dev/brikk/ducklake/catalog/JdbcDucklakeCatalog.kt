@@ -1292,15 +1292,20 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // (upstream duckdb/ducklake#1472).
         }
         // Phase 2: bounded, resumable cleanup of everything that no longer has a surviving snapshot.
-        val cleanup = cleanUpExpiredObjects(maxCleanupFiles)
-        return ExpireSnapshotsResult(snapshotIds.size, cleanup.scheduledFileCount, cleanup.cleanupComplete)
+        val gc = ExpiredObjectCollector(maxCleanupFiles, null)
+        val complete = try {
+            gc.runCatalogWide()
+        } catch (e: Exception) {
+            throw DucklakeExpiryCleanupIncompleteException(snapshotIds.size, gc.scheduled, e)
+        }
+        return ExpireSnapshotsResult(snapshotIds.size, gc.scheduled, complete)
     }
 
     override fun cleanUpExpiredObjects(maxFiles: Int): ExpireSnapshotsResult {
         require(maxFiles >= 0) { "maxFiles must be >= 0" }
         requireNotInReadSession("clean up expired objects")
         val gc = ExpiredObjectCollector(maxFiles, null)
-        val complete = gc.deadTables() && gc.deadDataFiles() && gc.deadDeleteFiles() && gc.deadSchemaViewMacroMetadata()
+        val complete = gc.runCatalogWide()
         return ExpireSnapshotsResult(0, gc.scheduled, complete)
     }
 
@@ -1360,6 +1365,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
 
         private fun budgetLeft(): Int = (maxFiles - processed).coerceAtLeast(0)
 
+        fun runCatalogWide(): Boolean = deadTables() && deadDataFiles() && deadDeleteFiles() && deadSchemaViewMacroMetadata()
+
         private fun inScope(tableId: Field<Long?>): Condition = onlyTable?.let { tableId.eq(it) } ?: DSL.trueCondition()
 
         /** Fully-expired dropped tables: every file of theirs, then their metadata rows, then physical inlined tables. */
@@ -1418,8 +1425,11 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     val ids = ctx.select(file.DATA_FILE_ID).from(file)
                         .where(file.DATA_FILE_ID.gt(after)).and(inScope(file.TABLE_ID)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
                         .orderBy(file.DATA_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(file.DATA_FILE_ID)
-                    if (ids.isNotEmpty()) removeDataFiles(ctx, ids)
-                    ids.lastOrNull()
+                    if (ids.isEmpty()) return@inMaintenanceTransaction null
+                    lastRemovedDataFile = null
+                    removeDataFiles(ctx, ids)
+                    // Resume after the last file actually removed; a budget cut must not skip the rest of the page.
+                    lastRemovedDataFile ?: after
                 } ?: return true
                 after = last
             }
@@ -1458,21 +1468,56 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             return true
         }
 
-        /** Schedules and removes one page of data files plus the delete files that reference them. */
-        private fun removeDataFiles(ctx: DSLContext, ids: List<Long>): Int {
+        /**
+         * Schedules and removes a budget-sized prefix of [candidates] (dead data files, ascending) together
+         * with the delete files that reference them, never exceeding the remaining budget. When even the
+         * first file's delete files exceed it, only those delete files are removed (they are dead with
+         * their data file); the data file follows on a later call. Returns the number of files handled.
+         */
+        private fun removeDataFiles(ctx: DSLContext, candidates: List<Long>): Int {
             val data = DUCKLAKE_DATA_FILE
-            schedule(ctx, data, data.DATA_FILE_ID, data.TABLE_ID, data.PATH, data.PATH_IS_RELATIVE, ids)
-            // Delete files of a removed data file are dead with it; bounded by a page of data files.
-            val orphanDeletes = ctx.select(DUCKLAKE_DELETE_FILE.DELETE_FILE_ID).from(DUCKLAKE_DELETE_FILE)
-                .where(DUCKLAKE_DELETE_FILE.DATA_FILE_ID.`in`(ids)).fetch(DUCKLAKE_DELETE_FILE.DELETE_FILE_ID)
+            val budget = budgetLeft()
+            if (candidates.isEmpty() || budget == 0) return 0
+            val del = DUCKLAKE_DELETE_FILE
+            // Bounded: at most `budget` referencing delete files are read.
+            val rows = ctx.select(del.DELETE_FILE_ID, del.DATA_FILE_ID).from(del).where(del.DATA_FILE_ID.`in`(candidates))
+                .orderBy(del.DATA_FILE_ID, del.DELETE_FILE_ID).limit(budget).fetch()
+            val refs = rows.groupBy({ it.value2() }, { it.value1() })
+            // A truncated read only proves the full delete list of data files below its last data file id.
+            val truncated = rows.size == budget
+            val lastKey = refs.keys.lastOrNull()
+            val ids = ArrayList<Long>()
+            val orphanDeletes = ArrayList<Long>()
+            var used = 0
+            for (id in candidates) {
+                val deletes = refs[id].orEmpty()
+                val complete = !truncated || (lastKey != null && id < lastKey)
+                val cost = 1 + deletes.size
+                if (!complete || used + cost > budget) {
+                    if (ids.isEmpty()) {
+                        // Not even one data file fits: take as many of its delete files as allowed.
+                        orphanDeletes += deletes.take(budget - used)
+                    }
+                    break
+                }
+                ids += id
+                orphanDeletes += deletes
+                used += cost
+            }
             if (orphanDeletes.isNotEmpty()) removeDeleteFiles(ctx, orphanDeletes)
+            if (ids.isEmpty()) return orphanDeletes.size
+            schedule(ctx, data, data.DATA_FILE_ID, data.TABLE_ID, data.PATH, data.PATH_IS_RELATIVE, ids)
             metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_COLUMN_STATS).where(DUCKLAKE_FILE_COLUMN_STATS.DATA_FILE_ID.`in`(ids)))
             metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_VARIANT_STATS).where(DUCKLAKE_FILE_VARIANT_STATS.DATA_FILE_ID.`in`(ids)))
             metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_PARTITION_VALUE).where(DUCKLAKE_FILE_PARTITION_VALUE.DATA_FILE_ID.`in`(ids)))
             metadata.execute(ctx, ctx.deleteFrom(data).where(data.DATA_FILE_ID.`in`(ids)))
             processed += ids.size
-            return ids.size
+            lastRemovedDataFile = ids.last()
+            return ids.size + orphanDeletes.size
         }
+
+        /** Highest data file id removed by the latest [removeDataFiles] page; keyset cursors resume after it. */
+        private var lastRemovedDataFile: Long? = null
 
         private fun removeDeleteFiles(ctx: DSLContext, ids: List<Long>): Int {
             val delete = DUCKLAKE_DELETE_FILE
