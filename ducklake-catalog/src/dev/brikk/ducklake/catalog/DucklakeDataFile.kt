@@ -164,11 +164,19 @@ data class DucklakeScheduledFile(
     val pathIsRelative: Boolean,
 )
 
-/** Outcome of [DucklakeCatalog.expireSnapshots]. */
+/**
+ * Outcome of [DucklakeCatalog.expireSnapshots] / [DucklakeCatalog.cleanUpExpiredObjects].
+ * [cleanupComplete] is false when a file budget stopped cleanup early; dead objects that remain are
+ * still dead and are completed by the next [DucklakeCatalog.cleanUpExpiredObjects] or expiry.
+ */
 data class ExpireSnapshotsResult(
     val expiredSnapshotCount: Int,
     val scheduledFileCount: Int,
-)
+    val cleanupComplete: Boolean,
+) {
+    /** 0.14 signature: a completed cleanup. */
+    constructor(expiredSnapshotCount: Int, scheduledFileCount: Int) : this(expiredSnapshotCount, scheduledFileCount, true)
+}
 
 /**
  * One output file of a partial-emitting compaction ([DucklakeCatalog.rewriteDataFilesPartial]):

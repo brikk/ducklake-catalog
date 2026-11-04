@@ -1266,66 +1266,222 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .fetch(snap.SNAPSHOT_ID)
     }
 
-    override fun expireSnapshots(snapshotIds: Set<Long>): ExpireSnapshotsResult {
+    override fun expireSnapshots(snapshotIds: Set<Long>): ExpireSnapshotsResult =
+        expireSnapshots(snapshotIds, Int.MAX_VALUE)
+
+    override fun expireSnapshots(snapshotIds: Set<Long>, maxCleanupFiles: Int): ExpireSnapshotsResult {
+        require(maxCleanupFiles >= 0) { "maxCleanupFiles must be >= 0" }
         requireNotInReadSession("expire snapshots")
         if (snapshotIds.isEmpty()) {
             return ExpireSnapshotsResult(0, 0)
         }
-        // Plain catalog transaction — destructive GC, no new snapshot (unlike ANALYZE publication).
+        // Phase 1: one short catalog transaction removes the snapshots (no new snapshot is minted).
+        inMaintenanceTransaction("expire snapshots") { ctx ->
+            val maxId = readLatestSnapshotId(ctx)
+            require(maxId !in snapshotIds) { "cannot expire the latest snapshot ($maxId)" }
+            JdbcDucklakeSchemaVersionQueries(ctx, metadata).preserveInlineBoundaries(maxId) { tableId, version ->
+                val inlined = inlinedDataTable(ctx, tableId, version)
+                dynamicTableExists(ctx, inlined.name) &&
+                    metadata.fetchOne(ctx, ctx.selectOne().from(inlined.table).limit(1)) != null
+            }
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SNAPSHOT).where(DUCKLAKE_SNAPSHOT.SNAPSHOT_ID.`in`(snapshotIds)))
+            // Conflict history outlives snapshot/time-travel retention. A native open writer
+            // or our retry loop may still be based on an older snapshot and needs every
+            // intervening change, even one whose snapshot was expired. Without a shared
+            // active-writer watermark it is unsafe to prune ducklake_snapshot_changes here
+            // (upstream duckdb/ducklake#1472).
+        }
+        // Phase 2: bounded, resumable cleanup of everything that no longer has a surviving snapshot.
+        val cleanup = cleanUpExpiredObjects(maxCleanupFiles)
+        return ExpireSnapshotsResult(snapshotIds.size, cleanup.scheduledFileCount, cleanup.cleanupComplete)
+    }
+
+    override fun cleanUpExpiredObjects(maxFiles: Int): ExpireSnapshotsResult {
+        require(maxFiles >= 0) { "maxFiles must be >= 0" }
+        requireNotInReadSession("clean up expired objects")
+        val gc = ExpiredObjectCollector(maxFiles)
+        val complete = gc.deadTables() && gc.deadDataFiles() && gc.deadDeleteFiles() && gc.deadSchemaViewMacroMetadata()
+        return ExpireSnapshotsResult(0, gc.scheduled, complete)
+    }
+
+    /** One catalog maintenance transaction: no snapshot is minted; failures roll back this page only. */
+    private fun <T> inMaintenanceTransaction(operation: String, action: (DSLContext) -> T): T =
         dataSource.connection.use { conn ->
             conn.autoCommit = false
             val ctx = forConnection(conn)
             metadata.begin(ctx)
             try {
                 requireCatalogWritesSupported(ctx)
-                val maxId = readLatestSnapshotId(ctx)
-                require(maxId !in snapshotIds) { "cannot expire the latest snapshot ($maxId)" }
-
-                JdbcDucklakeSchemaVersionQueries(ctx, metadata).preserveInlineBoundaries(maxId) { tableId, version ->
-                    val inlined = inlinedDataTable(ctx, tableId, version)
-                    dynamicTableExists(ctx, inlined.name) &&
-                        metadata.fetchOne(ctx, ctx.selectOne().from(inlined.table).limit(1)) != null
-                }
-
-                // Delete the snapshot rows FIRST so the half-open survivor tests below see only the
-                // snapshots that REMAIN.
-                metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_SNAPSHOT)
-                    .where(DUCKLAKE_SNAPSHOT.SNAPSHOT_ID.`in`(snapshotIds)))
-                // Conflict history outlives snapshot/time-travel retention. A native open writer
-                // or our retry loop may still be based on an older snapshot and needs every
-                // intervening change, even one whose snapshot was expired. Without a shared
-                // active-writer watermark it is unsafe to prune ducklake_snapshot_changes here
-                // (upstream duckdb/ducklake#1472).
-
-                val deadTableIds: List<Long> = findDeadTableIds(ctx)
-                // Physical per-table inlined tables to DROP once the metadata transaction has
-                // committed — DDL must not run inside it (see dropDeadInlinedTables).
-                val deadInlinedTables: List<String> = deadInlinedTableNames(ctx, deadTableIds)
-                val scheduledCount = scheduleAndDeleteDeadFiles(ctx, deadTableIds)
-
-                // GC the metadata rows of fully-expired DROPPED tables (every row dead — see
-                // findDeadTableIds). Reuses the already-validated deadTableIds, so it can't touch a
-                // live table.
-                if (deadTableIds.isNotEmpty()) {
-                    deleteDeadTableMetadata(ctx, deadTableIds)
-                }
-                // GC fully-expired schema/view/macro rows + name-mapping rows orphaned by the
-                // table GC above. Pure tidiness (no file leak either way) but completes the catalog
-                // sweep so a long-lived warehouse doesn't accumulate dead metadata.
-                deleteDeadSchemaViewMacroMetadata(ctx)
-
-                commitMetadata(ctx, conn, "expire snapshots")
-                // Each DROP autocommits on its own; with autoCommit still false it would open an
-                // implicit transaction that is rolled back when the connection returns to the pool.
-                conn.autoCommit = true
-                dropDeadInlinedTables(ctx, deadInlinedTables)
-                return ExpireSnapshotsResult(snapshotIds.size, scheduledCount)
+                action(ctx).also { commitMetadata(ctx, conn, operation) }
             }
             catch (e: Exception) {
                 rollbackQuietly(ctx, conn, e)
                 throw e
             }
         }
+
+    /**
+     * Pages through dead catalog objects. A retired row whose `[begin_snapshot, end_snapshot)` has no
+     * surviving snapshot stays dead forever (snapshots are only deleted, and new ids exceed every closed
+     * range), so each page commits on its own and an interrupted or capped run is completed by the next.
+     * Every SQL result is bounded by [GC_PAGE]; file paths are copied in SQL, never fetched.
+     */
+    private inner class ExpiredObjectCollector(private val maxFiles: Int) {
+        var scheduled = 0
+            private set
+        private var processed = 0
+        private val tableDataPaths = HashMap<Long, String?>()
+
+        private fun budgetLeft(): Int = (maxFiles - processed).coerceAtLeast(0)
+
+        /** Fully-expired dropped tables: every file of theirs, then their metadata rows, then physical inlined tables. */
+        fun deadTables(): Boolean {
+            var after = -1L
+            while (true) {
+                val page = inMaintenanceTransaction("find expired tables") { ctx -> findDeadTableIds(ctx, after, GC_PAGE) }
+                if (page.isEmpty()) return true
+                for (tableId in page) {
+                    if (!tableFiles(tableId)) return false
+                    val inlined = inMaintenanceTransaction("expire table metadata") { ctx ->
+                        // Re-check inside the transaction that deletes the metadata.
+                        if (findDeadTableIds(ctx, tableId - 1, 1) != listOf(tableId)) return@inMaintenanceTransaction emptyList()
+                        deadInlinedTableNames(ctx, listOf(tableId)).also { deleteDeadTableMetadata(ctx, listOf(tableId)) }
+                    }
+                    // DDL after the metadata commit; see dropDeadInlinedTables.
+                    dataSource.connection.use { conn ->
+                        conn.autoCommit = true
+                        dropDeadInlinedTables(forConnection(conn), inlined)
+                    }
+                }
+                after = page.last()
+            }
+        }
+
+        private fun tableFiles(tableId: Long): Boolean {
+            val data = DUCKLAKE_DATA_FILE
+            val delete = DUCKLAKE_DELETE_FILE
+            while (true) {
+                if (budgetLeft() == 0) return false
+                val handled = inMaintenanceTransaction("expire table files") { ctx ->
+                    val ids = ctx.select(data.DATA_FILE_ID).from(data).where(data.TABLE_ID.eq(tableId))
+                        .orderBy(data.DATA_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(data.DATA_FILE_ID)
+                    if (ids.isNotEmpty()) removeDataFiles(ctx, ids)
+                    else {
+                        val del = ctx.select(delete.DELETE_FILE_ID).from(delete).where(delete.TABLE_ID.eq(tableId))
+                            .orderBy(delete.DELETE_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(delete.DELETE_FILE_ID)
+                        if (del.isNotEmpty()) removeDeleteFiles(ctx, del)
+                        del.size
+                    }
+                }
+                if (handled == 0) return true
+            }
+        }
+
+        /** End-snapshotted data files with no surviving snapshot, keyset-paged by id. */
+        fun deadDataFiles(): Boolean {
+            var after = -1L
+            while (true) {
+                if (budgetLeft() == 0) return !hasDeadDataFile(after)
+                val last = inMaintenanceTransaction("expire data files") { ctx ->
+                    val file = DUCKLAKE_DATA_FILE.`as`("df")
+                    val ids = ctx.select(file.DATA_FILE_ID).from(file)
+                        .where(file.DATA_FILE_ID.gt(after)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
+                        .orderBy(file.DATA_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(file.DATA_FILE_ID)
+                    if (ids.isNotEmpty()) removeDataFiles(ctx, ids)
+                    ids.lastOrNull()
+                } ?: return true
+                after = last
+            }
+        }
+
+        private fun hasDeadDataFile(after: Long): Boolean = inMaintenanceTransaction("probe expired data files") { ctx ->
+            val file = DUCKLAKE_DATA_FILE.`as`("df")
+            ctx.fetchExists(ctx.selectOne().from(file).where(file.DATA_FILE_ID.gt(after))
+                .and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT)).limit(1))
+        }
+
+        /** End-snapshotted delete files with no surviving snapshot, keyset-paged by id. */
+        fun deadDeleteFiles(): Boolean {
+            var after = -1L
+            while (true) {
+                val file = DUCKLAKE_DELETE_FILE.`as`("delf")
+                if (budgetLeft() == 0) {
+                    return !inMaintenanceTransaction("probe expired delete files") { ctx ->
+                        ctx.fetchExists(ctx.selectOne().from(file).where(file.DELETE_FILE_ID.gt(after))
+                            .and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT)).limit(1))
+                    }
+                }
+                val last = inMaintenanceTransaction("expire delete files") { ctx ->
+                    val ids = ctx.select(file.DELETE_FILE_ID).from(file)
+                        .where(file.DELETE_FILE_ID.gt(after)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
+                        .orderBy(file.DELETE_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(file.DELETE_FILE_ID)
+                    if (ids.isNotEmpty()) removeDeleteFiles(ctx, ids)
+                    ids.lastOrNull()
+                } ?: return true
+                after = last
+            }
+        }
+
+        fun deadSchemaViewMacroMetadata(): Boolean {
+            inMaintenanceTransaction("expire schema, view and macro metadata") { ctx -> deleteDeadSchemaViewMacroMetadata(ctx) }
+            return true
+        }
+
+        /** Schedules and removes one page of data files plus the delete files that reference them. */
+        private fun removeDataFiles(ctx: DSLContext, ids: List<Long>): Int {
+            val data = DUCKLAKE_DATA_FILE
+            schedule(ctx, data, data.DATA_FILE_ID, data.TABLE_ID, data.PATH, data.PATH_IS_RELATIVE, ids)
+            // Delete files of a removed data file are dead with it; bounded by a page of data files.
+            val orphanDeletes = ctx.select(DUCKLAKE_DELETE_FILE.DELETE_FILE_ID).from(DUCKLAKE_DELETE_FILE)
+                .where(DUCKLAKE_DELETE_FILE.DATA_FILE_ID.`in`(ids)).fetch(DUCKLAKE_DELETE_FILE.DELETE_FILE_ID)
+            if (orphanDeletes.isNotEmpty()) removeDeleteFiles(ctx, orphanDeletes)
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_COLUMN_STATS).where(DUCKLAKE_FILE_COLUMN_STATS.DATA_FILE_ID.`in`(ids)))
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_VARIANT_STATS).where(DUCKLAKE_FILE_VARIANT_STATS.DATA_FILE_ID.`in`(ids)))
+            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_PARTITION_VALUE).where(DUCKLAKE_FILE_PARTITION_VALUE.DATA_FILE_ID.`in`(ids)))
+            metadata.execute(ctx, ctx.deleteFrom(data).where(data.DATA_FILE_ID.`in`(ids)))
+            processed += ids.size
+            return ids.size
+        }
+
+        private fun removeDeleteFiles(ctx: DSLContext, ids: List<Long>): Int {
+            val delete = DUCKLAKE_DELETE_FILE
+            schedule(ctx, delete, delete.DELETE_FILE_ID, delete.TABLE_ID, delete.PATH, delete.PATH_IS_RELATIVE, ids)
+            metadata.execute(ctx, ctx.deleteFrom(delete).where(delete.DELETE_FILE_ID.`in`(ids)))
+            processed += ids.size
+            return ids.size
+        }
+
+        /**
+         * `INSERT … SELECT` into the deletion queue as ABSOLUTE paths (cross-engine readable). Relative
+         * paths are prefixed with their table's resolved data directory in SQL; a table whose directory
+         * cannot be resolved is not scheduled (its files become orphans for remove_orphan_files).
+         */
+        @Suppress("LongParameterList")
+        private fun schedule(
+            ctx: DSLContext, source: org.jooq.Table<*>, id: Field<Long?>, tableId: Field<Long?>,
+            path: Field<String?>, relative: Field<Boolean?>, ids: List<Long>,
+        ) {
+            val queue = DUCKLAKE_FILES_SCHEDULED_FOR_DELETION
+            val now = DSL.field("CURRENT_TIMESTAMP", queue.SCHEDULE_START.dataType)
+            fun insert(pathExpr: Field<String?>, scope: Condition): Int =
+                metadata.execute(ctx, ctx.insertInto(queue, queue.DATA_FILE_ID, queue.PATH, queue.PATH_IS_RELATIVE, queue.SCHEDULE_START)
+                    .select(ctx.select(id, pathExpr, DSL.inline(false), now).from(source).where(id.`in`(ids)).and(scope)))
+            scheduled += insert(path, relative.isNull.or(relative.isFalse))
+            val relativeTables = ctx.selectDistinct(tableId).from(source).where(id.`in`(ids)).and(relative.isTrue)
+                .fetch(tableId).filterNotNull()
+            for (table in relativeTables) {
+                val dir = tableDataPaths.getOrPut(table) { resolveTableDataPathById(ctx, table) } ?: continue
+                val prefix = if (dir.endsWith("/")) dir else "$dir/"
+                scheduled += insert(DSL.concat(DSL.inline(prefix), path), tableId.eq(table).and(relative.isTrue))
+            }
+        }
+    }
+
+    /** No surviving snapshot in the half-open `[begin, end)`; only end-snapshotted rows qualify. */
+    private fun noSurvivor(ctx: DSLContext, begin: Field<Long?>, end: Field<Long?>): Condition {
+        val surv = DUCKLAKE_SNAPSHOT.`as`("surv")
+        return end.isNotNull.and(DSL.notExists(ctx.selectOne().from(surv)
+            .where(surv.SNAPSHOT_ID.ge(begin)).and(surv.SNAPSHOT_ID.lt(end))))
     }
 
     override fun ensureRecommendedIndexes(): DucklakeRecommendedIndexesResult {
@@ -1373,53 +1529,6 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             }
         }
         return false
-    }
-
-    /** A dead data/delete file row carrying just what scheduling needs. */
-    private data class DeadFile(val fileId: Long, val tableId: Long, val path: String, val pathIsRelative: Boolean)
-
-    /**
-     * Schedules every dead data / delete file for physical deletion and removes its catalog rows
-     * (+ per-file stats / partition values). Returns the number of files scheduled.
-     */
-    private fun scheduleAndDeleteDeadFiles(ctx: DSLContext, deadTableIds: List<Long>): Int {
-        val tableDataPathCache = HashMap<Long, String?>()
-        var scheduledCount = 0
-
-        // Dead data files: end-snapshotted with no surviving snapshot in [begin,end), OR
-        // belonging to a fully-expired dropped table (its files may have end_snapshot=NULL).
-        val deadData = findDeadDataFiles(ctx, deadTableIds)
-        for (f in deadData) {
-            if (scheduleFile(ctx, f, tableDataPathCache)) {
-                scheduledCount++
-            }
-        }
-        val deadDataIds = deadData.map { it.fileId }
-        if (deadDataIds.isNotEmpty()) {
-            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_COLUMN_STATS)
-                .where(DUCKLAKE_FILE_COLUMN_STATS.DATA_FILE_ID.`in`(deadDataIds)))
-            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_VARIANT_STATS)
-                .where(DUCKLAKE_FILE_VARIANT_STATS.DATA_FILE_ID.`in`(deadDataIds)))
-            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_PARTITION_VALUE)
-                .where(DUCKLAKE_FILE_PARTITION_VALUE.DATA_FILE_ID.`in`(deadDataIds)))
-            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_DATA_FILE)
-                .where(DUCKLAKE_DATA_FILE.DATA_FILE_ID.`in`(deadDataIds)))
-        }
-
-        // Dead delete files: same survivor test, or orphaned by a just-removed data file,
-        // or belonging to a dead table.
-        val deadDelete = findDeadDeleteFiles(ctx, deadTableIds, deadDataIds)
-        for (f in deadDelete) {
-            if (scheduleFile(ctx, f, tableDataPathCache)) {
-                scheduledCount++
-            }
-        }
-        val deadDeleteIds = deadDelete.map { it.fileId }
-        if (deadDeleteIds.isNotEmpty()) {
-            metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_DELETE_FILE)
-                .where(DUCKLAKE_DELETE_FILE.DELETE_FILE_ID.`in`(deadDeleteIds)))
-        }
-        return scheduledCount
     }
 
     /** Deletes every `table_id`-keyed metadata row for fully-expired dropped tables. */
@@ -1497,21 +1606,22 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         }
     }
 
-    private fun findDeadTableIds(ctx: DSLContext): List<Long> {
+    /** One bounded page (ascending, ids after [after]) of fully-expired dropped tables. */
+    private fun findDeadTableIds(ctx: DSLContext, after: Long, limit: Int): List<Long> {
         val t1 = DUCKLAKE_TABLE.`as`("t1")
         val t2 = DUCKLAKE_TABLE.`as`("t2")
         val surv = DUCKLAKE_SNAPSHOT.`as`("surv")
         val surv2 = DUCKLAKE_SNAPSHOT.`as`("surv2")
-        return ctx.select(t1.TABLE_ID).from(t1)
-            .where(t1.END_SNAPSHOT.isNotNull)
+        return ctx.selectDistinct(t1.TABLE_ID).from(t1)
+            .where(t1.END_SNAPSHOT.isNotNull).and(t1.TABLE_ID.gt(after))
             .and(DSL.notExists(ctx.selectOne().from(surv)
                 .where(surv.SNAPSHOT_ID.ge(t1.BEGIN_SNAPSHOT)).and(surv.SNAPSHOT_ID.lt(t1.END_SNAPSHOT))))
             .and(DSL.notExists(ctx.selectOne().from(t2)
                 .where(t2.TABLE_ID.eq(t1.TABLE_ID))
                 .and(t2.END_SNAPSHOT.isNull.or(DSL.exists(ctx.selectOne().from(surv2)
                     .where(surv2.SNAPSHOT_ID.ge(t2.BEGIN_SNAPSHOT)).and(surv2.SNAPSHOT_ID.lt(t2.END_SNAPSHOT)))))))
+            .orderBy(t1.TABLE_ID).limit(limit)
             .fetch(t1.TABLE_ID)
-            .distinct()
     }
 
     /**
@@ -1619,27 +1729,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             .distinct()
     }
 
-    private fun findDeadDataFiles(ctx: DSLContext, deadTableIds: List<Long>): List<DeadFile> {
-        val file = DUCKLAKE_DATA_FILE.`as`("df")
-        val surv = DUCKLAKE_SNAPSHOT.`as`("surv")
-        val noSurvivor = file.END_SNAPSHOT.isNotNull.and(DSL.notExists(ctx.selectOne().from(surv)
-            .where(surv.SNAPSHOT_ID.ge(file.BEGIN_SNAPSHOT)).and(surv.SNAPSHOT_ID.lt(file.END_SNAPSHOT))))
-        return ctx.select(file.DATA_FILE_ID, file.TABLE_ID, file.PATH, file.PATH_IS_RELATIVE)
-            .from(file)
-            .where(file.TABLE_ID.`in`(deadTableIds).or(noSurvivor))
-            .fetch { DeadFile(it.value1(), it.value2(), it.value3(), it.value4() ?: false) }
-    }
-
-    private fun findDeadDeleteFiles(ctx: DSLContext, deadTableIds: List<Long>, deadDataIds: List<Long>): List<DeadFile> {
-        val file = DUCKLAKE_DELETE_FILE.`as`("delf")
-        val surv = DUCKLAKE_SNAPSHOT.`as`("surv")
-        val noSurvivor = file.END_SNAPSHOT.isNotNull.and(DSL.notExists(ctx.selectOne().from(surv)
-            .where(surv.SNAPSHOT_ID.ge(file.BEGIN_SNAPSHOT)).and(surv.SNAPSHOT_ID.lt(file.END_SNAPSHOT))))
-        return ctx.select(file.DELETE_FILE_ID, file.TABLE_ID, file.PATH, file.PATH_IS_RELATIVE)
-            .from(file)
-            .where(file.TABLE_ID.`in`(deadTableIds).or(file.DATA_FILE_ID.`in`(deadDataIds)).or(noSurvivor))
-            .fetch { DeadFile(it.value1(), it.value2(), it.value3(), it.value4() ?: false) }
-    }
+    /** A dead data/delete file row carrying just what scheduling needs. */
+    private data class DeadFile(val fileId: Long, val tableId: Long, val path: String, val pathIsRelative: Boolean)
 
     /**
      * Schedules a dead file into `ducklake_files_scheduled_for_deletion` as an ABSOLUTE path
@@ -5925,6 +6016,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         /** Inlined types whose native JDBC mapping loses information on text-backed backends (see [textCastIfNeeded]). */
         private val TEXT_CAST_TYPES: Set<String> = setOf("time", "time_ns", "timetz", "interval")
         private const val LEAK_DETECTION_THRESHOLD_MS: Long = 120_000
+        /** Rows per expired-object cleanup page (one transaction, bounded `IN` lists). */
+        private const val GC_PAGE = 1000
         /** MySQL "Duplicate key name" — raised by `CREATE INDEX` when the index already exists. */
         private const val MYSQL_ER_DUP_KEYNAME = 1061
         private const val MAX_RETRY_COUNT = 10

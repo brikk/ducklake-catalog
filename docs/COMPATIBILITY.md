@@ -89,6 +89,21 @@ is not subject to admission, to inspect a catalog's format and choose a lane.
 - Read the [COMMIT outcome contract](COMMIT-OUTCOME-CONTRACT.md) before adopting
   0.13.0. An uncertain commit is not permission to retry or delete output.
 
+## Snapshot expiry and cleanup (0.15.0-SNAPSHOT)
+
+`expireSnapshots` is **no longer one transaction**. The snapshot rows are removed in one
+short transaction. Dead data/delete files are then scheduled and their metadata removed in
+bounded pages, each committed on its own, followed by dead table/view/macro/schema metadata.
+Readers can briefly see snapshots gone while some unreachable files are not yet scheduled;
+no live file is ever scheduled. If cleanup fails or is capped, the snapshots stay expired
+and the remaining dead objects stay dead.
+
+- `expireSnapshots(ids)` cleans up to completion, as before.
+- `expireSnapshots(ids, maxCleanupFiles)` stops after about that many files.
+- `cleanUpExpiredObjects(maxFiles)` resumes cleanup without expiring anything new and is idempotent.
+- `ExpireSnapshotsResult.cleanupComplete` reports whether cleanup finished. The old two-argument
+  constructor still means a completed cleanup.
+
 ## Statistics and pruning
 
 ANALYZE, insert and rewrite statistics use the column types visible at their logical

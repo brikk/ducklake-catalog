@@ -27,7 +27,16 @@ client compatibility; our consumers are Trino and Doris) or the items below.
   `ducklake_column`. Adding constraints could fail another client's otherwise valid
   write, so upserts stay probe-then-`UPDATE`; only non-unique indexes are used.
 
-## R1. Bound the dead-object scans in `expireSnapshots`
+## R1. Bound the dead-object scans in `expireSnapshots` — done (0.15.0-SNAPSHOT)
+
+Implemented as owner-chosen option A. `expireSnapshots` deletes the snapshot rows in one
+short transaction. Cleanup then runs in keyset pages of 1,000 ids, one transaction each,
+with paths copied by `INSERT … SELECT` (never fetched). The new
+`expireSnapshots(ids, maxCleanupFiles)` and resumable `cleanUpExpiredObjects(maxFiles)` report
+`ExpireSnapshotsResult.cleanupComplete`. This relies on deadness being monotonic for retired
+rows. View/macro/schema metadata GC still runs as one transaction with in-memory id lists;
+those tables are small in practice. Original analysis follows.
+
 
 `findDeadTableIds`, `findDeadDataFiles`, `findDeadDeleteFiles` and the view/macro
 sweep run a full-table correlated `NOT EXISTS` against `ducklake_snapshot` and build

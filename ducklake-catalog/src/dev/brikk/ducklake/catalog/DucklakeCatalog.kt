@@ -194,16 +194,37 @@ interface DucklakeCatalog : AutoCloseable {
      * [physical cleanup][listFilesScheduledForDeletion]. Liveness uses the half-open
      * `[begin_snapshot, end_snapshot)` survivor test against the snapshots that REMAIN; files of a
      * fully-expired dropped table are caught via that table's id too, so no data file leaks.
-     * A plain catalog transaction — no new snapshot or `changes_made` entry;
-     * expiry is destructive GC, not a forward commit (unlike statistics publication).
+     * No new snapshot or `changes_made` entry; expiry is destructive GC, not a forward commit
+     * (unlike statistics publication).
      *
      * Also GCs the dead *metadata* rows of fully-expired dropped tables/views/macros/schemas
      * (`ducklake_table` + column/stats/partition/sort/mapping rows; `ducklake_view`;
      * `ducklake_macro`/`_impl`/`_parameters`; `ducklake_schema`) and name-mapping rows orphaned by
      * that cleanup — a full catalog sweep so a long-lived warehouse doesn't accumulate dead
      * metadata.
+     *
+     * **Since 0.15, not one transaction.** The snapshot rows are removed in one short transaction;
+     * cleanup then runs in bounded pages, each committed on its own, until done (see
+     * [cleanUpExpiredObjects]). Readers may briefly see the snapshots gone while some of their
+     * already-unreachable files are not yet scheduled; no live file is ever scheduled. A failure
+     * mid-cleanup leaves the snapshots expired; rerun [cleanUpExpiredObjects] to finish.
      */
     fun expireSnapshots(snapshotIds: Set<Long>): ExpireSnapshotsResult
+
+    /**
+     * As [expireSnapshots], but stops cleanup after about [maxCleanupFiles] data/delete files and
+     * reports [ExpireSnapshotsResult.cleanupComplete] = false; finish with [cleanUpExpiredObjects].
+     */
+    fun expireSnapshots(snapshotIds: Set<Long>, maxCleanupFiles: Int): ExpireSnapshotsResult
+
+    /**
+     * Resumable cleanup of objects with no surviving snapshot, without expiring anything new:
+     * schedules dead data/delete files into `ducklake_files_scheduled_for_deletion` and removes their
+     * metadata, then dead table/view/macro/schema metadata. Bounded pages, one transaction each;
+     * stops after about [maxFiles] files (`cleanupComplete = false`). Idempotent: running it again
+     * only finds what is still left.
+     */
+    fun cleanUpExpiredObjects(maxFiles: Int): ExpireSnapshotsResult
 
     /**
      * Create the secondary indexes in [DucklakeRecommendedIndexes.ALL] that are missing from the
