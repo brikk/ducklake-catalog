@@ -2,7 +2,7 @@
 
 ## Supported lane
 
-- Latest stable catalog release: **0.14.0** ([notes](releases/RELEASE-0.14.0.md)); development: **0.15.0-SNAPSHOT**.
+- Latest stable catalog release: **0.15.0** ([notes](releases/RELEASE-0.15.0.md)); development: **0.16.0-SNAPSHOT**.
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in. DuckLake 1.1 writes remain disabled.
 - Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.1**. Stable 0.12.0 retains its historical pins; 0.13.0 ships these.
@@ -89,7 +89,7 @@ is not subject to admission, to inspect a catalog's format and choose a lane.
 - Read the [COMMIT outcome contract](COMMIT-OUTCOME-CONTRACT.md) before adopting
   0.13.0. An uncertain commit is not permission to retry or delete output.
 
-## Snapshot expiry and cleanup (0.15.0-SNAPSHOT)
+## Snapshot expiry and cleanup (0.15.0)
 
 `expireSnapshots` is **no longer one transaction**. The snapshot rows are removed in one
 short transaction. Dead data/delete files are then scheduled and their metadata removed in

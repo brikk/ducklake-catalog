@@ -3,7 +3,7 @@
 Running list of what both plugins should review when adopting the release that follows
 0.14.0. Updated with each round of scale work (R1–R5 in
 [RESEARCH-SCALE-OPTIMIZATIONS.md](RESEARCH-SCALE-OPTIMIZATIONS.md)). Nothing here is
-released yet; main is `0.15.0-SNAPSHOT`.
+now released as 0.15.0 ([release notes](../docs/releases/RELEASE-0.15.0.md)).
 
 ## Must review
 
