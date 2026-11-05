@@ -77,6 +77,12 @@ now released as 0.15.0 ([release notes](../docs/releases/RELEASE-0.15.0.md)).
   counted a rolled-back page (1,002 vs 1,000 committed). Fixed in 0.15.1: counts and budgets
   reflect committed pages only. Adopt 0.15.1, not 0.15.0.
 
+### Adopted
+
+- **Trino:** 0.15.0 at `35f5edf` (38/38 targeted on 483 and 484), then 0.15.1, released as trino-ducklake 0.5.2.
+- **Doris:** 0.15.1 at `0a31a71` (validation record `766cc58`): 42/42 targeted tests on Java 25 and
+  Java 17; the counter reports 1,000 committed and recovery schedules the remaining two.
+
 ## Known limits
 
 - Dead view/macro/schema metadata GC still runs as one transaction with in-memory id lists
