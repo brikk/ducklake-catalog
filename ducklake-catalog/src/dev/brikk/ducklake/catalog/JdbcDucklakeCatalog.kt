@@ -1358,12 +1358,32 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
      * Every SQL result is bounded by [GC_PAGE]; file paths are copied in SQL, never fetched.
      */
     private inner class ExpiredObjectCollector(private val maxFiles: Int, private val onlyTable: Long?) {
+        /** Files scheduled by COMMITTED pages only. */
         var scheduled = 0
             private set
         private var processed = 0
+        // Counted inside the current page's transaction; folded into the totals only after it commits.
+        private var pageScheduled = 0
+        private var pageProcessed = 0
         private val tableDataPaths = HashMap<Long, String?>()
 
-        private fun budgetLeft(): Int = (maxFiles - processed).coerceAtLeast(0)
+        /** One cleanup page: its counters reach [scheduled]/[processed] only if the transaction commits. */
+        private fun <T> inPage(operation: String, action: (DSLContext) -> T): T {
+            pageScheduled = 0
+            pageProcessed = 0
+            try {
+                val result = inMaintenanceTransaction(operation, action)
+                scheduled += pageScheduled
+                processed += pageProcessed
+                return result
+            }
+            finally {
+                pageScheduled = 0
+                pageProcessed = 0
+            }
+        }
+
+        private fun budgetLeft(): Int = (maxFiles - processed - pageProcessed).coerceAtLeast(0)
 
         fun runCatalogWide(): Boolean = deadTables() && deadDataFiles() && deadDeleteFiles() && deadSchemaViewMacroMetadata()
 
@@ -1380,9 +1400,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                 if (page.isEmpty()) return true
                 for (tableId in page) {
                     if (!tableFiles(tableId)) return false
-                    val inlined = inMaintenanceTransaction("expire table metadata") { ctx ->
+                    val inlined = inPage("expire table metadata") { ctx ->
                         // Re-check inside the transaction that deletes the metadata.
-                        if (findDeadTableIds(ctx, tableId - 1, 1) != listOf(tableId)) return@inMaintenanceTransaction emptyList()
+                        if (findDeadTableIds(ctx, tableId - 1, 1) != listOf(tableId)) return@inPage emptyList()
                         deadInlinedTableNames(ctx, listOf(tableId)).also { deleteDeadTableMetadata(ctx, listOf(tableId)) }
                     }
                     // DDL after the metadata commit; see dropDeadInlinedTables.
@@ -1400,7 +1420,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val delete = DUCKLAKE_DELETE_FILE
             while (true) {
                 if (budgetLeft() == 0) return false
-                val handled = inMaintenanceTransaction("expire table files") { ctx ->
+                val handled = inPage("expire table files") { ctx ->
                     val ids = ctx.select(data.DATA_FILE_ID).from(data).where(data.TABLE_ID.eq(tableId))
                         .orderBy(data.DATA_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(data.DATA_FILE_ID)
                     if (ids.isNotEmpty()) removeDataFiles(ctx, ids)
@@ -1420,12 +1440,12 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             var after = -1L
             while (true) {
                 if (budgetLeft() == 0) return !hasDeadDataFile(after)
-                val last = inMaintenanceTransaction("expire data files") { ctx ->
+                val last = inPage("expire data files") { ctx ->
                     val file = DUCKLAKE_DATA_FILE.`as`("df")
                     val ids = ctx.select(file.DATA_FILE_ID).from(file)
                         .where(file.DATA_FILE_ID.gt(after)).and(inScope(file.TABLE_ID)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
                         .orderBy(file.DATA_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(file.DATA_FILE_ID)
-                    if (ids.isEmpty()) return@inMaintenanceTransaction null
+                    if (ids.isEmpty()) return@inPage null
                     lastRemovedDataFile = null
                     removeDataFiles(ctx, ids)
                     // Resume after the last file actually removed; a budget cut must not skip the rest of the page.
@@ -1452,7 +1472,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                             .and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT)).limit(1))
                     }
                 }
-                val last = inMaintenanceTransaction("expire delete files") { ctx ->
+                val last = inPage("expire delete files") { ctx ->
                     val ids = ctx.select(file.DELETE_FILE_ID).from(file)
                         .where(file.DELETE_FILE_ID.gt(after)).and(inScope(file.TABLE_ID)).and(noSurvivor(ctx, file.BEGIN_SNAPSHOT, file.END_SNAPSHOT))
                         .orderBy(file.DELETE_FILE_ID).limit(minOf(GC_PAGE, budgetLeft())).fetch(file.DELETE_FILE_ID)
@@ -1511,7 +1531,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_VARIANT_STATS).where(DUCKLAKE_FILE_VARIANT_STATS.DATA_FILE_ID.`in`(ids)))
             metadata.execute(ctx, ctx.deleteFrom(DUCKLAKE_FILE_PARTITION_VALUE).where(DUCKLAKE_FILE_PARTITION_VALUE.DATA_FILE_ID.`in`(ids)))
             metadata.execute(ctx, ctx.deleteFrom(data).where(data.DATA_FILE_ID.`in`(ids)))
-            processed += ids.size
+            pageProcessed += ids.size
             lastRemovedDataFile = ids.last()
             return ids.size + orphanDeletes.size
         }
@@ -1523,7 +1543,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             val delete = DUCKLAKE_DELETE_FILE
             schedule(ctx, delete, delete.DELETE_FILE_ID, delete.TABLE_ID, delete.PATH, delete.PATH_IS_RELATIVE, ids)
             metadata.execute(ctx, ctx.deleteFrom(delete).where(delete.DELETE_FILE_ID.`in`(ids)))
-            processed += ids.size
+            pageProcessed += ids.size
             return ids.size
         }
 
@@ -1542,13 +1562,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             fun insert(pathExpr: Field<String?>, scope: Condition): Int =
                 metadata.execute(ctx, ctx.insertInto(queue, queue.DATA_FILE_ID, queue.PATH, queue.PATH_IS_RELATIVE, queue.SCHEDULE_START)
                     .select(ctx.select(id, pathExpr, DSL.inline(false), now).from(source).where(id.`in`(ids)).and(scope)))
-            scheduled += insert(path, relative.isNull.or(relative.isFalse))
+            pageScheduled += insert(path, relative.isNull.or(relative.isFalse))
             val relativeTables = ctx.selectDistinct(tableId).from(source).where(id.`in`(ids)).and(relative.isTrue)
                 .fetch(tableId).filterNotNull()
             for (table in relativeTables) {
                 val dir = tableDataPaths.getOrPut(table) { resolveTableDataPathById(ctx, table) } ?: continue
                 val prefix = if (dir.endsWith("/")) dir else "$dir/"
-                scheduled += insert(DSL.concat(DSL.inline(prefix), path), tableId.eq(table).and(relative.isTrue))
+                pageScheduled += insert(DSL.concat(DSL.inline(prefix), path), tableId.eq(table).and(relative.isTrue))
             }
         }
     }

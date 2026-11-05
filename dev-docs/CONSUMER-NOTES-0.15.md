@@ -71,6 +71,12 @@ now released as 0.15.0 ([release notes](../docs/releases/RELEASE-0.15.0.md)).
   are dead with it) and the data file follows on the next call.
 - **Binary compatibility:** the 0.14 `copy(int,int)` and its Kotlin default-argument bridge link again.
 
+### 0.15.1
+
+- Doris's 0.15.0 adoption found `DucklakeExpiryCleanupIncompleteException.scheduledFileCount`
+  counted a rolled-back page (1,002 vs 1,000 committed). Fixed in 0.15.1: counts and budgets
+  reflect committed pages only. Adopt 0.15.1, not 0.15.0.
+
 ## Known limits
 
 - Dead view/macro/schema metadata GC still runs as one transaction with in-memory id lists

@@ -153,6 +153,31 @@ class TestJdbcDucklakeCatalogResumableExpiry {
     }
 
     @Test
+    fun theTypedFailureCountsOnlyFilesScheduledByCommittedPages(@TempDir directory: Path) {
+        val (file, config) = native(directory)
+        JdbcDucklakeCatalog(config).use { catalog ->
+            seed(catalog, config.catalogDatabaseUrl!!)
+            var commits = 0
+            // Snapshot deletion and the first cleanup pages commit; a later page fails after its inserts.
+            catalog.backendCommitAction = { metadata, ctx, connection ->
+                commits++
+                if (commits == 4) throw java.sql.SQLException("injected page commit failure")
+                metadata.commit(ctx, connection)
+            }
+            val removed = (1L..2999L).filter { it != 1000L }.toSet()
+            val failure = org.assertj.core.api.Assertions.catchThrowableOfType(
+                DucklakeExpiryCleanupIncompleteException::class.java) { catalog.expireSnapshots(removed) }
+            catalog.backendCommitAction = null
+            val queued = count(file, "ducklake_files_scheduled_for_deletion")
+            assertThat(queued).isGreaterThan(0L)
+            assertThat(failure.scheduledFileCount.toLong()).isEqualTo(queued)
+            val finish = catalog.cleanUpExpiredObjects(Int.MAX_VALUE)
+            assertThat(finish.cleanupComplete).isTrue()
+            assertThat(finish.scheduledFileCount.toLong() + queued).isEqualTo(count(file, "ducklake_files_scheduled_for_deletion"))
+        }
+    }
+
+    @Test
     fun the014ResultCopySignaturesStillLink() {
         val type = ExpireSnapshotsResult::class.java
         val copy = type.getMethod("copy", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
