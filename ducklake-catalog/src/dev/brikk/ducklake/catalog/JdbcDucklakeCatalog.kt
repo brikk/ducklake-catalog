@@ -3200,13 +3200,16 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /** Fresh per attempt: another engine can migrate while this instance remains attached. */
-    private fun requireCatalogWritesSupported(ctx: DSLContext, registersFiles: Boolean = false) = guardInitialized {
-        val version = lockedGlobalMetadataValue(ctx, "version")
+    private fun requireCatalogWritesSupported(
+        ctx: DSLContext, registersFiles: Boolean = false, prefetched: Map<String, String?>? = null,
+    ) = guardInitialized {
+        fun value(key: String) = if (prefetched != null) prefetched[key] else lockedGlobalMetadataValue(ctx, key)
+        val version = value("version")
         formatAdmission.requireWritable(version)
         if (version !in DucklakeSpecVersions.WRITABLE) {
             throw DucklakeUnsupportedCatalogVersionException(catalogDatabaseUrl, version)
         }
-        if (registersFiles && lockedGlobalMetadataValue(ctx, "encrypted")?.equals("true", ignoreCase = true) == true) {
+        if (registersFiles && value("encrypted")?.equals("true", ignoreCase = true) == true) {
             throw DucklakeEncryptedCatalogUnsupportedException(catalogDatabaseUrl)
         }
     }
@@ -3219,13 +3222,24 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
     }
 
     /** Snapshot APIs cannot author commit information; never silently bypass the native policy. */
-    private fun requireSnapshotCommitInformationSupported(ctx: DSLContext) {
-        if (lockedGlobalMetadataValue(ctx, "require_commit_message") == "true") {
+    private fun requireSnapshotCommitInformationSupported(ctx: DSLContext, prefetched: Map<String, String?>? = null) {
+        val required = if (prefetched != null) prefetched["require_commit_message"] else lockedGlobalMetadataValue(ctx, "require_commit_message")
+        if (required == "true") {
             throw DucklakeInvalidOperationException(
                 "Snapshot-producing writes are unsupported when require_commit_message=true: " +
                     "these catalog APIs cannot supply snapshot author/message information",
             )
         }
+    }
+
+    /** The write-guard keys in ONE bounded locking read (R5); same semantics as per-key [lockedGlobalMetadataValue]. */
+    private fun lockedGlobalMetadataValues(ctx: DSLContext, keys: List<String>): Map<String, String?> {
+        val meta = DUCKLAKE_METADATA
+        val query = ctx.select(meta.KEY, meta.VALUE).from(meta).where(meta.KEY.`in`(keys)).and(meta.SCOPE.isNull).limit(keys.size * 2)
+        val rows = if (dialect == SQLDialect.POSTGRES || dialect == SQLDialect.MYSQL) query.forShare().fetch() else query.fetch()
+        val byKey = rows.groupBy({ it.value1() }, { it.value2() })
+        byKey.forEach { (key, values) -> if (values.size > 1) throw DucklakeCatalogCorruptionException("Duplicate catalog $key metadata") }
+        return keys.associateWith { byKey[it]?.single() }
     }
 
     private fun lockedGlobalMetadataValue(ctx: DSLContext, key: String): String? {
@@ -3501,8 +3515,9 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
                     // snapshot without deadlocking on row locks this tx would hold.
                     beforeWriteTransactionAction.run()
 
-                    requireCatalogWritesSupported(txDsl, registersFiles)
-                    requireSnapshotCommitInformationSupported(txDsl)
+                    val guards = guardInitialized { lockedGlobalMetadataValues(txDsl, WRITE_GUARD_KEYS) }
+                    requireCatalogWritesSupported(txDsl, registersFiles, guards)
+                    requireSnapshotCommitInformationSupported(txDsl, guards)
 
                     executeWriteAction(tx, action, transactionStartSnapshotId[0])
 
@@ -6146,6 +6161,7 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         internal const val POSTGRES_READ_SESSION_ISOLATION = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"
         /** Rows per expired-object cleanup page (one transaction, bounded `IN` lists). */
         private const val GC_PAGE = 1000
+        private val WRITE_GUARD_KEYS = listOf("version", "encrypted", "require_commit_message")
         private const val MAX_EXPIRED_TABLE_PAGE = 1000
         /** MySQL "Duplicate key name" — raised by `CREATE INDEX` when the index already exists. */
         private const val MYSQL_ER_DUP_KEYNAME = 1061

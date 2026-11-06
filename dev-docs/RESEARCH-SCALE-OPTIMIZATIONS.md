@@ -114,7 +114,17 @@ Postgres suite through PgBouncer in transaction mode and list what fails. The po
 knobs added for this (`minIdleCatalogConnections`, idle timeout, max lifetime) cover
 the connection-count side only.
 
-## R5. Commit-path statement count
+## R5. Commit-path statement count — measured, small fix (0.17.0-SNAPSHOT)
+
+Measured on PostgreSQL with recommended indexes (`commitInsert`, 1–10 columns, 1–100
+fragments): **16–25 statements and one COMMIT, flat in the fragment count**; per-fragment
+inserts are already batched. The only redundancy was three separate locking
+`ducklake_metadata` reads (version, encrypted, require_commit_message) at the start of every
+write, now one bounded `FOR SHARE` read: 18→16 and 25→23 statements. Further folding (stats
+probe into `UPDATE … RETURNING`, existence probes) would save at most two or three round trips
+for added risk, so it is not pursued. Evidence: `build/verification/r5-measure{,-after}.txt`.
+Original note follows.
+
 
 A plain insert commit issues roughly a dozen statements (lineage read, metadata
 version check, stats probe, per-fragment inserts, stats update, snapshot and change

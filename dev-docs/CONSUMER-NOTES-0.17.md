@@ -21,4 +21,10 @@ New, additive: `getCurrentColumnBounds(tableId): List<DucklakeColumnBounds>` (`c
 - No value/NULL counts or sizes; keep `getColumnStats` for those.
 - The opt-in final-1.1 reader omits both endpoints, as `getColumnStats` does.
 
+### Fewer round trips per commit (R5)
+
+Every write now reads its three catalog guard values (version, encrypted, require_commit_message)
+in one locking query instead of three: two fewer round trips per commit, no behavior change.
+Measured commit cost is 16–23 statements regardless of file count.
+
 No existing API changed.
