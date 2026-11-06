@@ -131,6 +131,12 @@ size the client side; set the proxy's `max_client_conn` and `default_pool_size` 
 
 ## Statistics and pruning
 
+`getCurrentColumnBounds(tableId)` (0.17.0-SNAPSHOT) reads `ducklake_table_column_stats` in
+O(columns) for the latest snapshot inside a `readSession`. The bounds are a gross superset
+(deleted rows can keep them wide) with `containsNull`/`containsNan`, and no counts. A missing
+column means unknown: fall back to `getColumnStats`, which remains the exact, per-snapshot
+O(files × columns) aggregation and the only choice for time travel.
+
 ANALYZE, insert and rewrite statistics use the column types visible at their logical
 snapshot, not the physical ordering of historical column rows. Current FLOAT/DOUBLE
 precision must not be replaced by a retired type during bound aggregation.

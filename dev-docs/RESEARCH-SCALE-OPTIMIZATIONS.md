@@ -54,7 +54,15 @@ transaction, and keep the half-open survivor test as the correctness oracle.
 Qualification needs the existing concurrency and interop expiry tests plus a
 large-synthetic-catalog check that no live file is scheduled and no dead file leaks.
 
-## R2. Serve current-snapshot column statistics from `ducklake_table_column_stats`
+## R2. Serve current-snapshot column statistics from `ducklake_table_column_stats` — done (0.17.0-SNAPSHOT)
+
+Added as a new entry point, not a `getColumnStats` change: `getCurrentColumnBounds(tableId)`
+returns `DucklakeColumnBounds` (gross min/max, `containsNull`, `containsNan`) for the latest
+snapshot, readSession only. A column without a row is omitted (unknown) and callers fall back to
+`getColumnStats`. Native DuckDB deletes all of a table's rows when a delete retires a whole file,
+and keeps bounds wide on partial deletes; both are covered by `TestCurrentColumnBounds`.
+Original note follows.
+
 
 `getColumnStats(tableId, snapshotId)` re-aggregates `ducklake_file_column_stats` on
 every call (O(files × columns) per planning), while `ducklake_table_column_stats`

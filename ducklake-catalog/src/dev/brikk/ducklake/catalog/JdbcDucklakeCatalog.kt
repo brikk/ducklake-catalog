@@ -2088,6 +2088,30 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             DucklakeColumnStats(columnId, stats.valueCount, stats.nullCount, stats.sizeBytes, stats.minValue, stats.maxValue)
         }
 
+    override fun getCurrentColumnBounds(tableId: Long): List<DucklakeColumnBounds> {
+        if (readSessionDsl.get() == null) {
+            throw DucklakeInvalidOperationException("getCurrentColumnBounds requires readSession: the rows are valid only for its latest snapshot")
+        }
+        val ctx = dsl
+        val conservative = conservativeFinal11Read(ctx)
+        val tcs = DUCKLAKE_TABLE_COLUMN_STATS.`as`("bounds")
+        // One row per (table, column) by writer convention; bounded by the table's column count.
+        return metadata.fetch(ctx, ctx.select(tcs.COLUMN_ID, tcs.CONTAINS_NULL, tcs.CONTAINS_NAN, tcs.MIN_VALUE, tcs.MAX_VALUE)
+            .from(tcs).where(tcs.TABLE_ID.eq(tableId)).orderBy(tcs.COLUMN_ID)) { r ->
+            DucklakeColumnBounds(
+                columnId = orZero(r.get(tcs.COLUMN_ID)),
+                containsNull = r.get(tcs.CONTAINS_NULL),
+                containsNan = r.get(tcs.CONTAINS_NAN),
+                minValue = if (conservative) null else r.get(tcs.MIN_VALUE),
+                maxValue = if (conservative) null else r.get(tcs.MAX_VALUE),
+            )
+        }.also { rows ->
+            if (rows.map { it.columnId }.toSet().size != rows.size) {
+                throw DucklakeCatalogCorruptionException("Duplicate ducklake_table_column_stats rows for table $tableId")
+            }
+        }
+    }
+
     @Deprecated("record_count is the gross row count and is recomputed from the catalog; use analyzeTable(tableId)")
     override fun analyzeTable(tableId: Long, rowCount: Long) {
         analyzeTable(tableId)

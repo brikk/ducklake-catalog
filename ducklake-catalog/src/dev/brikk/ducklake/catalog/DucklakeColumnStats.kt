@@ -29,3 +29,19 @@ data class DucklakeColumnStats(
     val minValue: String?,
     val maxValue: String?,
 )
+
+/**
+ * Gross current-snapshot bounds of one column from `ducklake_table_column_stats`
+ * ([DucklakeCatalog.getCurrentColumnBounds]). Maintained by every writer as a superset: values
+ * of deleted rows may still widen the bounds, and they are never exact. Fine for pruning and
+ * estimates, not for answering MIN/MAX. NULL endpoints mean unknown.
+ */
+data class DucklakeColumnBounds(
+    val columnId: Long,
+    /** Whether any row ever written may be NULL; null when unknown. */
+    val containsNull: Boolean?,
+    /** Whether a floating column contains NaN; NaN-bearing bounds should not prune. Null when unknown. */
+    val containsNan: Boolean?,
+    val minValue: String?,
+    val maxValue: String?,
+)

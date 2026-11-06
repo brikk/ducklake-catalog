@@ -356,6 +356,19 @@ interface DucklakeCatalog : AutoCloseable {
     fun getColumnStats(tableId: Long, snapshotId: Long): List<DucklakeColumnStats>
 
     /**
+     * O(columns) gross bounds for the LATEST snapshot, from `ducklake_table_column_stats`, instead
+     * of [getColumnStats]' O(files × columns) aggregation. Must be called inside [readSession]: the
+     * rows are valid for the snapshot that is latest in that consistent view (DuckLake 1.1 spec,
+     * "Snapshot Validity"); use [currentSnapshotId] in the same session to know which one.
+     *
+     * A column with no row is omitted: its bounds are unknown (e.g. after ALTER TYPE, or while
+     * inlined values are uncovered), so fall back to [getColumnStats]. There are no value/NULL counts;
+     * use [getColumnStats] for those. For time travel always use [getColumnStats]. The opt-in final-1.1
+     * reader omits both endpoints, as [getColumnStats] does.
+     */
+    fun getCurrentColumnBounds(tableId: Long): List<DucklakeColumnBounds>
+
+    /**
      * Recompute the cached table-level statistics for a table from ground truth — the
      * connector's `ANALYZE` entry point.
      *
