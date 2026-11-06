@@ -1,7 +1,6 @@
 # Consumer notes for the next release (0.16.0) — trino-ducklake and doris-ducklake
 
-Running list for both plugins, updated each round of scale work. Main is `0.16.0-SNAPSHOT`;
-nothing here is released yet.
+Released as 0.16.0 ([release notes](../docs/releases/RELEASE-0.16.0.md)).
 
 ## Must review
 

@@ -2,7 +2,7 @@
 
 ## Supported lane
 
-- Latest stable catalog release: **0.15.1** ([notes](releases/RELEASE-0.15.1.md)); development: **0.16.0-SNAPSHOT**.
+- Latest stable catalog release: **0.16.0** ([notes](releases/RELEASE-0.16.0.md)); development: **0.17.0-SNAPSHOT**.
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in. DuckLake 1.1 writes remain disabled.
 - Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.1**. Stable 0.12.0 retains its historical pins; 0.13.0 ships these.
@@ -106,7 +106,7 @@ and the remaining dead objects stay dead.
 - `cleanUpExpiredObjects(tableId, maxFiles)` cleans up one table (snapshots stay catalog-wide), and
   `listTablesWithExpiredFiles(afterTableId, limit)` pages through tables that still need it.
 
-## PgBouncer and other transaction-pooling proxies (0.16.0-SNAPSHOT)
+## PgBouncer and other transaction-pooling proxies (0.16.0)
 
 The PostgreSQL metadata route works behind PgBouncer in **transaction** pooling mode, qualified
 with PgBouncer 1.23.1. One of these is required:

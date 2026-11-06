@@ -21,10 +21,10 @@ Published to **Maven Central** under the `dev.brikk.ducklake` group.
 
 ## Using it as a dependency
 
-Latest release: **0.15.1** (`main` is `0.16.0-SNAPSHOT`)
+Latest release: **0.16.0** (`main` is `0.17.0-SNAPSHOT`)
 
 See [user documentation](docs/README.md) for compatibility, producer contracts and
-[release notes](docs/releases/RELEASE-0.15.1.md); 0.15.x makes snapshot expiry bounded and resumable (no longer one transaction).
+[release notes](docs/releases/RELEASE-0.16.0.md); 0.16.0 supports PgBouncer transaction pooling, 0.15.x makes snapshot expiry bounded and resumable (no longer one transaction).
 Since 0.14.0 the default reader refuses final 1.1 catalogs.
 Upgrading from 0.12.x? Read the [0.13.0 upgrade guidance](docs/SNAPSHOT-UPGRADE.md) first. Consumers upgrading from before
 0.10.0 must adopt its [nullable row-ID contract](docs/releases/RELEASE-0.10.0.md).
@@ -37,16 +37,16 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.brikk.ducklake:ducklake-catalog:0.15.1")
+    implementation("dev.brikk.ducklake:ducklake-catalog:0.16.0")
 
     // Optional: shared Testcontainers-based catalog fixtures for your tests
-    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.15.1"))
+    testImplementation(testFixtures("dev.brikk.ducklake:ducklake-catalog:0.16.0"))
 
     // Optional: the DuckLake corpus replay harness (test-only)
-    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.15.1")
+    testImplementation("dev.brikk.ducklake:ducklake-test-corpus-replay:0.16.0")
 
     // Optional: the standalone SLT (.test) format parser/model/expander (dependency-free)
-    implementation("dev.brikk.ducklake:slt-format:0.15.1")
+    implementation("dev.brikk.ducklake:slt-format:0.16.0")
 }
 ```
 
@@ -57,10 +57,10 @@ dependencies {
 
 ```groovy
 dependencies {
-    implementation 'dev.brikk.ducklake:ducklake-catalog:0.15.1'
-    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.15.1')
-    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.15.1'
-    implementation 'dev.brikk.ducklake:slt-format:0.15.1'
+    implementation 'dev.brikk.ducklake:ducklake-catalog:0.16.0'
+    testImplementation testFixtures('dev.brikk.ducklake:ducklake-catalog:0.16.0')
+    testImplementation 'dev.brikk.ducklake:ducklake-test-corpus-replay:0.16.0'
+    implementation 'dev.brikk.ducklake:slt-format:0.16.0'
 }
 ```
 
@@ -70,14 +70,14 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.15.1</version>
+  <version>0.16.0</version>
 </dependency>
 
 <!-- Test fixtures (classifier) -->
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>ducklake-catalog</artifactId>
-  <version>0.15.1</version>
+  <version>0.16.0</version>
   <classifier>test-fixtures</classifier>
   <scope>test</scope>
 </dependency>
@@ -86,7 +86,7 @@ dependencies {
 <dependency>
   <groupId>dev.brikk.ducklake</groupId>
   <artifactId>slt-format</artifactId>
-  <version>0.15.1</version>
+  <version>0.16.0</version>
 </dependency>
 ```
 
@@ -103,7 +103,7 @@ repositories {
         content { includeGroup("dev.brikk.ducklake") }
     }
 }
-// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.16.0-SNAPSHOT
+// then depend on e.g. dev.brikk.ducklake:ducklake-catalog:0.17.0-SNAPSHOT
 ```
 
 ## Bounded Cleanup API
