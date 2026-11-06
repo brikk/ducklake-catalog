@@ -106,6 +106,29 @@ and the remaining dead objects stay dead.
 - `cleanUpExpiredObjects(tableId, maxFiles)` cleans up one table (snapshots stay catalog-wide), and
   `listTablesWithExpiredFiles(afterTableId, limit)` pages through tables that still need it.
 
+## PgBouncer and other transaction-pooling proxies (0.16.0-SNAPSHOT)
+
+The PostgreSQL metadata route works behind PgBouncer in **transaction** pooling mode, qualified
+with PgBouncer 1.23.1. One of these is required:
+
+- PgBouncer ≥ 1.21 with `max_prepared_statements` > 0 (the default is 200 since 1.22). This is
+  protocol-level prepared statement support; the JDBC URL needs no change.
+- Or `prepareThreshold=0` on the JDBC URL, if the proxy cannot track prepared statements.
+
+With neither, pgjdbc's named statements, including its own `BEGIN`/`COMMIT`, fail with
+`prepared statement "S_n" already exists`. Writes then report `DucklakeCommitOutcomeUnknownException`.
+The failure is loud, never wrong data.
+
+Before 0.16, `readSession` set REPEATABLE READ with a session-level statement outside the
+transaction. Behind a transaction-pooling proxy that could run on a different server connection,
+silently leaving the session at READ COMMITTED (a pinned snapshot could move mid-session) and
+leaking the setting to other clients. It is now the first statement of the session's own
+transaction. Session pooling and direct connections were never affected.
+
+The pool settings (`maxCatalogConnections`, `minIdleCatalogConnections`,
+`catalogConnectionIdleTimeout`, `catalogConnectionMaxLifetime`, `catalogConnectionTimeout`)
+size the client side; set the proxy's `max_client_conn` and `default_pool_size` for the server side.
+
 ## Statistics and pruning
 
 ANALYZE, insert and rewrite statistics use the column types visible at their logical

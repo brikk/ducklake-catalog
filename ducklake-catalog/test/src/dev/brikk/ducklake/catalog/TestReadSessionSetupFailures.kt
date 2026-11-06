@@ -15,6 +15,7 @@ import java.nio.file.Path
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
+import java.sql.Statement
 import java.sql.SQLFeatureNotSupportedException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.function.Supplier
@@ -189,7 +190,8 @@ internal class TestReadSessionSetupFailures {
     }
 
     /** Test-only proxy around a real one-connection pool, never a replacement production extension point. */
-    private class Fault(private val catalog: JdbcDucklakeCatalog, methodName: String, failure: SQLException) : AutoCloseable {
+    private class Fault(private val catalog: JdbcDucklakeCatalog, methodName: String, private val failure: SQLException) : AutoCloseable {
+        private val faultName = methodName
         private val field = JdbcDucklakeCatalog::class.java.getDeclaredField("dataSource").apply { isAccessible = true }
         private val pool = field.get(catalog) as HikariDataSource
         private var remaining = 1
@@ -213,12 +215,24 @@ internal class TestReadSessionSetupFailures {
                             "close" -> closed++
                         }
                         if (method.name == methodName && remaining-- > 0) throw failure
-                        invoke(method, delegate, args)
+                        val result = invoke(method, delegate, args)
+                        // PostgreSQL establishes isolation with an in-transaction statement; treat it as the
+                        // isolation setter for fault injection and counting.
+                        if (method.name == "createStatement" && result is Statement) isolationStatement(result) else result
                     } as Connection).also { current = it }
                 }
             }
             field.set(catalog, source)
         }
+
+        private fun isolationStatement(delegate: Statement): Statement =
+            Proxy.newProxyInstance(javaClass.classLoader, arrayOf(Statement::class.java)) { _, method, args ->
+                if (method.name == "execute" && args?.firstOrNull() == JdbcDucklakeCatalog.POSTGRES_READ_SESSION_ISOLATION) {
+                    isolationCalls++
+                    if (faultName == "setTransactionIsolation" && remaining-- > 0) throw failure
+                }
+                invoke(method, delegate, args)
+            } as Statement
 
         fun assertIdle() { assertThat(pool.hikariPoolMXBean.activeConnections).isZero() }
 

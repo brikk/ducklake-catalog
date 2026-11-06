@@ -85,7 +85,17 @@ level too). With one catalog per tenant that is fine; with many tables per catal
 table-scoped variant that only schedules a given table's dead files would let
 maintenance run incrementally. Depends on R1's bounded candidate selection.
 
-## R4. PgBouncer / proxy compatibility of the metadata pool
+## R4. PgBouncer / proxy compatibility of the metadata pool — done (0.16.0-SNAPSHOT)
+
+Probed with PgBouncer 1.23.1 in transaction mode (`TestPgBouncerTransactionPooling`): reads,
+writes, expiry/cleanup, `ensureRecommendedIndexes()` and read sessions. One correctness defect
+was found and fixed: `readSession`'s session-level isolation SET could land on another server
+connection, silently losing snapshot pinning. It now runs inside the transaction. Requirement:
+PgBouncer prepared-statement support or `prepareThreshold=0` (see COMPATIBILITY.md). `FOR SHARE`
+reads, `SET LOCAL intervalstyle` (1.1 read sessions) and HikariCP's connection handling were fine.
+Not covered: `connectionInitSql` on the Quack route (no PostgreSQL proxy there) and MySQL proxies
+(ProxySQL), where `setTransactionIsolation` remains session-level. Original note follows.
+
 
 Shared PostgreSQL servers put a proxy in transaction-pooling mode between the
 library and the database. Suspects that break there: `setTransactionIsolation`

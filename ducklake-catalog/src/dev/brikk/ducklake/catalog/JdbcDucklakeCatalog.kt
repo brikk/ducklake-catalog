@@ -298,7 +298,13 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
             // Never invoke an action under weaker isolation after a failed setup. DuckDB owns its
             // snapshot isolation regardless and retains best-effort unsupported setter handling.
             // HikariCP resets tracked connection state on return.
-            if (dialect == SQLDialect.POSTGRES || dialect == SQLDialect.MYSQL) {
+            if (dialect == SQLDialect.POSTGRES) {
+                conn.isReadOnly = true
+                // Inside the session's own transaction, not pgjdbc's session-level SET SESSION CHARACTERISTICS:
+                // behind a transaction-pooling proxy (PgBouncer) that statement can run on another server
+                // connection, silently leaving the session READ COMMITTED and leaking the setting to other clients.
+                conn.createStatement().use { it.execute(POSTGRES_READ_SESSION_ISOLATION) }
+            } else if (dialect == SQLDialect.MYSQL) {
                 conn.isReadOnly = true
                 conn.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
             } else {
@@ -6112,6 +6118,8 @@ class JdbcDucklakeCatalog(config: DucklakeCatalogConfig) : DucklakeCatalog {
         /** Inlined types whose native JDBC mapping loses information on text-backed backends (see [textCastIfNeeded]). */
         private val TEXT_CAST_TYPES: Set<String> = setOf("time", "time_ns", "timetz", "interval")
         private const val LEAK_DETECTION_THRESHOLD_MS: Long = 120_000
+        /** First statement of a PostgreSQL read session's transaction (pgjdbc opens it implicitly). */
+        internal const val POSTGRES_READ_SESSION_ISOLATION = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"
         /** Rows per expired-object cleanup page (one transaction, bounded `IN` lists). */
         private const val GC_PAGE = 1000
         private const val MAX_EXPIRED_TABLE_PAGE = 1000
