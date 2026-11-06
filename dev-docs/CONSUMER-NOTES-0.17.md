@@ -1,6 +1,6 @@
 # Consumer notes for the next release (0.17.0) — trino-ducklake and doris-ducklake
 
-Running list; main is `0.17.0-SNAPSHOT`, nothing here is released yet.
+Released as 0.17.0 ([release notes](../docs/releases/RELEASE-0.17.0.md)). Trino verified the snapshot: 1,085 tests on 483/JDK 25.
 
 ## Should consider
 

@@ -2,7 +2,7 @@
 
 ## Supported lane
 
-- Latest stable catalog release: **0.16.0** ([notes](releases/RELEASE-0.16.0.md)); development: **0.17.0-SNAPSHOT**.
+- Latest stable catalog release: **0.17.0** ([notes](releases/RELEASE-0.17.0.md)); development: **0.18.0-SNAPSHOT**.
 - Catalog format: **DuckLake 1.0**; a [limited final-1.1 reader](READING-1.1.md) is
   explicit opt-in. DuckLake 1.1 writes remain disabled.
 - Maintained development DuckDB: **2.0.0**; JDBC: **2.0.0.1**. Stable 0.12.0 retains its historical pins; 0.13.0 ships these.
@@ -131,7 +131,7 @@ size the client side; set the proxy's `max_client_conn` and `default_pool_size` 
 
 ## Statistics and pruning
 
-`getCurrentColumnBounds(tableId)` (0.17.0-SNAPSHOT) reads `ducklake_table_column_stats` in
+`getCurrentColumnBounds(tableId)` (0.17.0) reads `ducklake_table_column_stats` in
 O(columns) for the latest snapshot inside a `readSession`. The bounds are a gross superset
 (deleted rows can keep them wide) with `containsNull`/`containsNan`, and no counts. A missing
 column means unknown: fall back to `getColumnStats`, which remains the exact, per-snapshot
