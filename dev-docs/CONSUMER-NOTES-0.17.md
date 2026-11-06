@@ -28,3 +28,10 @@ in one locking query instead of three: two fewer round trips per commit, no beha
 Measured commit cost is 16–23 statements regardless of file count.
 
 No existing API changed.
+
+## Adopted
+
+- **Trino:** verified the snapshot (1,085 tests on 483/JDK 25), adopted 0.17.0 at `8aa7703` and
+  released trino-ducklake **v0.5.4** (483 and 484 packages).
+- **Doris:** adopted 0.17.0 at `5573c52`: hashes match, 23/23 quick tests per JVM plus 3 bundle guards.
+  No Doris release. Neither plugin uses `getCurrentColumnBounds` yet.
